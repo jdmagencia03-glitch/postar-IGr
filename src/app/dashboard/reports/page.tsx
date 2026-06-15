@@ -148,9 +148,9 @@ export default async function ReportsPage({
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {[
             { label: "Total agendado", value: stats.total, color: "text-ig-text" },
-            { label: "Pendentes", value: stats.pending, color: "text-ig-warning" },
+            { label: "Pendentes", value: stats.pending, color: "text-ig-muted" },
             { label: "Publicando", value: stats.processing, color: "text-ig-link" },
-            { label: "Publicados", value: stats.published, color: "text-ig-success" },
+            { label: "Publicados", value: stats.published, color: "text-ig-text" },
             { label: "Falhas", value: stats.failed, color: "text-ig-danger" },
           ].map((item) => (
             <div
@@ -166,7 +166,7 @@ export default async function ReportsPage({
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
           <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
             <p className="text-sm text-ig-muted">Taxa de sucesso</p>
-            <p className="text-3xl font-bold text-ig-success">{successRate}%</p>
+            <p className="text-3xl font-bold text-ig-text">{successRate}%</p>
           </div>
           <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
             <p className="text-sm text-ig-muted">Próximo post</p>
@@ -205,7 +205,7 @@ export default async function ReportsPage({
             <div key={post.id}>
               <PostCard post={post} />
               {post.status === "published" && post.published_at && (
-                <p className="mt-2 text-xs text-ig-success">
+                <p className="mt-2 text-xs text-ig-text">
                   Publicado em {formatDateTime(post.published_at)}
                 </p>
               )}

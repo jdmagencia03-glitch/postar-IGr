@@ -160,13 +160,13 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
         </div>
       </div>
 
-      <div className="rounded-lg border border-ig-warning/20 bg-ig-warning/10 px-4 py-3 text-xs text-ig-warning/90">
-        <strong className="text-ig-warning">Aquecimento (opcional):</strong> ative por conta para
+      <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-xs text-ig-muted">
+        <strong className="text-ig-muted">Aquecimento (opcional):</strong> ative por conta para
         rampa gradual nos primeiros dias. Desative se quiser usar Automático ou Só hoje no agendamento.
       </div>
 
-      <div className="rounded-lg border border-ig-warning/20 bg-ig-warning/10 px-4 py-3 text-xs text-ig-warning/90">
-        <strong className="text-ig-warning">Aquecimento de contas:</strong> contas novas começam com
+      <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-xs text-ig-muted">
+        <strong className="text-ig-muted">Aquecimento de contas:</strong> contas novas começam com
         rampa gradual (1→1→2→2→3 posts/dia nos primeiros 5 dias) para reduzir risco de bloqueio.
         Use o modo <strong>Aquecimento</strong> ao agendar em massa.
       </div>
@@ -181,7 +181,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
         <p
           className={`rounded-lg border px-4 py-3 text-sm ${
             message.includes("sucesso")
-              ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+              ? "border-ig-border bg-ig-elevated text-ig-text"
               : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
           }`}
         >
@@ -249,13 +249,13 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                       @{account.ig_username ?? "sem username"}
                     </p>
                     {warmup?.active && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-ig-warning/30 bg-ig-warning/15 px-2 py-0.5 text-[10px] font-medium text-ig-warning">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-ig-border bg-ig-secondary px-2 py-0.5 text-[10px] font-medium text-ig-muted">
                         <Flame size={10} />
                         Dia {warmup.day}/{warmup.totalDays}
                       </span>
                     )}
                     {warmup && !warmup.active && warmupEnabled && warmup.day >= warmup.totalDays && (
-                      <span className="rounded-full border border-ig-success/30 bg-ig-success/10 px-2 py-0.5 text-[10px] text-ig-success">
+                      <span className="rounded-full border border-ig-border bg-ig-elevated px-2 py-0.5 text-[10px] text-ig-text">
                         Aquecido
                       </span>
                     )}
@@ -268,7 +268,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                     Conectada em {formatDateTime(account.created_at)}
                   </p>
                   {warmup && (
-                    <p className="mt-1 text-xs text-ig-warning/70">{warmup.label}</p>
+                    <p className="mt-1 text-xs text-ig-muted">{warmup.label}</p>
                   )}
                 </div>
               </div>
@@ -285,7 +285,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                   checked={warmupEnabled}
                   disabled={updatingId === account.id}
                   onChange={() => handleWarmupToggle(account)}
-                  className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-amber-500"
+                  className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
                 />
               </label>
 

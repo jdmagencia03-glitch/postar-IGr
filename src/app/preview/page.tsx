@@ -78,8 +78,8 @@ export default function PreviewPage() {
           <h2 className="mb-4 text-xl font-bold text-ig-text">Dashboard</h2>
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
             {[
-              { label: "Pendentes", value: 878, color: "text-ig-warning" },
-              { label: "Publicados", value: 2, color: "text-ig-success" },
+              { label: "Pendentes", value: 878, color: "text-ig-muted" },
+              { label: "Publicados", value: 2, color: "text-ig-text" },
               { label: "Falhas", value: 1, color: "text-ig-danger" },
             ].map((s) => (
               <div key={s.label} className="rounded-xl border border-ig-border bg-ig-secondary p-4">
@@ -112,7 +112,7 @@ export default function PreviewPage() {
                   <p className="text-ig-text">5 (9h, 12h, 15h, 18h, 21h)</p>
                 </div>
               </div>
-              <p className="text-sm text-ig-success">→ 881 posts distribuídos em ~176 dias</p>
+              <p className="text-sm text-ig-text">→ 881 posts distribuídos em ~176 dias</p>
               <button className="w-full rounded-lg bg-ig-primary px-4 py-3 font-medium text-ig-text">
                 Agendar em massa
               </button>
@@ -146,7 +146,7 @@ export default function PreviewPage() {
           <div className="space-y-3">
             {mockLogs.map((log) => (
               <div key={log.id} className="rounded-xl border border-ig-border bg-ig-secondary p-4">
-                <span className={`text-xs uppercase ${log.level === "success" ? "text-ig-success" : log.level === "error" ? "text-ig-danger" : "text-ig-link"}`}>
+                <span className={`text-xs uppercase ${log.level === "success" ? "text-ig-text" : log.level === "error" ? "text-ig-danger" : "text-ig-link"}`}>
                   {log.level}
                 </span>
                 <p className="mt-1 text-sm text-ig-text">{log.message}</p>

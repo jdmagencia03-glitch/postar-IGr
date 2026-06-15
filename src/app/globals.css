@@ -11,8 +11,9 @@
   --ig-primary-hover: #1877f2;
   --ig-link: #e0f1ff;
   --ig-danger: #ed4956;
-  --ig-success: #58c322;
-  --ig-warning: #ffba00;
+  /* Sem verde/amarelo forte — tons neutros estilo Instagram */
+  --ig-success: #f5f5f5;
+  --ig-warning: #a8a8a8;
   --ig-radius: 8px;
   --ig-radius-lg: 12px;
   --ig-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
@@ -161,14 +162,14 @@ a {
 
 .ig-alert-success {
   border-radius: var(--ig-radius);
-  border: 1px solid color-mix(in srgb, var(--ig-success) 35%, transparent);
-  background: color-mix(in srgb, var(--ig-success) 12%, transparent);
-  color: #8fe66e;
+  border: 1px solid var(--ig-border);
+  background: var(--ig-elevated);
+  color: var(--ig-text);
 }
 
 .ig-alert-warning {
   border-radius: var(--ig-radius);
-  border: 1px solid color-mix(in srgb, var(--ig-warning) 35%, transparent);
-  background: color-mix(in srgb, var(--ig-warning) 12%, transparent);
-  color: #ffd666;
+  border: 1px solid var(--ig-border);
+  background: var(--ig-secondary);
+  color: var(--ig-muted);
 }

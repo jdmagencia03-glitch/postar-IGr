@@ -98,8 +98,8 @@ export default async function DashboardPage() {
 
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
           {[
-            { label: "Pendentes", value: stats.pending, color: "text-ig-warning" },
-            { label: "Publicados", value: stats.published, color: "text-ig-success" },
+            { label: "Pendentes", value: stats.pending, color: "text-ig-muted" },
+            { label: "Publicados", value: stats.published, color: "text-ig-text" },
             { label: "Falhas", value: stats.failed, color: "text-ig-danger" },
           ].map((s) => (
             <div

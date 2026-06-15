@@ -266,7 +266,7 @@ export function AiPlaybookForm() {
         <p
           className={`text-sm ${
             message.includes("salvo") || message.includes("carregado")
-              ? "text-ig-success"
+              ? "text-ig-text"
               : "text-ig-danger"
           }`}
         >

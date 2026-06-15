@@ -77,9 +77,9 @@ function readMetric(row: RankingRow, metric: RankingMetric, period: RankingPerio
 }
 
 function medalClass(position: number) {
-  if (position === 1) return "border-amber-400/50 bg-ig-warning/15 text-ig-warning";
+  if (position === 1) return "border-ig-border bg-ig-secondary text-ig-text";
   if (position === 2) return "border-ig-border bg-ig-secondary text-ig-text";
-  if (position === 3) return "border-orange-400/40 bg-orange-500/10 text-orange-200";
+  if (position === 3) return "border-ig-border bg-ig-secondary text-ig-muted";
   return "border-ig-border bg-ig-elevated text-ig-text";
 }
 
@@ -289,10 +289,10 @@ export function AccountsRanking() {
                         </div>
                       </td>
                       <td className="px-4 py-3">{formatCount(row.followers_count)}</td>
-                      <td className="px-4 py-3 text-ig-success">
+                      <td className="px-4 py-3 text-ig-text">
                         {formatNumber(row.metrics.today.net_followers)}
                       </td>
-                      <td className="px-4 py-3 text-ig-success">
+                      <td className="px-4 py-3 text-ig-text">
                         {formatNumber(row.metrics.last_7_days.net_followers)}
                       </td>
                       <td className="px-4 py-3">{formatCount(row.metrics.today.views)}</td>

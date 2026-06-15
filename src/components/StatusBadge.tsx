@@ -2,10 +2,10 @@ import type { PostStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const styles: Record<PostStatus, string> = {
-  pending: "bg-amber-500/20 text-ig-warning",
-  processing: "bg-blue-500/20 text-ig-link",
-  published: "bg-emerald-500/20 text-ig-success",
-  failed: "bg-red-500/20 text-ig-danger",
+  pending: "bg-ig-secondary text-ig-muted",
+  processing: "bg-ig-primary/15 text-ig-link",
+  published: "bg-ig-secondary text-ig-text",
+  failed: "bg-ig-danger/15 text-ig-danger",
 };
 
 const labels: Record<PostStatus, string> = {

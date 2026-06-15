@@ -146,22 +146,22 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
         <div
           className={`rounded-xl border p-4 transition ${
             isActive
-              ? "border-ig-success/40 bg-ig-success/10"
+              ? "border-ig-border bg-ig-elevated"
               : "border-ig-border bg-ig-elevated opacity-60"
           }`}
         >
           <div className="mb-2 flex items-center gap-2">
             <CheckCircle2
               size={18}
-              className={isActive ? "text-ig-success" : "text-ig-muted"}
+              className={isActive ? "text-ig-text" : "text-ig-muted"}
             />
             <span
-              className={`font-semibold ${isActive ? "text-ig-success" : "text-ig-muted"}`}
+              className={`font-semibold ${isActive ? "text-ig-text" : "text-ig-muted"}`}
             >
               Ativo
             </span>
             {isActive && (
-              <span className="ml-auto h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
+              <span className="ml-auto h-2.5 w-2.5 animate-pulse rounded-full bg-ig-muted" />
             )}
           </div>
           <p className="text-sm text-ig-muted">Conta suave e pronta para publicar</p>
@@ -196,7 +196,7 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
         <div
           className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
             isActive
-              ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+              ? "border-ig-border bg-ig-elevated text-ig-text"
               : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
           }`}
         >
@@ -230,7 +230,7 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
             <Users size={16} />
             <span className="text-sm">Seguidores</span>
           </div>
-          <p className="text-3xl font-bold text-ig-success">
+          <p className="text-3xl font-bold text-ig-text">
             {isActive && stats ? formatNumber(stats.followers_count) : "—"}
           </p>
           <p className="mt-1 text-xs text-ig-muted">Atualização automática a cada 60s</p>

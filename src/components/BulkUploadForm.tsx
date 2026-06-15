@@ -468,8 +468,8 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         className="space-y-6 rounded-2xl border border-ig-border bg-ig-elevated p-6"
       >
         {mode === "autopilot" && (
-          <div className="rounded-lg border border-ig-warning/30 bg-ig-warning/10 px-4 py-3 text-sm text-ig-warning">
-            <div className="mb-1 flex items-center gap-2 font-semibold text-ig-warning">
+          <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-muted">
+            <div className="mb-1 flex items-center gap-2 font-semibold text-ig-muted">
               <ShieldAlert size={16} />
               Dica anti-ban (opcional)
             </div>
@@ -482,7 +482,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         )}
 
         {mode === "autopilot" && postingRisk?.warnings.length ? (
-          <div className="rounded-lg border border-ig-warning/30 bg-ig-warning/10 px-4 py-3 text-sm text-ig-warning">
+          <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-muted">
             {postingRisk.warnings.map((warning) => (
               <p key={warning}>{warning}</p>
             ))}
@@ -503,8 +503,8 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         )}
 
         {mode === "autopilot" && oneClickMode && (
-          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-ig-success/10 px-4 py-3 text-sm text-ig-success">
-            <Zap size={18} className="shrink-0 text-ig-success" />
+          <div className="flex items-center gap-3 rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-text">
+            <Zap size={18} className="shrink-0 text-ig-text" />
             <p>
               <strong>Modo 1 clique ativo.</strong> Envie e a IA agenda tudo automaticamente — sem
               prévia.
@@ -627,7 +627,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
           </p>
           {files && (
             <div className="mt-2 space-y-1">
-              <p className="text-xs text-ig-success">
+              <p className="text-xs text-ig-text">
                 {files.length} arquivo(s) selecionado(s)
                 {selectedAccountIds.length > 1 && (
                   <> · total de {totalPosts} post(s) em {selectedAccountIds.length} contas</>
@@ -652,7 +652,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
                 onClick={() => setScheduleMode("warmup")}
                 className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "warmup"
-                    ? "border-amber-500/50 bg-ig-warning/15 text-ig-warning"
+                    ? "border-ig-primary/40 bg-ig-primary/10 text-ig-link"
                     : "border-ig-border bg-ig-elevated text-ig-muted"
                 }`}
               >
@@ -692,7 +692,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               </button>
             </div>
             {scheduleMode === "warmup" && hasWarmupAccounts && (
-              <p className="mt-2 text-xs text-ig-warning/80">
+              <p className="mt-2 text-xs text-ig-muted">
                 Cada conta segue sua própria rampa de aquecimento conforme o dia em que foi conectada.
               </p>
             )}
@@ -819,7 +819,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         {result && (
           <p
-            className={`text-sm ${result.includes("agendad") ? "text-ig-success" : "text-ig-danger"}`}
+            className={`text-sm ${result.includes("agendad") ? "text-ig-text" : "text-ig-danger"}`}
           >
             {result}
           </p>

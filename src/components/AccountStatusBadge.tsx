@@ -68,7 +68,7 @@ export function AccountStatusBadge() {
       title={`${message}${accountCount > 0 ? ` · ${accountCount} conta(s)` : ""}`}
       className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium sm:flex ${
         isActive
-          ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+          ? "border-ig-border bg-ig-elevated text-ig-text"
           : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
       }`}
     >

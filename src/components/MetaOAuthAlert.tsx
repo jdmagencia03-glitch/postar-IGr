@@ -16,7 +16,7 @@ export function MetaOAuthAlert({ error, connected, facebookEnabled = true }: Pro
   return (
     <div className="space-y-4">
       {connectedCount > 0 && (
-        <div className="flex items-start gap-3 rounded-xl border border-ig-success/30 bg-ig-success/10 px-4 py-3 text-sm text-ig-success">
+        <div className="flex items-start gap-3 rounded-xl border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-text">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0" />
           <p>
             {connectedCount === 1
@@ -27,13 +27,13 @@ export function MetaOAuthAlert({ error, connected, facebookEnabled = true }: Pro
       )}
 
       {guide && (
-        <div className="rounded-xl border border-ig-warning/30 bg-ig-warning/10 px-4 py-4 text-sm text-ig-warning">
-          <div className="mb-2 flex items-center gap-2 font-semibold text-ig-warning">
+        <div className="rounded-xl border border-ig-border bg-ig-elevated px-4 py-4 text-sm text-ig-muted">
+          <div className="mb-2 flex items-center gap-2 font-semibold text-ig-muted">
             <AlertTriangle size={16} />
             {guide.title}
           </div>
-          <p className="mb-3 text-ig-warning/90">{guide.message}</p>
-          <ol className="list-decimal space-y-1 pl-5 text-xs text-ig-warning/80">
+          <p className="mb-3 text-ig-muted">{guide.message}</p>
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-ig-muted">
             {guide.steps.map((step) => (
               <li key={step}>{step}</li>
             ))}

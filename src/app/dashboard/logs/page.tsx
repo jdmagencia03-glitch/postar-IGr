@@ -31,7 +31,7 @@ export default async function LogsPage() {
 
   const levelColors = {
     info: "text-ig-link",
-    success: "text-ig-success",
+    success: "text-ig-text",
     error: "text-ig-danger",
   };
 

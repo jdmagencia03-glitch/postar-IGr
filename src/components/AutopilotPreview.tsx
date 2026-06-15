@@ -75,7 +75,7 @@ export function AutopilotPreview({
                   <FileVideo size={14} className="text-ig-primary" />
                   {entry.filename}
                 </span>
-                <span className="flex items-center gap-1.5 text-ig-success">
+                <span className="flex items-center gap-1.5 text-ig-text">
                   <Clock size={14} />
                   {formatDateTime(entry.scheduled_at)}
                 </span>
