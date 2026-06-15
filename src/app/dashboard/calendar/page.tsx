@@ -3,6 +3,7 @@ import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, isSameDa
 import { ptBR } from "date-fns/locale";
 import { Navbar } from "@/components/Navbar";
 import { StatusBadge } from "@/components/StatusBadge";
+import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
@@ -10,16 +11,12 @@ import type { ScheduledPost } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export default async function CalendarPage() {
-  const userId = await getSessionUserId();
-  if (!userId) redirect("/login?next=/dashboard/calendar");
+  const ownerId = await getSessionUserId();
+  if (!ownerId) redirect("/login?next=/dashboard/calendar");
 
   const supabase = createAdminClient();
-  const { data: accounts } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("user_id", userId);
-
-  const accountIds = accounts?.map((a) => a.id) ?? [];
+  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const accountIds = accounts.map((a) => a.id);
 
   const { data: posts } = await supabase
     .from("scheduled_posts")

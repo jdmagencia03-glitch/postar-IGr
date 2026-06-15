@@ -1,0 +1,224 @@
+import { redirect } from "next/navigation";
+import { Navbar } from "@/components/Navbar";
+import { PostCard } from "@/components/PostCard";
+import { ReportsInsights } from "@/components/ReportsInsights";
+import { getOwnerAccounts } from "@/lib/accounts";
+import { getSessionUserId } from "@/lib/meta/oauth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { formatDateTime } from "@/lib/utils";
+import type { ScheduledPost } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+const statusLabels = {
+  all: "Todos",
+  pending: "Pendentes",
+  processing: "Publicando",
+  published: "Publicados",
+  failed: "Falhas",
+} as const;
+
+type StatusFilter = keyof typeof statusLabels;
+
+function isStatusFilter(value: string | undefined): value is StatusFilter {
+  return value !== undefined && value in statusLabels;
+}
+
+export default async function ReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; account?: string }>;
+}) {
+  const ownerId = await getSessionUserId();
+  if (!ownerId) redirect("/login?next=/dashboard/reports");
+
+  const params = await searchParams;
+  const filter: StatusFilter = isStatusFilter(params.status) ? params.status : "all";
+
+  const supabase = createAdminClient();
+  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const accountIds = accounts.map((a) => a.id);
+  const selectedAccountId =
+    params.account && accountIds.includes(params.account) ? params.account : undefined;
+  const filteredAccountIds = selectedAccountId ? [selectedAccountId] : accountIds;
+
+  let query = supabase
+    .from("scheduled_posts")
+    .select("*, instagram_accounts(ig_username, profile_picture_url)")
+    .in("account_id", filteredAccountIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(100);
+
+  if (filter !== "all") {
+    query = query.eq("status", filter);
+  }
+
+  const { data: posts } = await query;
+
+  const { data: allForStats } = await supabase
+    .from("scheduled_posts")
+    .select("status, published_at, scheduled_at")
+    .in("account_id", filteredAccountIds);
+
+  const rows = allForStats ?? [];
+  const stats = {
+    pending: rows.filter((p) => p.status === "pending").length,
+    processing: rows.filter((p) => p.status === "processing").length,
+    published: rows.filter((p) => p.status === "published").length,
+    failed: rows.filter((p) => p.status === "failed").length,
+    total: rows.length,
+  };
+
+  const successRate =
+    stats.published + stats.failed > 0
+      ? Math.round((stats.published / (stats.published + stats.failed)) * 100)
+      : 0;
+
+  const nextPending = rows
+    .filter((p) => p.status === "pending")
+    .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())[0];
+
+  const lastPublished = rows
+    .filter((p) => p.status === "published" && p.published_at)
+    .sort((a, b) => new Date(b.published_at!).getTime() - new Date(a.published_at!).getTime())[0];
+
+  const allPosts = (posts as ScheduledPost[]) ?? [];
+
+  function buildReportsHref(status?: StatusFilter) {
+    const query = new URLSearchParams();
+    if (selectedAccountId) query.set("account", selectedAccountId);
+    if (status && status !== "all") query.set("status", status);
+    const qs = query.toString();
+    return qs ? `/dashboard/reports?${qs}` : "/dashboard/reports";
+  }
+
+  return (
+    <div>
+      <Navbar />
+      <main className="mx-auto max-w-6xl px-4 py-8">
+        <h1 className="mb-2 text-2xl font-bold text-white">Relatório</h1>
+        <p className="mb-8 text-zinc-400">
+          Métricas do Instagram em tempo real e status dos seus agendamentos.
+        </p>
+
+        <ReportsInsights
+          accounts={accounts.map((a) => ({
+            id: a.id,
+            ig_username: a.ig_username,
+          }))}
+          initialAccountId={selectedAccountId ?? accounts[0]?.id}
+        />
+
+        {accounts.length > 1 && (
+          <div className="mb-6 flex flex-wrap gap-2">
+            <a
+              href={`/dashboard/reports${filter !== "all" ? `?status=${filter}` : ""}`}
+              className={`rounded-full px-4 py-2 text-sm transition ${
+                !selectedAccountId
+                  ? "bg-purple-500 text-white"
+                  : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+              }`}
+            >
+              Todas as contas
+            </a>
+            {accounts.map((account) => {
+              const href = `/dashboard/reports?account=${account.id}${
+                filter !== "all" ? `&status=${filter}` : ""
+              }`;
+              return (
+                <a
+                  key={account.id}
+                  href={href}
+                  className={`rounded-full px-4 py-2 text-sm transition ${
+                    selectedAccountId === account.id
+                      ? "bg-purple-500 text-white"
+                      : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                  }`}
+                >
+                  @{account.ig_username}
+                </a>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {[
+            { label: "Total agendado", value: stats.total, color: "text-white" },
+            { label: "Pendentes", value: stats.pending, color: "text-amber-300" },
+            { label: "Publicando", value: stats.processing, color: "text-blue-300" },
+            { label: "Publicados", value: stats.published, color: "text-emerald-300" },
+            { label: "Falhas", value: stats.failed, color: "text-red-300" },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="rounded-xl border border-white/10 bg-white/5 p-4"
+            >
+              <p className="text-sm text-zinc-400">{item.label}</p>
+              <p className={`text-3xl font-bold ${item.color}`}>{item.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mb-8 grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="text-sm text-zinc-400">Taxa de sucesso</p>
+            <p className="text-3xl font-bold text-emerald-300">{successRate}%</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="text-sm text-zinc-400">Próximo post</p>
+            <p className="text-lg font-medium text-white">
+              {nextPending ? formatDateTime(nextPending.scheduled_at) : "Nenhum"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <p className="text-sm text-zinc-400">Última publicação</p>
+            <p className="text-lg font-medium text-white">
+              {lastPublished?.published_at
+                ? formatDateTime(lastPublished.published_at)
+                : "Nenhuma ainda"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-6 flex flex-wrap gap-2">
+          {(Object.keys(statusLabels) as StatusFilter[]).map((status) => (
+            <a
+              key={status}
+              href={buildReportsHref(status)}
+              className={`rounded-full px-4 py-2 text-sm transition ${
+                filter === status
+                  ? "bg-pink-500 text-white"
+                  : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+              }`}
+            >
+              {statusLabels[status]}
+            </a>
+          ))}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {allPosts.map((post) => (
+            <div key={post.id}>
+              <PostCard post={post} />
+              {post.status === "published" && post.published_at && (
+                <p className="mt-2 text-xs text-emerald-400">
+                  Publicado em {formatDateTime(post.published_at)}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {!allPosts.length && (
+          <div className="rounded-xl border border-dashed border-white/20 p-12 text-center text-zinc-400">
+            Nenhum post neste filtro.{" "}
+            <a href="/dashboard/bulk" className="text-pink-400 hover:underline">
+              Agendar um vídeo
+            </a>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

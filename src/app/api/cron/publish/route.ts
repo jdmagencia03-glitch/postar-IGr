@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   const { data: posts, error } = await supabase
     .from("scheduled_posts")
-    .select("*, instagram_accounts(ig_user_id, page_access_token)")
+    .select("*, instagram_accounts(ig_user_id, page_access_token, auth_provider)")
     .eq("status", "pending")
     .lte("scheduled_at", now)
     .order("scheduled_at", { ascending: true })
@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
     const account = post.instagram_accounts as {
       ig_user_id: string;
       page_access_token: string;
+      auth_provider?: "instagram" | "facebook" | null;
     } | null;
 
     if (!account) {
@@ -62,6 +63,7 @@ export async function GET(request: NextRequest) {
         mediaType: post.media_type,
         mediaUrls: post.media_urls,
         caption: post.caption ?? undefined,
+        provider: account.auth_provider === "facebook" ? "facebook" : "instagram",
       });
 
       await supabase

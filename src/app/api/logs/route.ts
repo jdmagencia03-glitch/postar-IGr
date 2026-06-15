@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
+import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET() {
-  const userId = await getSessionUserId();
-  if (!userId) {
+  const ownerId = await getSessionUserId();
+  if (!ownerId) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
   const supabase = createAdminClient();
-  const { data: accounts } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("user_id", userId);
-
-  const accountIds = accounts?.map((a) => a.id) ?? [];
+  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const accountIds = accounts.map((a) => a.id);
 
   const { data: posts } = await supabase
     .from("scheduled_posts")

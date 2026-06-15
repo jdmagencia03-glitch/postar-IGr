@@ -1,28 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerAccountById } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateBulkSchedule } from "@/lib/utils";
 import { z } from "zod";
 
-const bulkSchema = z.object({
-  account_id: z.string().uuid(),
-  media_type: z.enum(["IMAGE", "REELS", "CAROUSEL"]),
-  items: z
-    .array(
-      z.object({
-        media_urls: z.array(z.string().url()).min(1),
-        caption: z.string().optional(),
-      }),
-    )
-    .min(1),
-  start_date: z.string(),
-  posts_per_day: z.number().min(1).max(10),
-  hours: z.array(z.number().min(0).max(23)).min(1),
-});
+const bulkSchema = z
+  .object({
+    account_id: z.string().uuid().optional(),
+    account_ids: z.array(z.string().uuid()).min(1).optional(),
+    media_type: z.enum(["IMAGE", "REELS", "CAROUSEL"]),
+    items: z
+      .array(
+        z.object({
+          media_urls: z.array(z.string().url()).min(1),
+          caption: z.string().optional(),
+        }),
+      )
+      .min(1),
+    start_date: z.string(),
+    posts_per_day: z.number().min(1).max(10),
+    hours: z.array(z.number().min(0).max(23)).min(1),
+  })
+  .refine((data) => Boolean(data.account_ids?.length || data.account_id), {
+    message: "Selecione pelo menos uma conta",
+    path: ["account_ids"],
+  });
 
 export async function POST(request: NextRequest) {
-  const userId = await getSessionUserId();
-  if (!userId) {
+  const ownerId = await getSessionUserId();
+  if (!ownerId) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
@@ -33,17 +40,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  const requestedAccountIds = [
+    ...new Set(parsed.data.account_ids ?? (parsed.data.account_id ? [parsed.data.account_id] : [])),
+  ];
+
   const supabase = createAdminClient();
+  const validAccounts = [];
 
-  const { data: account } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("id", parsed.data.account_id)
-    .eq("user_id", userId)
-    .single();
-
-  if (!account) {
-    return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
+  for (const accountId of requestedAccountIds) {
+    const account = await getOwnerAccountById(supabase, ownerId, accountId);
+    if (!account) {
+      return NextResponse.json({ error: `Conta não encontrada: ${accountId}` }, { status: 404 });
+    }
+    validAccounts.push(account);
   }
 
   const schedule = generateBulkSchedule({
@@ -53,22 +62,29 @@ export async function POST(request: NextRequest) {
     hours: parsed.data.hours,
   });
 
-  const rows = parsed.data.items.map((item, index) => ({
-    account_id: parsed.data.account_id,
-    media_type: parsed.data.media_type,
-    media_urls: item.media_urls,
-    caption: item.caption ?? null,
-    scheduled_at: schedule[index].toISOString(),
-  }));
+  const rows = validAccounts.flatMap((account) =>
+    parsed.data.items.map((item, index) => ({
+      account_id: account.id,
+      media_type: parsed.data.media_type,
+      media_urls: item.media_urls,
+      caption: item.caption ?? null,
+      scheduled_at: schedule[index].toISOString(),
+    })),
+  );
 
-  const { data, error } = await supabase
-    .from("scheduled_posts")
-    .insert(rows)
-    .select();
+  const { data, error } = await supabase.from("scheduled_posts").insert(rows).select();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ created: data?.length ?? 0, posts: data }, { status: 201 });
+  return NextResponse.json(
+    {
+      created: data?.length ?? 0,
+      accounts: validAccounts.length,
+      videos: parsed.data.items.length,
+      posts: data,
+    },
+    { status: 201 },
+  );
 }

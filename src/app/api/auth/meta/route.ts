@@ -12,6 +12,7 @@ function sanitizeNextPath(value: string | null) {
 export async function GET(request: NextRequest) {
   const state = createOAuthState();
   const nextPath = sanitizeNextPath(request.nextUrl.searchParams.get("next"));
+  const addAccount = request.nextUrl.searchParams.get("add_account") === "1";
   const supabase = createAdminClient();
 
   await supabase.from("oauth_states").insert({
@@ -19,7 +20,12 @@ export async function GET(request: NextRequest) {
     next_path: nextPath,
   });
 
-  const response = NextResponse.redirect(getMetaAuthUrl(state));
+  const response = NextResponse.redirect(
+    getMetaAuthUrl(state, {
+      forceReauth: addAccount,
+      enableFbLogin: true,
+    }),
+  );
   response.cookies.set("meta_oauth_state", state, getOAuthStateCookieOptions());
   response.cookies.set("meta_oauth_next", nextPath, getOAuthStateCookieOptions());
   return response;

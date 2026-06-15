@@ -17,7 +17,10 @@ function getInstagramCredentials() {
   return { appId, appSecret };
 }
 
-export function getMetaAuthUrl(state: string) {
+export function getMetaAuthUrl(
+  state: string,
+  options?: { forceReauth?: boolean; enableFbLogin?: boolean },
+) {
   const { appId } = getInstagramCredentials();
   const redirectUri = getRedirectUri();
   const params = new URLSearchParams({
@@ -26,8 +29,13 @@ export function getMetaAuthUrl(state: string) {
     scope: "instagram_business_basic,instagram_business_content_publish",
     response_type: "code",
     state,
-    enable_fb_login: "0",
   });
+
+  if (options?.forceReauth) {
+    params.set("force_reauth", "true");
+  }
+
+  params.set("enable_fb_login", options?.enableFbLogin === false ? "0" : "1");
 
   return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
 }
@@ -90,14 +98,44 @@ export async function getLongLivedToken(shortToken: string) {
     access_token: shortToken,
   });
 
-  const res = await fetch(`https://graph.instagram.com/access_token?${params}`);
-  const data = await res.json();
+  const endpoints = [
+    "https://graph.instagram.com/access_token",
+    "https://graph.instagram.com/v21.0/access_token",
+  ];
 
-  if (!res.ok) {
-    throw new Error(data.error?.message ?? "Falha ao obter token de longa duração");
+  let lastError = "Falha ao obter token de longa duração";
+
+  for (const endpoint of endpoints) {
+    const getRes = await fetch(`${endpoint}?${params}`);
+    const getData = await getRes.json();
+
+    if (getRes.ok && getData.access_token) {
+      return getData.access_token as string;
+    }
+
+    lastError = getData.error?.message ?? lastError;
+
+    const postRes = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    });
+    const postData = await postRes.json();
+
+    if (postRes.ok && postData.access_token) {
+      return postData.access_token as string;
+    }
+
+    lastError = postData.error?.message ?? lastError;
   }
 
-  return data.access_token as string;
+  if (lastError.toLowerCase().includes("unsupported request")) {
+    throw new Error(
+      "Permissões do app Instagram ainda não liberadas. No Meta Developer: Casos de uso → Instagram → solicite Acesso Avançado para instagram_business_basic e instagram_business_content_publish. Confira também se INSTAGRAM_APP_SECRET na Vercel está correto.",
+    );
+  }
+
+  throw new Error(lastError);
 }
 
 export async function getInstagramProfile(accessToken: string) {

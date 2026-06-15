@@ -24,6 +24,7 @@ export default async function LoginPage({
   };
 
   const loginHref = `/api/auth/meta?next=${encodeURIComponent(nextPath)}`;
+  const facebookHref = `/api/auth/facebook?next=${encodeURIComponent(nextPath)}&add_account=1`;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
@@ -44,6 +45,13 @@ export default async function LoginPage({
         className="w-full rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-6 py-3 text-center font-medium text-white"
       >
         Conectar com Instagram
+      </a>
+
+      <a
+        href={facebookHref}
+        className="mt-3 w-full rounded-lg bg-[#1877F2] px-6 py-3 text-center font-medium text-white"
+      >
+        Conectar via Facebook
       </a>
 
       <p className="mt-6 text-center text-xs text-zinc-500">

@@ -24,17 +24,23 @@ create index if not exists idx_app_sessions_session_token on app_sessions(sessio
 
 create table if not exists instagram_accounts (
   id uuid primary key default gen_random_uuid(),
+  owner_id text,
   user_id text not null,
   ig_user_id text not null unique,
   ig_username text,
   page_id text not null,
   page_access_token text not null,
   profile_picture_url text,
+  auth_provider text not null default 'instagram',
+  warmup_enabled boolean not null default true,
+  warmup_days int not null default 5,
+  warmup_started_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_instagram_accounts_user_id on instagram_accounts(user_id);
+create index if not exists idx_instagram_accounts_owner_id on instagram_accounts(owner_id);
 
 create table if not exists scheduled_posts (
   id uuid primary key default gen_random_uuid(),
@@ -68,6 +74,22 @@ create table if not exists publish_logs (
 );
 
 create index if not exists idx_publish_logs_post_id on publish_logs(post_id);
+
+create table if not exists ai_playbooks (
+  owner_id text primary key,
+  brand_name text,
+  niche text,
+  target_audience text,
+  tone_voice text,
+  viral_hooks text,
+  hashtag_strategy text,
+  cta_style text,
+  example_captions text,
+  avoid_rules text,
+  extra_knowledge text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
 
 -- Bucket de mídia (vídeos/imagens para o Instagram baixar via URL pública)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

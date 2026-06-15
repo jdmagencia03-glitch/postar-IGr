@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerAccountById, getOwnerAccounts } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
@@ -18,12 +19,8 @@ export async function GET() {
   }
 
   const supabase = createAdminClient();
-  const { data: accounts } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("user_id", userId);
-
-  const accountIds = accounts?.map((a) => a.id) ?? [];
+  const accounts = await getOwnerAccounts(supabase, userId);
+  const accountIds = accounts.map((a) => a.id);
 
   const { data, error } = await supabase
     .from("scheduled_posts")
@@ -52,13 +49,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createAdminClient();
-
-  const { data: account } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("id", parsed.data.account_id)
-    .eq("user_id", userId)
-    .single();
+  const account = await getOwnerAccountById(supabase, userId, parsed.data.account_id);
 
   if (!account) {
     return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });

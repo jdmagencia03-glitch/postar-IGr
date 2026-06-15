@@ -1,8 +1,12 @@
-import { Calendar, LayoutGrid, List, LogOut, Upload } from "lucide-react";
+import { BarChart3, Brain, Calendar, LayoutGrid, List, LogOut, Upload, Users } from "lucide-react";
+import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 
 const links = [
   { href: "/dashboard", label: "Início", shortLabel: "Início", icon: LayoutGrid },
-  { href: "/dashboard/bulk", label: "Agendamento em massa", shortLabel: "Agendar", icon: Upload },
+  { href: "/dashboard/bulk", label: "Agendar posts", shortLabel: "Agendar", icon: Upload },
+  { href: "/dashboard/ai", label: "Treinar IA", shortLabel: "IA", icon: Brain },
+  { href: "/dashboard/accounts", label: "Contas", shortLabel: "Contas", icon: Users },
+  { href: "/dashboard/reports", label: "Relatório", shortLabel: "Relatório", icon: BarChart3 },
   { href: "/dashboard/calendar", label: "Calendário", shortLabel: "Calend.", icon: Calendar },
   { href: "/dashboard/logs", label: "Logs", shortLabel: "Logs", icon: List },
 ];
@@ -15,6 +19,7 @@ export function Navbar() {
           Insta<span className="text-pink-400">Scheduler</span>
         </a>
         <nav className="flex items-center gap-1">
+          <AccountStatusBadge />
           {links.map(({ href, label, shortLabel, icon: Icon }) => (
             <a
               key={href}

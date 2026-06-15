@@ -8,6 +8,8 @@ const PROTECTED_APIS = [
   "/api/upload",
   "/api/logs",
   "/api/captions",
+  "/api/instagram",
+  "/api/ai",
 ];
 
 function isProtectedPath(pathname: string) {
@@ -68,5 +70,7 @@ export const config = {
     "/api/upload/:path*",
     "/api/logs/:path*",
     "/api/captions/:path*",
+    "/api/instagram/:path*",
+    "/api/ai/:path*",
   ],
 };

@@ -1,22 +1,19 @@
 import { redirect } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { formatDateTime } from "@/lib/utils";
+import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogsPage() {
-  const userId = await getSessionUserId();
-  if (!userId) redirect("/login?next=/dashboard/logs");
+  const ownerId = await getSessionUserId();
+  if (!ownerId) redirect("/login?next=/dashboard/logs");
 
   const supabase = createAdminClient();
-  const { data: accounts } = await supabase
-    .from("instagram_accounts")
-    .select("id")
-    .eq("user_id", userId);
-
-  const accountIds = accounts?.map((a) => a.id) ?? [];
+  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const accountIds = accounts.map((a) => a.id);
 
   const { data: posts } = await supabase
     .from("scheduled_posts")
