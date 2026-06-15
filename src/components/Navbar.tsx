@@ -13,31 +13,34 @@ const links = [
 
 export function Navbar() {
   return (
-    <header className="border-b border-white/10 bg-black/40 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-        <a href="/dashboard" className="text-lg font-semibold text-white">
-          Insta<span className="text-pink-400">Scheduler</span>
+    <header className="border-b border-ig-border bg-ig-bg">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <a
+          href="/dashboard"
+          className="ig-brand-script text-2xl leading-none text-ig-text sm:text-3xl"
+        >
+          Insta<span className="ig-brand-gradient">Scheduler</span>
         </a>
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-0.5">
           <AccountStatusBadge />
           {links.map(({ href, label, shortLabel, icon: Icon }) => (
             <a
               key={href}
               href={href}
               title={label}
-              className="flex flex-col items-center gap-0.5 rounded-lg px-2 py-2 text-zinc-300 transition hover:bg-white/10 hover:text-white sm:flex-row sm:gap-2 sm:px-3"
+              className="flex flex-col items-center gap-0.5 rounded-lg px-2 py-2 text-ig-muted transition hover:text-ig-text sm:flex-row sm:gap-2 sm:px-3"
             >
-              <Icon size={16} />
-              <span className="text-[10px] sm:text-sm">{shortLabel}</span>
+              <Icon size={22} strokeWidth={1.75} />
+              <span className="text-[10px] font-semibold sm:text-xs">{shortLabel}</span>
             </a>
           ))}
           <a
             href="/api/auth/logout"
             title="Sair"
-            className="ml-1 flex flex-col items-center gap-0.5 rounded-lg border border-white/10 px-2 py-2 text-zinc-400 transition hover:bg-red-500/10 hover:text-red-300 sm:ml-2 sm:flex-row sm:gap-2 sm:px-3"
+            className="ml-1 flex flex-col items-center gap-0.5 rounded-lg px-2 py-2 text-ig-muted transition hover:text-ig-danger sm:ml-2 sm:flex-row sm:gap-2 sm:px-3"
           >
-            <LogOut size={16} />
-            <span className="text-[10px] sm:text-sm">Sair</span>
+            <LogOut size={22} strokeWidth={1.75} />
+            <span className="text-[10px] font-semibold sm:text-xs">Sair</span>
           </a>
         </nav>
       </div>

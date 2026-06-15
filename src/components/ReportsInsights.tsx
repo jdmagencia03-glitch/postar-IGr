@@ -85,14 +85,14 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
   const isActive = accountStatus === "active";
 
   return (
-    <section className="mb-8 rounded-2xl border border-white/10 bg-gradient-to-br from-pink-500/10 via-purple-500/5 to-transparent p-6">
+    <section className="mb-8 rounded-2xl border border-ig-border bg-ig-elevated p-6">
       {accounts.length > 1 && (
         <div className="mb-4">
-          <label className="mb-2 block text-sm text-zinc-400">Conta para métricas</label>
+          <label className="mb-2 block text-sm text-ig-muted">Conta para métricas</label>
           <select
             value={selectedAccountId}
             onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white sm:max-w-xs"
+            className="w-full ig-input w-full sm:max-w-xs"
           >
             {accounts.map((account) => (
               <option key={account.id} value={account.id}>
@@ -109,22 +109,22 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
             <img
               src={stats.profile_picture_url}
               alt={stats.username ?? "Instagram"}
-              className="h-16 w-16 rounded-full border border-white/10 object-cover"
+              className="h-16 w-16 rounded-full border border-ig-border object-cover"
             />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xl text-pink-300">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full border border-ig-border bg-ig-secondary text-xl text-ig-link">
               IG
             </div>
           )}
           <div>
-            <p className="text-lg font-semibold text-white">
+            <p className="text-lg font-semibold text-ig-text">
               @{stats?.username ?? "carregando..."}
             </p>
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-ig-muted">
               {stats?.name || stats?.account_type || "Conta Instagram"}
             </p>
             {stats?.fetched_at && (
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-ig-muted">
                 Atualizado em {formatDateTime(stats.fetched_at)}
               </p>
             )}
@@ -135,7 +135,7 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
           type="button"
           onClick={fetchStats}
           disabled={loading}
-          className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-50"
+          className="flex items-center gap-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm text-ig-text transition hover:bg-ig-secondary disabled:opacity-50"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           Atualizar
@@ -146,17 +146,17 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
         <div
           className={`rounded-xl border p-4 transition ${
             isActive
-              ? "border-emerald-500/40 bg-emerald-500/10"
-              : "border-white/10 bg-black/20 opacity-60"
+              ? "border-ig-success/40 bg-ig-success/10"
+              : "border-ig-border bg-ig-elevated opacity-60"
           }`}
         >
           <div className="mb-2 flex items-center gap-2">
             <CheckCircle2
               size={18}
-              className={isActive ? "text-emerald-300" : "text-zinc-500"}
+              className={isActive ? "text-ig-success" : "text-ig-muted"}
             />
             <span
-              className={`font-semibold ${isActive ? "text-emerald-300" : "text-zinc-500"}`}
+              className={`font-semibold ${isActive ? "text-ig-success" : "text-ig-muted"}`}
             >
               Ativo
             </span>
@@ -164,23 +164,23 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
               <span className="ml-auto h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
             )}
           </div>
-          <p className="text-sm text-zinc-400">Conta suave e pronta para publicar</p>
+          <p className="text-sm text-ig-muted">Conta suave e pronta para publicar</p>
         </div>
 
         <div
           className={`rounded-xl border p-4 transition ${
             !isActive
-              ? "border-red-500/40 bg-red-500/10"
-              : "border-white/10 bg-black/20 opacity-60"
+              ? "border-ig-danger/40 bg-ig-danger/10"
+              : "border-ig-border bg-ig-elevated opacity-60"
           }`}
         >
           <div className="mb-2 flex items-center gap-2">
             <AlertCircle
               size={18}
-              className={!isActive ? "text-red-300" : "text-zinc-500"}
+              className={!isActive ? "text-ig-danger" : "text-ig-muted"}
             />
             <span
-              className={`font-semibold ${!isActive ? "text-red-300" : "text-zinc-500"}`}
+              className={`font-semibold ${!isActive ? "text-ig-danger" : "text-ig-muted"}`}
             >
               Erro
             </span>
@@ -188,7 +188,7 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
               <span className="ml-auto h-2.5 w-2.5 animate-pulse rounded-full bg-red-400" />
             )}
           </div>
-          <p className="text-sm text-zinc-400">Conta caiu, token expirou ou com problema</p>
+          <p className="text-sm text-ig-muted">Conta caiu, token expirou ou com problema</p>
         </div>
       </div>
 
@@ -196,22 +196,22 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
         <div
           className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
             isActive
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-              : "border-red-500/30 bg-red-500/10 text-red-200"
+              ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+              : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
           }`}
         >
           {stats.status_message}
           {!isActive && (
             <a
               href="/api/auth/meta?next=/dashboard/reports"
-              className="mt-2 block font-medium text-pink-300 hover:underline"
+              className="mt-2 block font-medium text-ig-link hover:underline"
             >
               Reconectar esta conta →
             </a>
           )}
           <a
             href="/dashboard/accounts"
-            className="mt-2 block text-xs text-zinc-400 hover:text-pink-300"
+            className="mt-2 block text-xs text-ig-muted hover:text-ig-link"
           >
             Gerenciar todas as contas
           </a>
@@ -219,39 +219,39 @@ export function ReportsInsights({ accounts, initialAccountId }: Props) {
       )}
 
       {fetchError && (
-        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        <p className="mb-4 rounded-lg border border-ig-danger/30 bg-ig-danger/10 px-4 py-3 text-sm text-ig-danger">
           {fetchError}
         </p>
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="mb-2 flex items-center gap-2 text-zinc-400">
+        <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
+          <div className="mb-2 flex items-center gap-2 text-ig-muted">
             <Users size={16} />
             <span className="text-sm">Seguidores</span>
           </div>
-          <p className="text-3xl font-bold text-emerald-300">
+          <p className="text-3xl font-bold text-ig-success">
             {isActive && stats ? formatNumber(stats.followers_count) : "—"}
           </p>
-          <p className="mt-1 text-xs text-zinc-500">Atualização automática a cada 60s</p>
+          <p className="mt-1 text-xs text-ig-muted">Atualização automática a cada 60s</p>
         </div>
 
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="mb-2 flex items-center gap-2 text-zinc-400">
+        <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
+          <div className="mb-2 flex items-center gap-2 text-ig-muted">
             <UserPlus size={16} />
             <span className="text-sm">Seguindo</span>
           </div>
-          <p className="text-3xl font-bold text-blue-300">
+          <p className="text-3xl font-bold text-ig-link">
             {isActive && stats ? formatNumber(stats.follows_count) : "—"}
           </p>
         </div>
 
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="mb-2 flex items-center gap-2 text-zinc-400">
+        <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
+          <div className="mb-2 flex items-center gap-2 text-ig-muted">
             <ImageIcon size={16} />
             <span className="text-sm">Posts no Instagram</span>
           </div>
-          <p className="text-3xl font-bold text-pink-300">
+          <p className="text-3xl font-bold text-ig-link">
             {isActive && stats ? formatNumber(stats.media_count) : "—"}
           </p>
         </div>

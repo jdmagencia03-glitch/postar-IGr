@@ -30,23 +30,23 @@ export default async function LogsPage() {
     .limit(50);
 
   const levelColors = {
-    info: "text-blue-300",
-    success: "text-emerald-300",
-    error: "text-red-300",
+    info: "text-ig-link",
+    success: "text-ig-success",
+    error: "text-ig-danger",
   };
 
   return (
     <div>
       <Navbar />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-white">Logs de publicação</h1>
-        <p className="mb-8 text-zinc-400">Histórico de tentativas e resultados.</p>
+        <h1 className="mb-2 text-2xl font-bold text-ig-text">Logs de publicação</h1>
+        <p className="mb-8 text-ig-muted">Histórico de tentativas e resultados.</p>
 
         <div className="space-y-3">
           {logs?.map((log) => (
             <div
               key={log.id}
-              className="rounded-xl border border-white/10 bg-white/5 p-4"
+              className="rounded-xl border border-ig-border bg-ig-secondary p-4"
             >
               <div className="mb-1 flex items-center justify-between">
                 <span
@@ -54,16 +54,16 @@ export default async function LogsPage() {
                 >
                   {log.level}
                 </span>
-                <span className="text-xs text-zinc-500">
+                <span className="text-xs text-ig-muted">
                   {formatDateTime(log.created_at)}
                 </span>
               </div>
-              <p className="text-sm text-zinc-300">{log.message}</p>
+              <p className="text-sm text-ig-text">{log.message}</p>
             </div>
           ))}
 
           {!logs?.length && (
-            <p className="text-center text-zinc-500">Nenhum log ainda.</p>
+            <p className="text-center text-ig-muted">Nenhum log ainda.</p>
           )}
         </div>
       </main>

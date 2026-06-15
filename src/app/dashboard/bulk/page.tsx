@@ -31,9 +31,9 @@ export default async function BulkPage({
     return (
       <div>
         <Navbar />
-        <main className="mx-auto max-w-2xl px-4 py-8 text-center text-zinc-400">
+        <main className="mx-auto max-w-2xl px-4 py-8 text-center text-ig-muted">
           <p className="mb-4">Conecte uma conta Instagram primeiro.</p>
-          <a href="/api/auth/meta?next=/dashboard/bulk" className="text-pink-400 hover:underline">
+          <a href="/api/auth/meta?next=/dashboard/bulk" className="text-ig-primary hover:underline">
             Conectar conta
           </a>
         </main>
@@ -45,22 +45,22 @@ export default async function BulkPage({
     <div>
       <Navbar />
       <main className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-white">Programar conteúdo</h1>
-        <p className="mb-8 text-zinc-400">
+        <h1 className="mb-2 text-2xl font-bold text-ig-text">Programar conteúdo</h1>
+        <p className="mb-8 text-ig-muted">
           Experiência hands-off: envie os vídeos prontos e a IA define legendas, hashtags e
           distribuição em semanas ou meses.
         </p>
         {accounts.length > 1 && (
-          <p className="mb-8 text-sm text-zinc-500">
+          <p className="mb-8 text-sm text-ig-muted">
             {accounts.length} contas conectadas.{" "}
-            <a href="/dashboard/accounts" className="text-pink-400 hover:underline">
+            <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
               Gerenciar contas
             </a>
           </p>
         )}
         {accounts.length <= 1 && (
-          <p className="mb-8 text-sm text-zinc-500">
-            <a href="/dashboard/accounts" className="text-pink-400 hover:underline">
+          <p className="mb-8 text-sm text-ig-muted">
+            <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
               Adicionar outra conta Instagram
             </a>
           </p>

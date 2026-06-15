@@ -97,8 +97,8 @@ export default async function ReportsPage({
     <div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-white">Relatório</h1>
-        <p className="mb-8 text-zinc-400">
+        <h1 className="mb-2 text-2xl font-bold text-ig-text">Relatório</h1>
+        <p className="mb-8 text-ig-muted">
           Métricas reais do Instagram, ranking Top 10 e status dos seus agendamentos.
         </p>
 
@@ -118,8 +118,8 @@ export default async function ReportsPage({
               href={`/dashboard/reports${filter !== "all" ? `?status=${filter}` : ""}`}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 !selectedAccountId
-                  ? "bg-purple-500 text-white"
-                  : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                  ? "bg-ig-primary text-ig-text"
+                  : "border border-ig-border bg-ig-secondary text-ig-text hover:bg-ig-secondary"
               }`}
             >
               Todas as contas
@@ -134,8 +134,8 @@ export default async function ReportsPage({
                   href={href}
                   className={`rounded-full px-4 py-2 text-sm transition ${
                     selectedAccountId === account.id
-                      ? "bg-purple-500 text-white"
-                      : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                      ? "bg-ig-primary text-ig-text"
+                      : "border border-ig-border bg-ig-secondary text-ig-text hover:bg-ig-secondary"
                   }`}
                 >
                   @{account.ig_username}
@@ -147,36 +147,36 @@ export default async function ReportsPage({
 
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {[
-            { label: "Total agendado", value: stats.total, color: "text-white" },
-            { label: "Pendentes", value: stats.pending, color: "text-amber-300" },
-            { label: "Publicando", value: stats.processing, color: "text-blue-300" },
-            { label: "Publicados", value: stats.published, color: "text-emerald-300" },
-            { label: "Falhas", value: stats.failed, color: "text-red-300" },
+            { label: "Total agendado", value: stats.total, color: "text-ig-text" },
+            { label: "Pendentes", value: stats.pending, color: "text-ig-warning" },
+            { label: "Publicando", value: stats.processing, color: "text-ig-link" },
+            { label: "Publicados", value: stats.published, color: "text-ig-success" },
+            { label: "Falhas", value: stats.failed, color: "text-ig-danger" },
           ].map((item) => (
             <div
               key={item.label}
-              className="rounded-xl border border-white/10 bg-white/5 p-4"
+              className="rounded-xl border border-ig-border bg-ig-secondary p-4"
             >
-              <p className="text-sm text-zinc-400">{item.label}</p>
+              <p className="text-sm text-ig-muted">{item.label}</p>
               <p className={`text-3xl font-bold ${item.color}`}>{item.value}</p>
             </div>
           ))}
         </div>
 
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-sm text-zinc-400">Taxa de sucesso</p>
-            <p className="text-3xl font-bold text-emerald-300">{successRate}%</p>
+          <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
+            <p className="text-sm text-ig-muted">Taxa de sucesso</p>
+            <p className="text-3xl font-bold text-ig-success">{successRate}%</p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-sm text-zinc-400">Próximo post</p>
-            <p className="text-lg font-medium text-white">
+          <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
+            <p className="text-sm text-ig-muted">Próximo post</p>
+            <p className="text-lg font-medium text-ig-text">
               {nextPending ? formatDateTime(nextPending.scheduled_at) : "Nenhum"}
             </p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-sm text-zinc-400">Última publicação</p>
-            <p className="text-lg font-medium text-white">
+          <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
+            <p className="text-sm text-ig-muted">Última publicação</p>
+            <p className="text-lg font-medium text-ig-text">
               {lastPublished?.published_at
                 ? formatDateTime(lastPublished.published_at)
                 : "Nenhuma ainda"}
@@ -191,8 +191,8 @@ export default async function ReportsPage({
               href={buildReportsHref(status)}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 filter === status
-                  ? "bg-pink-500 text-white"
-                  : "border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                  ? "bg-ig-primary text-ig-text"
+                  : "border border-ig-border bg-ig-secondary text-ig-text hover:bg-ig-secondary"
               }`}
             >
               {statusLabels[status]}
@@ -205,7 +205,7 @@ export default async function ReportsPage({
             <div key={post.id}>
               <PostCard post={post} />
               {post.status === "published" && post.published_at && (
-                <p className="mt-2 text-xs text-emerald-400">
+                <p className="mt-2 text-xs text-ig-success">
                   Publicado em {formatDateTime(post.published_at)}
                 </p>
               )}
@@ -214,9 +214,9 @@ export default async function ReportsPage({
         </div>
 
         {!allPosts.length && (
-          <div className="rounded-xl border border-dashed border-white/20 p-12 text-center text-zinc-400">
+          <div className="rounded-xl border border-dashed border-ig-border p-12 text-center text-ig-muted">
             Nenhum post neste filtro.{" "}
-            <a href="/dashboard/bulk" className="text-pink-400 hover:underline">
+            <a href="/dashboard/bulk" className="text-ig-primary hover:underline">
               Agendar um vídeo
             </a>
           </div>

@@ -52,9 +52,9 @@ export function AccountStatusBadge() {
     return (
       <span
         title="Verificando conta..."
-        className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-400 sm:flex"
+        className="hidden items-center gap-1.5 rounded-full border border-ig-border bg-ig-secondary px-2.5 py-1 text-xs text-ig-muted sm:flex"
       >
-        <span className="h-2 w-2 animate-pulse rounded-full bg-zinc-500" />
+        <span className="h-2 w-2 animate-pulse rounded-full bg-ig-muted" />
         ...
       </span>
     );
@@ -68,8 +68,8 @@ export function AccountStatusBadge() {
       title={`${message}${accountCount > 0 ? ` · ${accountCount} conta(s)` : ""}`}
       className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium sm:flex ${
         isActive
-          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-          : "border-red-500/30 bg-red-500/10 text-red-300"
+          ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+          : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
       }`}
     >
       {isActive ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}

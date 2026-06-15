@@ -188,7 +188,7 @@ export function AiPlaybookForm() {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center text-zinc-400">
+      <div className="rounded-xl border border-ig-border bg-ig-secondary p-8 text-center text-ig-muted">
         Carregando playbook da IA...
       </div>
     );
@@ -196,17 +196,17 @@ export function AiPlaybookForm() {
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
-      <div className="rounded-xl border border-pink-500/20 bg-pink-500/10 p-4">
+      <div className="rounded-xl border border-ig-primary/20 bg-ig-primary/10 p-4">
         <div className="flex items-start gap-3">
-          <Brain className="mt-0.5 shrink-0 text-pink-300" size={20} />
-          <div className="text-sm text-pink-100">
+          <Brain className="mt-0.5 shrink-0 text-ig-link" size={20} />
+          <div className="text-sm text-ig-link">
             <p className="font-medium">Como funciona</p>
-            <p className="mt-1 text-pink-100/80">
+            <p className="mt-1 text-ig-link/80">
               Tudo que você salvar aqui vai para o <strong>GPT-4o mini</strong> criar{" "}
               <strong>legendas e hashtags</strong>. A IA <strong>não edita vídeos</strong> — o vídeo
               sobe do jeito que você enviou. Os horários são calculados automaticamente pelo sistema.
             </p>
-            <p className="mt-2 text-xs text-pink-200/70">
+            <p className="mt-2 text-xs text-ig-link/70">
               {hasOpenAi
                 ? "✓ OPENAI_API_KEY configurada — GPT ativo"
                 : "⚠ Configure OPENAI_API_KEY na Vercel para usar GPT (sem ela, usa legendas automáticas)"}
@@ -219,27 +219,27 @@ export function AiPlaybookForm() {
         <button
           type="button"
           onClick={loadTemplate}
-          className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10"
+          className="flex items-center gap-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm text-ig-text hover:bg-ig-secondary"
         >
           <Sparkles size={14} />
           Carregar modelo fitness
         </button>
-        <span className="self-center text-xs text-zinc-500">
+        <span className="self-center text-xs text-ig-muted">
           {totalChars.toLocaleString("pt-BR")} caracteres de conhecimento
         </span>
       </div>
 
       {fields.map((field) => (
         <div key={field.key}>
-          <label className="mb-1 block text-sm font-medium text-zinc-200">{field.label}</label>
-          <p className="mb-2 text-xs text-zinc-500">{field.hint}</p>
+          <label className="mb-1 block text-sm font-medium text-ig-text">{field.label}</label>
+          <p className="mb-2 text-xs text-ig-muted">{field.hint}</p>
           {field.rows ? (
             <textarea
               value={form[field.key] ?? ""}
               onChange={(e) => updateField(field.key, e.target.value)}
               rows={field.rows}
               placeholder={field.placeholder}
-              className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white"
+              className="w-full rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm text-ig-text"
             />
           ) : (
             <input
@@ -247,7 +247,7 @@ export function AiPlaybookForm() {
               value={form[field.key] ?? ""}
               onChange={(e) => updateField(field.key, e.target.value)}
               placeholder={field.placeholder}
-              className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+              className="w-full ig-input w-full"
             />
           )}
         </div>
@@ -256,7 +256,7 @@ export function AiPlaybookForm() {
       <button
         type="submit"
         disabled={saving}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-4 py-3 font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-2 rounded-lg bg-ig-primary px-4 py-3 font-medium text-ig-text hover:opacity-90 disabled:opacity-50"
       >
         <Save size={16} />
         {saving ? "Salvando..." : "Salvar e treinar IA"}
@@ -266,8 +266,8 @@ export function AiPlaybookForm() {
         <p
           className={`text-sm ${
             message.includes("salvo") || message.includes("carregado")
-              ? "text-emerald-300"
-              : "text-red-300"
+              ? "text-ig-success"
+              : "text-ig-danger"
           }`}
         >
           {message}

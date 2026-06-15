@@ -45,45 +45,45 @@ export default async function DashboardPage() {
     <div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <section className="mb-10 rounded-2xl border border-pink-500/20 bg-gradient-to-br from-pink-500/10 via-purple-500/5 to-transparent p-8 text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-pink-500/30 bg-pink-500/10 px-4 py-1.5 text-sm text-pink-200">
+        <section className="mb-10 rounded-2xl border border-ig-primary/20 bg-ig-elevated p-8 text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-4 py-1.5 text-sm text-ig-link">
             <Sparkles size={16} />
             Hands-off
           </div>
-          <h1 className="mb-3 text-3xl font-bold text-white">
+          <h1 className="mb-3 text-3xl font-bold text-ig-text">
             Envie os vídeos. A IA programa tudo.
           </h1>
-          <p className="mx-auto mb-6 max-w-xl text-zinc-400">
+          <p className="mx-auto mb-6 max-w-xl text-ig-muted">
             Legendas virais, hashtags e horários estratégicos — semanas ou meses de conteúdo em
             minutos. Envie e a IA agenda em 1 clique.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             <a
               href={playbookReady ? "/dashboard/bulk" : "/dashboard/ai"}
-              className="rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-6 py-3 font-medium text-white hover:opacity-90"
+              className="rounded-lg bg-ig-primary px-6 py-3 font-medium text-ig-text hover:opacity-90"
             >
               {playbookReady ? "Enviar vídeos agora" : "Começar — treinar IA"}
             </a>
             {playbookReady ? (
               <a
                 href="/dashboard/ai"
-                className="rounded-lg border border-white/10 bg-white/5 px-6 py-3 text-zinc-200 hover:bg-white/10"
+                className="rounded-lg border border-ig-border bg-ig-secondary px-6 py-3 text-ig-text hover:bg-ig-secondary"
               >
                 Ajustar IA
               </a>
             ) : (
               <a
                 href="/dashboard/bulk"
-                className="rounded-lg border border-white/10 bg-white/5 px-6 py-3 text-zinc-200 hover:bg-white/10"
+                className="rounded-lg border border-ig-border bg-ig-secondary px-6 py-3 text-ig-text hover:bg-ig-secondary"
               >
                 Pular e enviar vídeos
               </a>
             )}
           </div>
           {accounts.length > 0 && (
-            <p className="mt-4 text-xs text-zinc-500">
+            <p className="mt-4 text-xs text-ig-muted">
               {accounts.length} conta(s) conectada(s) ·{" "}
-              <a href="/dashboard/accounts" className="text-pink-400 hover:underline">
+              <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
                 Gerenciar
               </a>
             </p>
@@ -98,23 +98,23 @@ export default async function DashboardPage() {
 
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
           {[
-            { label: "Pendentes", value: stats.pending, color: "text-amber-300" },
-            { label: "Publicados", value: stats.published, color: "text-emerald-300" },
-            { label: "Falhas", value: stats.failed, color: "text-red-300" },
+            { label: "Pendentes", value: stats.pending, color: "text-ig-warning" },
+            { label: "Publicados", value: stats.published, color: "text-ig-success" },
+            { label: "Falhas", value: stats.failed, color: "text-ig-danger" },
           ].map((s) => (
             <div
               key={s.label}
-              className="rounded-xl border border-white/10 bg-white/5 p-4"
+              className="rounded-xl border border-ig-border bg-ig-secondary p-4"
             >
-              <p className="text-sm text-zinc-400">{s.label}</p>
+              <p className="text-sm text-ig-muted">{s.label}</p>
               <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
             </div>
           ))}
         </div>
 
         <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Próximos posts</h2>
-          <a href="/dashboard/reports" className="text-sm text-pink-400 hover:underline">
+          <h2 className="text-lg font-semibold text-ig-text">Próximos posts</h2>
+          <a href="/dashboard/reports" className="text-sm text-ig-primary hover:underline">
             Ver relatório →
           </a>
         </div>
@@ -126,9 +126,9 @@ export default async function DashboardPage() {
         </div>
 
         {!posts?.length && (
-          <div className="rounded-xl border border-dashed border-white/20 p-12 text-center text-zinc-400">
+          <div className="rounded-xl border border-dashed border-ig-border p-12 text-center text-ig-muted">
             Nenhum post agendado ainda.{" "}
-            <a href="/dashboard/bulk" className="text-pink-400 hover:underline">
+            <a href="/dashboard/bulk" className="text-ig-primary hover:underline">
               Envie seus vídeos — a IA cuida do resto
             </a>
           </div>

@@ -36,8 +36,8 @@ export default async function CalendarPage() {
     <div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-white">Calendário</h1>
-        <p className="mb-8 text-zinc-400">
+        <h1 className="mb-2 text-2xl font-bold text-ig-text">Calendário</h1>
+        <p className="mb-8 text-ig-muted">
           {format(now, "MMMM yyyy", { locale: ptBR })}
         </p>
 
@@ -50,25 +50,25 @@ export default async function CalendarPage() {
             return (
               <div
                 key={day.toISOString()}
-                className="min-h-28 rounded-xl border border-white/10 bg-white/5 p-3"
+                className="min-h-28 rounded-xl border border-ig-border bg-ig-secondary p-3"
               >
-                <p className="mb-2 text-sm font-medium text-white">
+                <p className="mb-2 text-sm font-medium text-ig-text">
                   {format(day, "dd/MM")}
                 </p>
                 {dayPosts.length === 0 ? (
-                  <p className="text-xs text-zinc-500">—</p>
+                  <p className="text-xs text-ig-muted">—</p>
                 ) : (
                   <div className="space-y-1">
                     {dayPosts.slice(0, 3).map((p) => (
                       <div key={p.id} className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-zinc-400">
+                        <span className="text-xs text-ig-muted">
                           {format(parseISO(p.scheduled_at), "HH:mm")}
                         </span>
                         <StatusBadge status={p.status} />
                       </div>
                     ))}
                     {dayPosts.length > 3 && (
-                      <p className="text-xs text-zinc-500">+{dayPosts.length - 3} mais</p>
+                      <p className="text-xs text-ig-muted">+{dayPosts.length - 3} mais</p>
                     )}
                   </div>
                 )}

@@ -77,10 +77,10 @@ function readMetric(row: RankingRow, metric: RankingMetric, period: RankingPerio
 }
 
 function medalClass(position: number) {
-  if (position === 1) return "border-amber-400/50 bg-amber-500/15 text-amber-200";
-  if (position === 2) return "border-zinc-300/40 bg-zinc-400/10 text-zinc-200";
+  if (position === 1) return "border-amber-400/50 bg-ig-warning/15 text-ig-warning";
+  if (position === 2) return "border-ig-border bg-ig-secondary text-ig-text";
   if (position === 3) return "border-orange-400/40 bg-orange-500/10 text-orange-200";
-  return "border-white/10 bg-black/20 text-zinc-300";
+  return "border-ig-border bg-ig-elevated text-ig-text";
 }
 
 export function AccountsRanking() {
@@ -122,19 +122,19 @@ export function AccountsRanking() {
     metric === "followers" ? Users : metric === "views" ? Eye : Heart;
 
   return (
-    <section className="mb-8 rounded-2xl border border-white/10 bg-gradient-to-br from-purple-500/10 via-pink-500/5 to-transparent p-6">
+    <section className="mb-8 rounded-2xl border border-ig-border bg-ig-elevated p-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 px-3 py-1 text-xs text-purple-200">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-3 py-1 text-xs text-ig-link">
             <Trophy size={14} />
             Dados reais da API do Instagram
           </div>
-          <h2 className="text-xl font-bold text-white">Ranking Top 10</h2>
-          <p className="mt-1 text-sm text-zinc-400">
+          <h2 className="text-xl font-bold text-ig-text">Ranking Top 10</h2>
+          <p className="mt-1 text-sm text-ig-muted">
             Melhores contas por seguidores ganhos, views e likes — hoje e últimos 7 dias.
           </p>
           {data?.fetched_at && (
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-ig-muted">
               Atualizado em {formatDateTime(data.fetched_at)}
             </p>
           )}
@@ -144,7 +144,7 @@ export function AccountsRanking() {
           type="button"
           onClick={fetchRanking}
           disabled={loading}
-          className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-50"
+          className="flex items-center gap-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm text-ig-text transition hover:bg-ig-secondary disabled:opacity-50"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           Atualizar ranking
@@ -159,8 +159,8 @@ export function AccountsRanking() {
             onClick={() => setMetric(key)}
             className={`rounded-full px-4 py-2 text-sm transition ${
               metric === key
-                ? "bg-pink-500 text-white"
-                : "border border-white/10 bg-black/20 text-zinc-300 hover:bg-white/10"
+                ? "bg-ig-primary text-ig-text"
+                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
             }`}
           >
             {metricLabels[key]}
@@ -176,8 +176,8 @@ export function AccountsRanking() {
             onClick={() => setPeriod(key)}
             className={`rounded-full px-4 py-2 text-sm transition ${
               period === key
-                ? "bg-purple-500 text-white"
-                : "border border-white/10 bg-black/20 text-zinc-300 hover:bg-white/10"
+                ? "bg-ig-primary text-ig-text"
+                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
             }`}
           >
             {periodLabels[key]}
@@ -186,19 +186,19 @@ export function AccountsRanking() {
       </div>
 
       {error && (
-        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        <p className="mb-4 rounded-lg border border-ig-danger/30 bg-ig-danger/10 px-4 py-3 text-sm text-ig-danger">
           {error}
         </p>
       )}
 
       {data?.message && !allAccounts.length && (
-        <p className="rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-400">
+        <p className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-muted">
           {data.message}
         </p>
       )}
 
       {loading && !top10.length ? (
-        <div className="rounded-xl border border-white/10 bg-black/20 p-8 text-center text-zinc-400">
+        <div className="rounded-xl border border-ig-border bg-ig-elevated p-8 text-center text-ig-muted">
           Buscando métricas reais de todas as contas...
         </div>
       ) : null}
@@ -223,10 +223,10 @@ export function AccountsRanking() {
                       <img
                         src={row.profile_picture_url}
                         alt={row.ig_username ?? "Instagram"}
-                        className="h-12 w-12 rounded-full border border-white/10 object-cover"
+                        className="h-12 w-12 rounded-full border border-ig-border object-cover"
                       />
                     ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-black/30 text-pink-300">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-ig-border bg-ig-elevated text-ig-link">
                         IG
                       </div>
                     )}
@@ -246,9 +246,9 @@ export function AccountsRanking() {
             })}
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+          <div className="overflow-x-auto rounded-xl border border-ig-border bg-ig-elevated">
             <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="border-b border-ig-border text-xs uppercase tracking-wide text-ig-muted">
                 <tr>
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">Conta</th>
@@ -271,35 +271,35 @@ export function AccountsRanking() {
                   return (
                     <tr
                       key={row.account_id}
-                      className={`border-b border-white/5 ${
-                        isTop10 ? "bg-pink-500/5" : ""
+                      className={`border-b border-ig-border ${
+                        isTop10 ? "bg-ig-primary/5" : ""
                       } ${row.account_status === "error" ? "opacity-60" : ""}`}
                     >
-                      <td className="px-4 py-3 font-medium text-zinc-300">{index + 1}</td>
+                      <td className="px-4 py-3 font-medium text-ig-text">{index + 1}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           {row.profile_picture_url ? (
                             <img
                               src={row.profile_picture_url}
                               alt={row.ig_username ?? "Instagram"}
-                              className="h-8 w-8 rounded-full border border-white/10 object-cover"
+                              className="h-8 w-8 rounded-full border border-ig-border object-cover"
                             />
                           ) : null}
                           <span>@{row.ig_username ?? "—"}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3">{formatCount(row.followers_count)}</td>
-                      <td className="px-4 py-3 text-emerald-300">
+                      <td className="px-4 py-3 text-ig-success">
                         {formatNumber(row.metrics.today.net_followers)}
                       </td>
-                      <td className="px-4 py-3 text-emerald-300">
+                      <td className="px-4 py-3 text-ig-success">
                         {formatNumber(row.metrics.last_7_days.net_followers)}
                       </td>
                       <td className="px-4 py-3">{formatCount(row.metrics.today.views)}</td>
                       <td className="px-4 py-3">{formatCount(row.metrics.last_7_days.views)}</td>
                       <td className="px-4 py-3">{formatCount(row.metrics.today.likes)}</td>
                       <td className="px-4 py-3">{formatCount(row.metrics.last_7_days.likes)}</td>
-                      <td className="px-4 py-3 font-semibold text-pink-200">
+                      <td className="px-4 py-3 font-semibold text-ig-link">
                         <span className="inline-flex items-center gap-1">
                           <TrendingUp size={14} />
                           {metric === "followers"
@@ -316,9 +316,9 @@ export function AccountsRanking() {
         </>
       )}
 
-      <p className="mt-4 text-xs text-zinc-500">
+      <p className="mt-4 text-xs text-ig-muted">
         Fonte: Instagram Graph API (insights oficiais). Views e likes podem ter atraso de até 48h.
-        Ganho de seguidores usa <code className="text-zinc-400">follows_and_unfollows</code> quando
+        Ganho de seguidores usa <code className="text-ig-muted">follows_and_unfollows</code> quando
         disponível; abaixo de 100 seguidores, usamos histórico salvo pelo app.
       </p>
     </section>

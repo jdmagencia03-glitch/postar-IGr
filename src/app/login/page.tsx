@@ -27,36 +27,37 @@ export default async function LoginPage({
   const facebookHref = `/api/auth/facebook?next=${encodeURIComponent(nextPath)}&add_account=1`;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
-      <h1 className="mb-2 text-2xl font-bold text-white">Entrar</h1>
-      <p className="mb-8 text-center text-sm text-zinc-400">
-        Conecte sua conta Instagram Business ou Creator diretamente.
-        Não precisa de Página do Facebook.
-      </p>
+    <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4">
+      <div className="ig-card w-full p-8">
+        <h1 className="ig-brand-script mb-6 text-center text-4xl">
+          <span className="ig-brand-gradient">InstaScheduler</span>
+        </h1>
+        <p className="mb-8 text-center text-sm text-ig-muted">
+          Conecte sua conta Instagram Business ou Creator diretamente.
+          Não precisa de Página do Facebook.
+        </p>
 
-      {params.error && (
-        <div className="mb-6 w-full rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
-          {errorMessages[params.error] ?? decodeURIComponent(params.error)}
-        </div>
-      )}
+        {params.error && (
+          <div className="ig-alert-danger mb-6 p-4 text-sm">
+            {errorMessages[params.error] ?? decodeURIComponent(params.error)}
+          </div>
+        )}
 
-      <a
-        href={loginHref}
-        className="w-full rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-6 py-3 text-center font-medium text-white"
-      >
-        Conectar com Instagram
-      </a>
+        <a href={loginHref} className="ig-btn w-full py-2.5">
+          Conectar com Instagram
+        </a>
 
-      <a
-        href={facebookHref}
-        className="mt-3 w-full rounded-lg bg-[#1877F2] px-6 py-3 text-center font-medium text-white"
-      >
-        Conectar via Facebook
-      </a>
+        <a
+          href={facebookHref}
+          className="mt-3 block w-full rounded-lg bg-[#1877F2] px-6 py-2.5 text-center text-sm font-semibold text-ig-text hover:opacity-90"
+        >
+          Conectar via Facebook
+        </a>
 
-      <p className="mt-6 text-center text-xs text-zinc-500">
-        Requer conta Instagram Business ou Creator.
-      </p>
+        <p className="mt-6 text-center text-xs text-ig-muted">
+          Requer conta Instagram Business ou Creator.
+        </p>
+      </div>
     </main>
   );
 }

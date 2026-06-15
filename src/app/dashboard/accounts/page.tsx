@@ -20,8 +20,8 @@ export default async function AccountsPage({
     <div>
       <Navbar />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-white">Contas Instagram</h1>
-        <p className="mb-8 text-zinc-400">
+        <h1 className="mb-2 text-2xl font-bold text-ig-text">Contas Instagram</h1>
+        <p className="mb-8 text-ig-muted">
           Gerencie várias contas no mesmo painel. Use Via Facebook para adicionar contas
           automaticamente.
         </p>

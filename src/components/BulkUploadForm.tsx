@@ -465,11 +465,11 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
       <form
         onSubmit={handleSubmit}
-        className="space-y-6 rounded-2xl border border-white/10 bg-gradient-to-b from-pink-500/5 to-transparent p-6"
+        className="space-y-6 rounded-2xl border border-ig-border bg-ig-elevated p-6"
       >
         {mode === "autopilot" && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            <div className="mb-1 flex items-center gap-2 font-semibold text-amber-200">
+          <div className="rounded-lg border border-ig-warning/30 bg-ig-warning/10 px-4 py-3 text-sm text-ig-warning">
+            <div className="mb-1 flex items-center gap-2 font-semibold text-ig-warning">
               <ShieldAlert size={16} />
               Dica anti-ban (opcional)
             </div>
@@ -482,7 +482,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         )}
 
         {mode === "autopilot" && postingRisk?.warnings.length ? (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="rounded-lg border border-ig-warning/30 bg-ig-warning/10 px-4 py-3 text-sm text-ig-warning">
             {postingRisk.warnings.map((warning) => (
               <p key={warning}>{warning}</p>
             ))}
@@ -491,20 +491,20 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         {mode === "autopilot" && (
           <div className="text-center">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-pink-500/30 bg-pink-500/10 px-3 py-1 text-xs text-pink-200">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-3 py-1 text-xs text-ig-link">
               <Sparkles size={14} />
               Hands-off — você só envia os vídeos
             </div>
-            <h2 className="text-xl font-bold text-white">A IA faz o resto</h2>
-            <p className="mt-1 text-sm text-zinc-400">
+            <h2 className="text-xl font-bold text-ig-text">A IA faz o resto</h2>
+            <p className="mt-1 text-sm text-ig-muted">
               Legendas, hashtags e horários estratégicos. Vídeo não é editado.
             </p>
           </div>
         )}
 
         {mode === "autopilot" && oneClickMode && (
-          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-            <Zap size={18} className="shrink-0 text-emerald-300" />
+          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-ig-success/10 px-4 py-3 text-sm text-ig-success">
+            <Zap size={18} className="shrink-0 text-ig-success" />
             <p>
               <strong>Modo 1 clique ativo.</strong> Envie e a IA agenda tudo automaticamente — sem
               prévia.
@@ -513,7 +513,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         )}
 
         {mode === "autopilot" && (
-          <div className="rounded-lg border border-pink-500/20 bg-pink-500/10 px-4 py-3 text-sm text-pink-100">
+          <div className="rounded-lg border border-ig-primary/20 bg-ig-primary/10 px-4 py-3 text-sm text-ig-link">
             <p>
               Envie até {MAX_VIDEOS_TOTAL} vídeos de uma vez
               {batchCount > 1 && (
@@ -535,7 +535,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               setMode("autopilot");
               setShowAdvanced(false);
             }}
-            className="text-sm text-pink-400 hover:underline"
+            className="text-sm text-ig-primary hover:underline"
           >
             ← Voltar ao modo automático
           </button>
@@ -543,14 +543,14 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         <div>
           <div className="mb-3 flex items-center justify-between gap-3">
-            <label className="block text-sm text-zinc-300">
+            <label className="block text-sm text-ig-text">
               {accounts.length > 1 ? "Contas Instagram (agendamento simultâneo)" : "Conta Instagram"}
             </label>
             {accounts.length > 1 && (
               <button
                 type="button"
                 onClick={toggleAllAccounts}
-                className="text-xs text-pink-400 hover:underline"
+                className="text-xs text-ig-primary hover:underline"
               >
                 {allSelected ? "Desmarcar extras" : "Selecionar todas"}
               </button>
@@ -558,7 +558,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
           </div>
 
           {accounts.length > 1 ? (
-            <div className="space-y-2 rounded-lg border border-white/10 bg-black/30 p-3">
+            <div className="space-y-2 rounded-lg border border-ig-border bg-ig-elevated p-3">
               {accounts.map((account) => {
                 const checked = selectedAccountIds.includes(account.id);
                 return (
@@ -566,28 +566,28 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
                     key={account.id}
                     className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition ${
                       checked
-                        ? "border-pink-500/40 bg-pink-500/10"
-                        : "border-white/5 bg-black/20 hover:bg-white/5"
+                        ? "border-ig-primary/40 bg-ig-primary/10"
+                        : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => toggleAccount(account.id)}
-                      className="h-4 w-4 rounded border-white/20 bg-black/40 text-pink-500"
+                      className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
                     />
                     {account.profile_picture_url ? (
                       <img
                         src={account.profile_picture_url}
                         alt={account.ig_username ?? "Instagram"}
-                        className="h-8 w-8 rounded-full border border-white/10 object-cover"
+                        className="h-8 w-8 rounded-full border border-ig-border object-cover"
                       />
                     ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs text-pink-300">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-ig-border bg-ig-secondary text-xs text-ig-link">
                         IG
                       </div>
                     )}
-                    <span className="text-sm text-white">@{account.ig_username}</span>
+                    <span className="text-sm text-ig-text">@{account.ig_username}</span>
                   </label>
                 );
               })}
@@ -596,7 +596,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
             <select
               value={selectedAccountIds[0] ?? ""}
               onChange={(e) => setSelectedAccountIds([e.target.value])}
-              className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+              className="w-full ig-input w-full"
             >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -607,34 +607,34 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
           )}
 
           {!selectedAccountIds.length && (
-            <p className="mt-2 text-xs text-red-300">Selecione pelo menos uma conta.</p>
+            <p className="mt-2 text-xs text-ig-danger">Selecione pelo menos uma conta.</p>
           )}
         </div>
 
         <div>
-          <label className="mb-2 block text-sm text-zinc-300">Vídeo(s)</label>
+          <label className="mb-2 block text-sm text-ig-text">Vídeo(s)</label>
           <input
             type="file"
             accept="video/*"
             multiple
             onChange={(e) => setFiles(e.target.files)}
-            className="w-full rounded-lg border border-dashed border-white/20 bg-black/20 px-3 py-4 text-sm text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-pink-500 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white"
+            className="w-full rounded-lg border border-dashed border-ig-border bg-ig-elevated px-3 py-4 text-sm text-ig-text file:mr-3 file:rounded-md file:border-0 file:bg-ig-primary file:px-3 file:py-2 file:text-sm file:font-medium file:text-ig-text"
           />
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-ig-muted">
             {mode === "autopilot"
               ? "Suba seus vídeos prontos. A IA só define legenda, hashtags e horário — sem mexer no vídeo."
               : "Para teste, escolha apenas 1 vídeo. Máximo 500MB por arquivo."}
           </p>
           {files && (
             <div className="mt-2 space-y-1">
-              <p className="text-xs text-emerald-300">
+              <p className="text-xs text-ig-success">
                 {files.length} arquivo(s) selecionado(s)
                 {selectedAccountIds.length > 1 && (
                   <> · total de {totalPosts} post(s) em {selectedAccountIds.length} contas</>
                 )}
               </p>
               {scheduleEstimate && (
-                <p className="flex items-center gap-1.5 text-xs text-sky-300">
+                <p className="flex items-center gap-1.5 text-xs text-ig-link">
                   <Calendar size={12} />
                   Estimativa: {scheduleEstimate.label}
                 </p>
@@ -645,15 +645,15 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         {mode === "autopilot" ? (
           <div>
-            <label className="mb-2 block text-sm text-zinc-300">Distribuição (IA decide)</label>
+            <label className="mb-2 block text-sm text-ig-text">Distribuição (IA decide)</label>
             <div className="grid gap-2 sm:grid-cols-3">
               <button
                 type="button"
                 onClick={() => setScheduleMode("warmup")}
                 className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "warmup"
-                    ? "border-amber-500/50 bg-amber-500/15 text-amber-100"
-                    : "border-white/10 bg-black/20 text-zinc-400"
+                    ? "border-amber-500/50 bg-ig-warning/15 text-ig-warning"
+                    : "border-ig-border bg-ig-elevated text-ig-muted"
                 }`}
               >
                 <strong className="flex items-center gap-1.5">
@@ -669,8 +669,8 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
                 onClick={() => setScheduleMode("auto")}
                 className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "auto"
-                    ? "border-pink-500/50 bg-pink-500/15 text-pink-100"
-                    : "border-white/10 bg-black/20 text-zinc-400"
+                    ? "border-ig-primary/50 bg-ig-primary/15 text-ig-link"
+                    : "border-ig-border bg-ig-elevated text-ig-muted"
                 }`}
               >
                 <strong className="block">Automático</strong>
@@ -683,8 +683,8 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
                 onClick={() => setScheduleMode("today")}
                 className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "today"
-                    ? "border-pink-500/50 bg-pink-500/15 text-pink-100"
-                    : "border-white/10 bg-black/20 text-zinc-400"
+                    ? "border-ig-primary/50 bg-ig-primary/15 text-ig-link"
+                    : "border-ig-border bg-ig-elevated text-ig-muted"
                 }`}
               >
                 <strong className="block">Só hoje</strong>
@@ -692,7 +692,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               </button>
             </div>
             {scheduleMode === "warmup" && hasWarmupAccounts && (
-              <p className="mt-2 text-xs text-amber-200/80">
+              <p className="mt-2 text-xs text-ig-warning/80">
                 Cada conta segue sua própria rampa de aquecimento conforme o dia em que foi conectada.
               </p>
             )}
@@ -701,50 +701,50 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
           <>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm text-zinc-300">Data de início</label>
+                <label className="mb-2 block text-sm text-ig-text">Data de início</label>
                 <input
                   type="datetime-local"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+                  className="w-full ig-input w-full"
                   required
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm text-zinc-300">Posts por dia</label>
+                <label className="mb-2 block text-sm text-ig-text">Posts por dia</label>
                 <input
                   type="number"
                   min={1}
                   max={10}
                   value={postsPerDay}
                   onChange={(e) => setPostsPerDay(Number(e.target.value))}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+                  className="w-full ig-input w-full"
                 />
               </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-sm text-zinc-300">
+              <label className="mb-2 block text-sm text-ig-text">
                 Horários (hora cheia, ex: 9 ou 9,12,15)
               </label>
               <input
                 type="text"
                 value={hours}
                 onChange={(e) => setHours(e.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+                className="w-full ig-input w-full"
                 placeholder="9"
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm text-zinc-300">
+              <label className="mb-2 block text-sm text-ig-text">
                 Legenda padrão (use {"{n}"} para número do post)
               </label>
               <textarea
                 value={captionTemplate}
                 onChange={(e) => setCaptionTemplate(e.target.value)}
                 rows={3}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-white"
+                className="w-full ig-input w-full"
                 placeholder="Post #{n} 🎬"
               />
             </div>
@@ -752,17 +752,17 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         )}
 
         {mode === "autopilot" && (
-          <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-4 py-3">
+          <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-ig-border bg-ig-elevated px-4 py-3">
             <input
               type="checkbox"
               checked={!oneClickMode}
               onChange={(e) => setOneClickMode(!e.target.checked)}
               disabled={videoCount > MAX_PREVIEW_VIDEOS}
-              className="h-4 w-4 rounded border-white/20 bg-black/40 text-pink-500"
+              className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
             />
             <div>
-              <p className="text-sm text-white">Revisar prévia antes de agendar</p>
-              <p className="text-xs text-zinc-500">
+              <p className="text-sm text-ig-text">Revisar prévia antes de agendar</p>
+              <p className="text-xs text-ig-muted">
                 {videoCount > MAX_PREVIEW_VIDEOS
                   ? `Disponível até ${MAX_PREVIEW_VIDEOS} vídeos. Acima disso, usa modo 1 clique.`
                   : "Desmarque para agendar direto em 1 clique (recomendado)."}
@@ -778,7 +778,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               setMode("manual");
               setShowAdvanced(true);
             }}
-            className="flex w-full items-center justify-center gap-2 text-xs text-zinc-500 hover:text-zinc-300"
+            className="flex w-full items-center justify-center gap-2 text-xs text-ig-muted hover:text-ig-text"
           >
             <Settings2 size={14} />
             Modo avançado (configurar manualmente)
@@ -787,20 +787,20 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         {loading && progress > 0 && (
           <div className="space-y-2">
-            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-pink-500 to-purple-600 transition-all duration-300"
+                className="h-full rounded-full bg-ig-primary transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="text-center text-xs text-zinc-500">{loadingStep}</p>
+            <p className="text-center text-xs text-ig-muted">{loadingStep}</p>
           </div>
         )}
 
         <button
           type="submit"
           disabled={loading || !selectedAccountIds.length}
-          className="w-full rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-4 py-3 font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          className="ig-btn w-full py-3 disabled:opacity-50"
         >
           {loading
             ? loadingStep || "Processando..."
@@ -819,7 +819,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         {result && (
           <p
-            className={`text-sm ${result.includes("agendad") ? "text-emerald-300" : "text-red-300"}`}
+            className={`text-sm ${result.includes("agendad") ? "text-ig-success" : "text-ig-danger"}`}
           >
             {result}
           </p>

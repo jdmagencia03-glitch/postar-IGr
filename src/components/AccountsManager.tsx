@@ -127,7 +127,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-ig-muted">
             {accounts.length} conta(s) conectada(s). Você pode agendar posts em qualquer uma delas.
           </p>
         </div>
@@ -136,7 +136,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
             type="button"
             onClick={fetchAccounts}
             disabled={loading}
-            className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 transition hover:bg-white/10 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm text-ig-text transition hover:bg-ig-secondary disabled:opacity-50"
           >
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
             Atualizar
@@ -144,7 +144,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
           {facebookEnabled && (
             <a
               href="/api/auth/facebook?next=/dashboard/accounts&add_account=1"
-              className="flex items-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+              className="flex items-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2 text-sm font-medium text-ig-text transition hover:opacity-90"
             >
               <Share2 size={16} />
               Via Facebook
@@ -152,7 +152,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
           )}
           <a
             href="/api/auth/meta?next=/dashboard/accounts&add_account=1"
-            className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+            className="flex items-center gap-2 rounded-lg bg-ig-primary px-4 py-2 text-sm font-medium text-ig-text transition hover:opacity-90"
           >
             <Plus size={16} />
             Via Instagram
@@ -160,19 +160,19 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
         </div>
       </div>
 
-      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
-        <strong className="text-amber-200">Aquecimento (opcional):</strong> ative por conta para
+      <div className="rounded-lg border border-ig-warning/20 bg-ig-warning/10 px-4 py-3 text-xs text-ig-warning/90">
+        <strong className="text-ig-warning">Aquecimento (opcional):</strong> ative por conta para
         rampa gradual nos primeiros dias. Desative se quiser usar Automático ou Só hoje no agendamento.
       </div>
 
-      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
-        <strong className="text-amber-200">Aquecimento de contas:</strong> contas novas começam com
+      <div className="rounded-lg border border-ig-warning/20 bg-ig-warning/10 px-4 py-3 text-xs text-ig-warning/90">
+        <strong className="text-ig-warning">Aquecimento de contas:</strong> contas novas começam com
         rampa gradual (1→1→2→2→3 posts/dia nos primeiros 5 dias) para reduzir risco de bloqueio.
         Use o modo <strong>Aquecimento</strong> ao agendar em massa.
       </div>
 
-      <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-xs text-zinc-400">
-        <strong className="text-zinc-300">Dica:</strong> se aparecer “função de desenvolvedor
+      <div className="rounded-lg border border-ig-border bg-ig-secondary px-4 py-3 text-xs text-ig-muted">
+        <strong className="text-ig-text">Dica:</strong> se aparecer “função de desenvolvedor
         insuficiente”, use <strong>Via Facebook</strong> — ele detecta automaticamente todas as contas
         Instagram vinculadas às suas Páginas.
       </div>
@@ -181,8 +181,8 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
         <p
           className={`rounded-lg border px-4 py-3 text-sm ${
             message.includes("sucesso")
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-red-500/30 bg-red-500/10 text-red-300"
+              ? "border-ig-success/30 bg-ig-success/10 text-ig-success"
+              : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
           }`}
         >
           {message}
@@ -190,20 +190,20 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
       )}
 
       {loading && !accounts.length ? (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center text-zinc-400">
+        <div className="rounded-xl border border-ig-border bg-ig-secondary p-8 text-center text-ig-muted">
           Carregando contas...
         </div>
       ) : null}
 
       {!loading && !accounts.length ? (
-        <div className="rounded-xl border border-dashed border-white/20 p-12 text-center">
-          <UserRound className="mx-auto mb-4 text-pink-400" size={40} />
-          <p className="mb-4 text-zinc-400">Nenhuma conta Instagram conectada ainda.</p>
+        <div className="rounded-xl border border-dashed border-ig-border p-12 text-center">
+          <UserRound className="mx-auto mb-4 text-ig-primary" size={40} />
+          <p className="mb-4 text-ig-muted">Nenhuma conta Instagram conectada ainda.</p>
           <div className="flex flex-wrap justify-center gap-2">
             {facebookEnabled && (
               <a
                 href="/api/auth/facebook?next=/dashboard/accounts&add_account=1"
-                className="inline-flex items-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                className="inline-flex items-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2 text-sm font-medium text-ig-text hover:opacity-90"
               >
                 <Share2 size={16} />
                 Conectar via Facebook
@@ -211,7 +211,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
             )}
             <a
               href="/api/auth/meta?next=/dashboard/accounts&add_account=1"
-              className="inline-flex items-center gap-2 rounded-lg bg-pink-500 px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              className="inline-flex items-center gap-2 rounded-lg bg-ig-primary px-4 py-2 text-sm font-medium text-ig-text hover:opacity-90"
             >
               <Plus size={16} />
               Conectar via Instagram
@@ -228,55 +228,55 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
           return (
             <article
               key={account.id}
-              className="rounded-xl border border-white/10 bg-white/5 p-5"
+              className="rounded-xl border border-ig-border bg-ig-secondary p-5"
             >
               <div className="flex items-start gap-4">
                 {account.profile_picture_url ? (
                   <img
                     src={account.profile_picture_url}
                     alt={account.ig_username ?? "Instagram"}
-                    className="h-14 w-14 rounded-full border border-white/10 object-cover"
+                    className="h-14 w-14 rounded-full border border-ig-border object-cover"
                   />
                 ) : (
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-pink-300">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-ig-border bg-ig-elevated text-ig-link">
                     IG
                   </div>
                 )}
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-lg font-semibold text-white">
+                    <p className="truncate text-lg font-semibold text-ig-text">
                       @{account.ig_username ?? "sem username"}
                     </p>
                     {warmup?.active && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-200">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-ig-warning/30 bg-ig-warning/15 px-2 py-0.5 text-[10px] font-medium text-ig-warning">
                         <Flame size={10} />
                         Dia {warmup.day}/{warmup.totalDays}
                       </span>
                     )}
                     {warmup && !warmup.active && warmupEnabled && warmup.day >= warmup.totalDays && (
-                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                      <span className="rounded-full border border-ig-success/30 bg-ig-success/10 px-2 py-0.5 text-[10px] text-ig-success">
                         Aquecido
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-zinc-500">
+                  <p className="text-xs text-ig-muted">
                     {account.auth_provider === "facebook" ? "Via Facebook" : "Via Instagram"} · ID:{" "}
                     {account.ig_user_id}
                   </p>
-                  <p className="mt-1 text-xs text-zinc-500">
+                  <p className="mt-1 text-xs text-ig-muted">
                     Conectada em {formatDateTime(account.created_at)}
                   </p>
                   {warmup && (
-                    <p className="mt-1 text-xs text-amber-200/70">{warmup.label}</p>
+                    <p className="mt-1 text-xs text-ig-warning/70">{warmup.label}</p>
                   )}
                 </div>
               </div>
 
-              <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+              <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-ig-border bg-ig-elevated px-3 py-2">
                 <div>
-                  <p className="text-xs font-medium text-zinc-200">Aquecimento automático</p>
-                  <p className="text-[10px] text-zinc-500">
+                  <p className="text-xs font-medium text-ig-text">Aquecimento automático</p>
+                  <p className="text-[10px] text-ig-muted">
                     Rampa gradual nos primeiros {account.warmup_days ?? 5} dias
                   </p>
                 </div>
@@ -285,20 +285,20 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                   checked={warmupEnabled}
                   disabled={updatingId === account.id}
                   onChange={() => handleWarmupToggle(account)}
-                  className="h-4 w-4 rounded border-white/20 bg-black/40 text-amber-500"
+                  className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-amber-500"
                 />
               </label>
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <a
                   href={`/dashboard/bulk?account=${account.id}`}
-                  className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/10"
+                  className="rounded-lg border border-ig-border bg-ig-elevated px-3 py-1.5 text-xs text-ig-text hover:bg-ig-secondary"
                 >
                   Agendar posts
                 </a>
                 <a
                   href={`/dashboard/reports?account=${account.id}`}
-                  className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/10"
+                  className="rounded-lg border border-ig-border bg-ig-elevated px-3 py-1.5 text-xs text-ig-text hover:bg-ig-secondary"
                 >
                   Ver relatório
                 </a>
@@ -306,7 +306,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                   type="button"
                   onClick={() => handleRemove(account.id, account.ig_username)}
                   disabled={removingId === account.id || accounts.length <= 1}
-                  className="ml-auto flex items-center gap-1 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="ml-auto flex items-center gap-1 rounded-lg border border-red-500/20 bg-ig-danger/10 px-3 py-1.5 text-xs text-ig-danger transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                   title={
                     accounts.length <= 1
                       ? "Mantenha pelo menos uma conta conectada"

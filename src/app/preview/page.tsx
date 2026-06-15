@@ -69,21 +69,21 @@ export default function PreviewPage() {
 
   return (
     <div>
-      <div className="border-b border-pink-500/30 bg-pink-500/10 px-4 py-2 text-center text-sm text-pink-300">
+      <div className="border-b border-ig-primary/30 bg-ig-primary/10 px-4 py-2 text-center text-sm text-ig-link">
         Modo Preview — dados simulados para demonstração
       </div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <section className="mb-12">
-          <h2 className="mb-4 text-xl font-bold text-white">Dashboard</h2>
+          <h2 className="mb-4 text-xl font-bold text-ig-text">Dashboard</h2>
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
             {[
-              { label: "Pendentes", value: 878, color: "text-amber-300" },
-              { label: "Publicados", value: 2, color: "text-emerald-300" },
-              { label: "Falhas", value: 1, color: "text-red-300" },
+              { label: "Pendentes", value: 878, color: "text-ig-warning" },
+              { label: "Publicados", value: 2, color: "text-ig-success" },
+              { label: "Falhas", value: 1, color: "text-ig-danger" },
             ].map((s) => (
-              <div key={s.label} className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="text-sm text-zinc-400">{s.label}</p>
+              <div key={s.label} className="rounded-xl border border-ig-border bg-ig-secondary p-4">
+                <p className="text-sm text-ig-muted">{s.label}</p>
                 <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
               </div>
             ))}
@@ -96,24 +96,24 @@ export default function PreviewPage() {
         </section>
 
         <section className="mb-12">
-          <h2 className="mb-4 text-xl font-bold text-white">Agendamento em massa</h2>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+          <h2 className="mb-4 text-xl font-bold text-ig-text">Agendamento em massa</h2>
+          <div className="rounded-2xl border border-ig-border bg-ig-secondary p-6">
             <div className="space-y-4">
-              <div className="rounded-lg border border-dashed border-white/20 p-8 text-center text-zinc-400">
+              <div className="rounded-lg border border-dashed border-ig-border p-8 text-center text-ig-muted">
                 📁 881 vídeos selecionados
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <p className="text-sm text-zinc-400">Data de início</p>
-                  <p className="text-white">15/06/2026 09:00</p>
+                  <p className="text-sm text-ig-muted">Data de início</p>
+                  <p className="text-ig-text">15/06/2026 09:00</p>
                 </div>
                 <div>
-                  <p className="text-sm text-zinc-400">Posts por dia</p>
-                  <p className="text-white">5 (9h, 12h, 15h, 18h, 21h)</p>
+                  <p className="text-sm text-ig-muted">Posts por dia</p>
+                  <p className="text-ig-text">5 (9h, 12h, 15h, 18h, 21h)</p>
                 </div>
               </div>
-              <p className="text-sm text-emerald-400">→ 881 posts distribuídos em ~176 dias</p>
-              <button className="w-full rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-4 py-3 font-medium text-white">
+              <p className="text-sm text-ig-success">→ 881 posts distribuídos em ~176 dias</p>
+              <button className="w-full rounded-lg bg-ig-primary px-4 py-3 font-medium text-ig-text">
                 Agendar em massa
               </button>
             </div>
@@ -121,19 +121,19 @@ export default function PreviewPage() {
         </section>
 
         <section className="mb-12">
-          <h2 className="mb-4 text-xl font-bold text-white">
+          <h2 className="mb-4 text-xl font-bold text-ig-text">
             Calendário — {format(now, "MMMM yyyy", { locale: ptBR })}
           </h2>
           <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {days.slice(0, 14).map((day) => {
               const count = day.getDate() % 5 === 0 ? 5 : day.getDate() % 3 === 0 ? 3 : 0;
               return (
-                <div key={day.toISOString()} className="min-h-20 rounded-xl border border-white/10 bg-white/5 p-2">
-                  <p className="text-xs font-medium text-white">{format(day, "dd/MM")}</p>
+                <div key={day.toISOString()} className="min-h-20 rounded-xl border border-ig-border bg-ig-secondary p-2">
+                  <p className="text-xs font-medium text-ig-text">{format(day, "dd/MM")}</p>
                   {count > 0 ? (
-                    <p className="mt-1 text-xs text-pink-400">{count} posts</p>
+                    <p className="mt-1 text-xs text-ig-primary">{count} posts</p>
                   ) : (
-                    <p className="mt-1 text-xs text-zinc-600">—</p>
+                    <p className="mt-1 text-xs text-ig-muted">—</p>
                   )}
                 </div>
               );
@@ -142,21 +142,21 @@ export default function PreviewPage() {
         </section>
 
         <section>
-          <h2 className="mb-4 text-xl font-bold text-white">Logs</h2>
+          <h2 className="mb-4 text-xl font-bold text-ig-text">Logs</h2>
           <div className="space-y-3">
             {mockLogs.map((log) => (
-              <div key={log.id} className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <span className={`text-xs uppercase ${log.level === "success" ? "text-emerald-300" : log.level === "error" ? "text-red-300" : "text-blue-300"}`}>
+              <div key={log.id} className="rounded-xl border border-ig-border bg-ig-secondary p-4">
+                <span className={`text-xs uppercase ${log.level === "success" ? "text-ig-success" : log.level === "error" ? "text-ig-danger" : "text-ig-link"}`}>
                   {log.level}
                 </span>
-                <p className="mt-1 text-sm text-zinc-300">{log.message}</p>
+                <p className="mt-1 text-sm text-ig-text">{log.message}</p>
               </div>
             ))}
           </div>
         </section>
 
         <div className="mt-12 text-center">
-          <Link href="/" className="text-pink-400 hover:underline">
+          <Link href="/" className="text-ig-primary hover:underline">
             ← Voltar para a página inicial
           </Link>
         </div>
