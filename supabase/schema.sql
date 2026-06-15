@@ -5,6 +5,7 @@ create extension if not exists "pgcrypto";
 
 create table if not exists oauth_states (
   state text primary key,
+  next_path text,
   created_at timestamptz not null default now()
 );
 

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSessionUserId } from "@/lib/meta/oauth";
+import { getSessionUserId } from "@/lib/auth/session";
+
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const userId = await getSessionUserId();

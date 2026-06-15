@@ -1,33 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   exchangeCodeForToken,
-  createSessionToken,
-  createSignedSession,
   getInstagramProfile,
   getLongLivedToken,
-  getSessionCookieOptions,
-  SESSION_COOKIE,
+  getOAuthStateCookieOptions,
 } from "@/lib/meta/oauth";
+import { getAppUrl } from "@/lib/app-url";
+import {
+  SESSION_COOKIE,
+  createOpaqueSessionToken,
+  getSessionCookieDeleteOptions,
+  getSessionCookieOptions,
+} from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-async function isValidOAuthState(state: string, cookieState?: string) {
-  if (cookieState && cookieState === state) {
-    return true;
+function sanitizeNextPath(value: string | null | undefined) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/dashboard";
   }
+  return value;
+}
 
+async function validateAndConsumeOAuthState(state: string, cookieState?: string) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("oauth_states")
-    .select("state")
+    .select("next_path")
     .eq("state", state)
     .maybeSingle();
 
-  if (!data) {
-    return false;
+  const valid = Boolean((cookieState && cookieState === state) || data);
+
+  if (data) {
+    await supabase.from("oauth_states").delete().eq("state", state);
   }
 
-  await supabase.from("oauth_states").delete().eq("state", state);
-  return true;
+  return {
+    valid,
+    nextPath: sanitizeNextPath(data?.next_path),
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -35,21 +46,28 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get("code");
   const state = searchParams.get("state");
   const storedState = request.cookies.get("meta_oauth_state")?.value;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001";
+  const storedNext = request.cookies.get("meta_oauth_next")?.value;
+  const appUrl = getAppUrl();
 
-  if (!code || !state || !(await isValidOAuthState(state, storedState))) {
+  if (!code || !state) {
     return NextResponse.redirect(`${appUrl}/login?error=oauth_invalid`);
   }
+
+  const oauthState = await validateAndConsumeOAuthState(state, storedState);
+  if (!oauthState.valid) {
+    return NextResponse.redirect(`${appUrl}/login?error=oauth_invalid`);
+  }
+
+  const nextPath = sanitizeNextPath(storedNext ?? oauthState.nextPath);
 
   try {
     const tokenData = await exchangeCodeForToken(code);
     const longToken = await getLongLivedToken(tokenData.access_token);
     const profile = await getInstagramProfile(longToken);
     const userId = profile.id;
+    const sessionToken = createOpaqueSessionToken();
 
     const supabase = createAdminClient();
-
-    const sessionToken = createSessionToken();
 
     await supabase.from("app_sessions").upsert(
       {
@@ -74,9 +92,10 @@ export async function GET(request: NextRequest) {
       { onConflict: "ig_user_id" },
     );
 
-    const response = NextResponse.redirect(`${appUrl}/dashboard`);
-    response.cookies.set(SESSION_COOKIE, createSignedSession(userId), getSessionCookieOptions());
-    response.cookies.delete("meta_oauth_state");
+    const response = NextResponse.redirect(`${appUrl}${nextPath}`);
+    response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
+    response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
+    response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido";

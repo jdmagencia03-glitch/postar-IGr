@@ -7,6 +7,20 @@ interface Props {
   accounts: InstagramAccount[];
 }
 
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
+  const response = await fetch(input, {
+    ...init,
+    credentials: "include",
+  });
+
+  if (response.status === 401) {
+    window.location.href = "/login?next=/dashboard/bulk";
+    throw new Error("Sessão expirada. Faça login novamente.");
+  }
+
+  return response;
+}
+
 export function BulkUploadForm({ accounts }: Props) {
   const [files, setFiles] = useState<FileList | null>(null);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
@@ -28,7 +42,7 @@ export function BulkUploadForm({ accounts }: Props) {
       const formData = new FormData();
       Array.from(files).forEach((f) => formData.append("files", f));
 
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadRes = await apiFetch("/api/upload", { method: "POST", body: formData });
       const uploadData = await uploadRes.json();
       if (!uploadRes.ok) throw new Error(uploadData.error ?? "Falha no upload");
 
@@ -38,7 +52,7 @@ export function BulkUploadForm({ accounts }: Props) {
         caption: captionTemplate.replace("{n}", String(i + 1)) || undefined,
       }));
 
-      const bulkRes = await fetch("/api/posts/bulk", {
+      const bulkRes = await apiFetch("/api/posts/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

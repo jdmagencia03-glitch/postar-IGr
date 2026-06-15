@@ -7,9 +7,11 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 export default async function CalendarPage() {
   const userId = await getSessionUserId();
-  if (!userId) redirect("/login");
+  if (!userId) redirect("/login?next=/dashboard/calendar");
 
   const supabase = createAdminClient();
   const { data: accounts } = await supabase
