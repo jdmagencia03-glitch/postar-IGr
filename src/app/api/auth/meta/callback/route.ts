@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   exchangeCodeForToken,
   createSessionToken,
+  createSignedSession,
   getInstagramProfile,
   getLongLivedToken,
   getSessionCookieOptions,
@@ -74,7 +75,7 @@ export async function GET(request: NextRequest) {
     );
 
     const response = NextResponse.redirect(`${appUrl}/dashboard`);
-    response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
+    response.cookies.set(SESSION_COOKIE, createSignedSession(userId), getSessionCookieOptions());
     response.cookies.delete("meta_oauth_state");
     return response;
   } catch (error) {

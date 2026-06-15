@@ -4,7 +4,6 @@ import { PostCard } from "@/components/PostCard";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
-import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -64,9 +63,9 @@ export default async function DashboardPage() {
 
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Próximos posts</h2>
-          <Link href="/dashboard/bulk" className="text-sm text-pink-400 hover:underline">
+          <a href="/dashboard/bulk" className="text-sm text-pink-400 hover:underline">
             Agendar em massa →
-          </Link>
+          </a>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -78,9 +77,9 @@ export default async function DashboardPage() {
         {!posts?.length && (
           <div className="rounded-xl border border-dashed border-white/20 p-12 text-center text-zinc-400">
             Nenhum post agendado ainda.{" "}
-            <Link href="/dashboard/bulk" className="text-pink-400 hover:underline">
+            <a href="/dashboard/bulk" className="text-pink-400 hover:underline">
               Agende seu primeiro lote
-            </Link>
+            </a>
           </div>
         )}
       </main>

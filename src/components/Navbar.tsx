@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Calendar, LayoutGrid, List, LogOut, Upload } from "lucide-react";
 
 const links = [
@@ -12,12 +11,12 @@ export function Navbar() {
   return (
     <header className="border-b border-white/10 bg-black/40 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-        <Link href="/dashboard" className="text-lg font-semibold text-white">
+        <a href="/dashboard" className="text-lg font-semibold text-white">
           Insta<span className="text-pink-400">Scheduler</span>
-        </Link>
+        </a>
         <nav className="flex items-center gap-1">
           {links.map(({ href, label, shortLabel, icon: Icon }) => (
-            <Link
+            <a
               key={href}
               href={href}
               title={label}
@@ -25,16 +24,16 @@ export function Navbar() {
             >
               <Icon size={16} />
               <span className="text-[10px] sm:text-sm">{shortLabel}</span>
-            </Link>
+            </a>
           ))}
-          <Link
+          <a
             href="/api/auth/logout"
             title="Sair"
             className="ml-1 flex flex-col items-center gap-0.5 rounded-lg border border-white/10 px-2 py-2 text-zinc-400 transition hover:bg-red-500/10 hover:text-red-300 sm:ml-2 sm:flex-row sm:gap-2 sm:px-3"
           >
             <LogOut size={16} />
             <span className="text-[10px] sm:text-sm">Sair</span>
-          </Link>
+          </a>
         </nav>
       </div>
     </header>

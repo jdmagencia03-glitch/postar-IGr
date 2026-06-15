@@ -1,17 +1,64 @@
 import { cookies } from "next/headers";
-import { randomBytes } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const SESSION_COOKIE = "insta_scheduler_session";
 
+function getSessionSecret() {
+  return (
+    process.env.CRON_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    "insta-scheduler-dev-secret"
+  );
+}
+
 export function getSessionCookieOptions() {
+  const isProduction =
+    process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
+
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProduction,
     sameSite: "lax" as const,
     maxAge: 60 * 60 * 24 * 60,
     path: "/",
   };
+}
+
+export function createSignedSession(userId: string) {
+  const signature = createHmac("sha256", getSessionSecret())
+    .update(userId)
+    .digest("hex")
+    .slice(0, 24);
+
+  return `${userId}.${signature}`;
+}
+
+export function parseSignedSession(value: string): string | null {
+  const lastDot = value.lastIndexOf(".");
+  if (lastDot <= 0) return null;
+
+  const userId = value.slice(0, lastDot);
+  const signature = value.slice(lastDot + 1);
+  if (!userId || !signature) return null;
+
+  const expected = createHmac("sha256", getSessionSecret())
+    .update(userId)
+    .digest("hex")
+    .slice(0, 24);
+
+  try {
+    if (
+      signature.length === expected.length &&
+      timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+    ) {
+      return userId;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 export function createSessionToken() {
@@ -20,18 +67,21 @@ export function createSessionToken() {
 
 export async function getSessionUserId(): Promise<string | null> {
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!sessionToken) return null;
+  const sessionValue = cookieStore.get(SESSION_COOKIE)?.value;
+  if (!sessionValue) return null;
 
-  if (/^\d+$/.test(sessionToken)) {
-    return sessionToken;
+  const signedUserId = parseSignedSession(sessionValue);
+  if (signedUserId) return signedUserId;
+
+  if (/^\d+$/.test(sessionValue)) {
+    return sessionValue;
   }
 
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("app_sessions")
     .select("user_id")
-    .eq("session_token", sessionToken)
+    .eq("session_token", sessionValue)
     .maybeSingle();
 
   return data?.user_id ?? null;
@@ -39,7 +89,7 @@ export async function getSessionUserId(): Promise<string | null> {
 
 export async function setSessionUserId(userId: string) {
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, userId, getSessionCookieOptions());
+  cookieStore.set(SESSION_COOKIE, createSignedSession(userId), getSessionCookieOptions());
 }
 
 export async function clearSession() {
