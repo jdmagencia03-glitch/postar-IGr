@@ -120,8 +120,6 @@ export function assessPostingRisk(params: {
   }>;
 }) {
   const warnings: string[] = [];
-  let blocked = false;
-  let requiresWarmup = false;
 
   const protectedAccounts = params.accounts.filter((account) =>
     isInProtectionPeriod({
@@ -130,37 +128,31 @@ export function assessPostingRisk(params: {
     }),
   );
 
-  if (protectedAccounts.length > 0) {
-    requiresWarmup = true;
-
-    if (params.scheduleMode !== "warmup") {
-      blocked = true;
-      warnings.push(
-        `${protectedAccounts.length} conta(s) em proteção anti-ban. Use apenas o modo Aquecimento nos primeiros ${EXTENDED_PROTECTION_DAYS} dias.`,
-      );
-    }
+  if (protectedAccounts.length > 0 && params.scheduleMode !== "warmup") {
+    warnings.push(
+      `${protectedAccounts.length} conta(s) nova(s): o modo Aquecimento reduz risco de ban. Automático/Só hoje ficam disponíveis se você preferir.`,
+    );
   }
 
-  if (params.scheduleMode === "today") {
-    blocked = true;
+  if (params.scheduleMode === "today" && params.videoCount > MAX_SAFE_TODAY_POSTS) {
     warnings.push(
-      "Postar vários Reels no mesmo dia é o principal motivo de ban/restrição em páginas novas (como contas zeradas).",
+      `Postar ${params.videoCount} Reels hoje aumenta muito o risco em páginas novas. Aquecimento distribui aos poucos.`,
     );
-
-    if (params.videoCount > MAX_SAFE_TODAY_POSTS) {
-      warnings.push(`Máximo seguro para hoje: ${MAX_SAFE_TODAY_POSTS} Reel por conta.`);
-    }
   }
 
   if (params.scheduleMode === "auto" && params.videoCount > 14 && protectedAccounts.length > 0) {
     warnings.push(
-      "Muitos vídeos em modo Automático numa conta nova aumenta risco. O Aquecimento distribui devagar (1→1→1→2→2 por dia).",
+      "Muitos vídeos em Automático numa conta nova pode ser agressivo. Considere Aquecimento (1→1→1→2→2 por dia).",
     );
   }
 
+  if (params.scheduleMode === "warmup") {
+    warnings.push("Modo Aquecimento ativo — rampa gradual para proteger contas novas.");
+  }
+
   return {
-    blocked,
-    requiresWarmup,
+    blocked: false,
+    requiresWarmup: protectedAccounts.length > 0,
     warnings,
     protected_count: protectedAccounts.length,
   };

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildAutopilotPlan, resolveAutopilotAccounts } from "@/lib/autopilot-plan";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import {
-  assessPostingRisk,
   DEFAULT_WARMUP_DAYS,
   getWarmupDayOffset,
   getWarmupStatus,
@@ -57,28 +56,6 @@ export async function POST(request: NextRequest) {
     const primaryAccount = validAccounts[0];
     const primaryUsername = primaryAccount?.ig_username ?? "perfil";
     const scheduleMode = parsed.data.schedule_mode ?? "auto";
-
-    const risk = assessPostingRisk({
-      scheduleMode,
-      videoCount: parsed.data.total_count ?? parsed.data.items.length,
-      accounts: validAccounts.map((account) => ({
-        ig_username: account.ig_username,
-        warmup_enabled: account.warmup_enabled,
-        warmup_started_at: account.warmup_started_at,
-        created_at: account.created_at,
-      })),
-    });
-
-    if (risk.blocked) {
-      return NextResponse.json(
-        {
-          error: risk.warnings[0] ?? "Modo de agendamento bloqueado para proteger suas contas",
-          warnings: risk.warnings,
-          requires_warmup: risk.requiresWarmup,
-        },
-        { status: 400 },
-      );
-    }
 
     let warmup:
       | {

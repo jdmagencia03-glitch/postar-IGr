@@ -14,7 +14,6 @@ import {
   assessPostingRisk,
   DEFAULT_WARMUP_DAYS,
   describeWarmupPlan,
-  EXTENDED_PROTECTION_DAYS,
 } from "@/lib/account-warmup";
 import { estimateScheduleDuration } from "@/lib/smart-schedule";
 import type { InstagramAccount } from "@/lib/types";
@@ -82,9 +81,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
   }, [accounts, defaultAccountId]);
 
   const [mode, setMode] = useState<UploadMode>("autopilot");
-  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(() =>
-    accounts.some((a) => a.warmup_enabled !== false) ? "warmup" : "auto",
-  );
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("warmup");
   const [oneClickMode, setOneClickMode] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [files, setFiles] = useState<FileList | null>(null);
@@ -130,8 +127,6 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
       accounts: selectedAccounts,
     });
   }, [videoCount, scheduleMode, mode, selectedAccounts]);
-
-  const scheduleBlocked = postingRisk?.blocked ?? false;
 
   const scheduleEstimate = useMemo(() => {
     if (!videoCount || mode !== "autopilot") return null;
@@ -385,11 +380,6 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
       return;
     }
 
-    if (mode === "autopilot" && scheduleBlocked) {
-      setResult(postingRisk?.warnings[0] ?? "Use o modo Aquecimento para proteger contas novas.");
-      return;
-    }
-
     setLoading(true);
     setResult(null);
     setProgress(0);
@@ -478,27 +468,21 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         className="space-y-6 rounded-2xl border border-white/10 bg-gradient-to-b from-pink-500/5 to-transparent p-6"
       >
         {mode === "autopilot" && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-            <div className="mb-1 flex items-center gap-2 font-semibold text-red-200">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <div className="mb-1 flex items-center gap-2 font-semibold text-amber-200">
               <ShieldAlert size={16} />
-              Proteção anti-ban
+              Dica anti-ban (opcional)
             </div>
             <p>
-              Postar vários Reels direto (principalmente no mesmo dia) pode zerar a conta como na imagem
-              que você enviou. Nos primeiros <strong>{EXTENDED_PROTECTION_DAYS} dias</strong>, use só{" "}
-              <strong>modo Aquecimento</strong>: rampa 1→1→1→2→2 posts/dia, com intervalo mínimo de 6h.
+              Para contas novas, o modo <strong>Aquecimento</strong> distribui devagar (1→1→1→2→2
+              posts/dia). Se preferir velocidade, use <strong>Automático</strong> ou{" "}
+              <strong>Só hoje</strong> — você escolhe.
             </p>
           </div>
         )}
 
         {mode === "autopilot" && postingRisk?.warnings.length ? (
-          <div
-            className={`rounded-lg border px-4 py-3 text-sm ${
-              scheduleBlocked
-                ? "border-red-500/40 bg-red-500/15 text-red-200"
-                : "border-amber-500/30 bg-amber-500/10 text-amber-100"
-            }`}
-          >
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             {postingRisk.warnings.map((warning) => (
               <p key={warning}>{warning}</p>
             ))}
@@ -683,8 +667,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               <button
                 type="button"
                 onClick={() => setScheduleMode("auto")}
-                disabled={postingRisk?.requiresWarmup}
-                className={`rounded-xl border px-4 py-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "auto"
                     ? "border-pink-500/50 bg-pink-500/15 text-pink-100"
                     : "border-white/10 bg-black/20 text-zinc-400"
@@ -692,22 +675,20 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
               >
                 <strong className="block">Automático</strong>
                 <span className="text-xs opacity-80">
-                  Após os {EXTENDED_PROTECTION_DAYS} dias de proteção
+                  Semanas/meses — IA distribui 1-3 posts/dia nos horários de pico
                 </span>
               </button>
               <button
                 type="button"
                 onClick={() => setScheduleMode("today")}
-                disabled
-                title="Bloqueado: alto risco de ban em contas novas"
-                className={`rounded-xl border px-4 py-3 text-left text-sm transition opacity-50 ${
+                className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
                   scheduleMode === "today"
-                    ? "border-red-500/50 bg-red-500/15 text-red-200"
-                    : "border-white/10 bg-black/20 text-zinc-500"
+                    ? "border-pink-500/50 bg-pink-500/15 text-pink-100"
+                    : "border-white/10 bg-black/20 text-zinc-400"
                 }`}
               >
                 <strong className="block">Só hoje</strong>
-                <span className="text-xs opacity-80">Bloqueado — risco de ban</span>
+                <span className="text-xs opacity-80">Todos os vídeos ainda hoje</span>
               </button>
             </div>
             {scheduleMode === "warmup" && hasWarmupAccounts && (
@@ -818,7 +799,7 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
 
         <button
           type="submit"
-          disabled={loading || !selectedAccountIds.length || scheduleBlocked}
+          disabled={loading || !selectedAccountIds.length}
           className="w-full rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 px-4 py-3 font-medium text-white transition hover:opacity-90 disabled:opacity-50"
         >
           {loading

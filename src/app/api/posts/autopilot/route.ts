@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveAutopilotAccounts, resolveScheduleForAccount } from "@/lib/autopilot-plan";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
-import { assessPostingRisk } from "@/lib/account-warmup";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -60,23 +59,6 @@ export async function POST(request: NextRequest) {
   try {
     const validAccounts = await resolveAutopilotAccounts(supabase, ownerId, requestedAccountIds);
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
-
-    const risk = assessPostingRisk({
-      scheduleMode,
-      videoCount: parsed.data.items.length,
-      accounts: validAccounts,
-    });
-
-    if (risk.blocked) {
-      return NextResponse.json(
-        {
-          error: risk.warnings[0] ?? "Agendamento bloqueado para proteger suas contas",
-          warnings: risk.warnings,
-        },
-        { status: 400 },
-      );
-    }
-
     const usePerAccountSchedule = scheduleMode === "warmup";
 
     const rows = validAccounts.flatMap((account) => {

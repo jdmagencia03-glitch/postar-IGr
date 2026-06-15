@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, RefreshCw, UserRound, Share2, Flame } from "lucide-react";
 import { MetaOAuthAlert } from "@/components/MetaOAuthAlert";
-import { EXTENDED_PROTECTION_DAYS } from "@/lib/account-warmup";
 import { formatDateTime } from "@/lib/utils";
 
 interface WarmupInfo {
@@ -161,10 +160,9 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
         </div>
       </div>
 
-      <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-100/90">
-        <strong className="text-red-200">Evite ban:</strong> nunca poste vários Reels no mesmo dia em
-        conta nova. O app força modo Aquecimento por {EXTENDED_PROTECTION_DAYS} dias (rampa
-        1→1→1→2→2/dia).
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
+        <strong className="text-amber-200">Aquecimento (opcional):</strong> ative por conta para
+        rampa gradual nos primeiros dias. Desative se quiser usar Automático ou Só hoje no agendamento.
       </div>
 
       <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100/90">
