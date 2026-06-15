@@ -1,21 +1,45 @@
 import { cookies } from "next/headers";
+import { randomBytes } from "crypto";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-const SESSION_COOKIE = "insta_scheduler_session";
+export const SESSION_COOKIE = "insta_scheduler_session";
+
+export function getSessionCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    maxAge: 60 * 60 * 24 * 60,
+    path: "/",
+  };
+}
+
+export function createSessionToken() {
+  return randomBytes(32).toString("hex");
+}
 
 export async function getSessionUserId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return cookieStore.get(SESSION_COOKIE)?.value ?? null;
+  const sessionToken = cookieStore.get(SESSION_COOKIE)?.value;
+  if (!sessionToken) return null;
+
+  if (/^\d+$/.test(sessionToken)) {
+    return sessionToken;
+  }
+
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("app_sessions")
+    .select("user_id")
+    .eq("session_token", sessionToken)
+    .maybeSingle();
+
+  return data?.user_id ?? null;
 }
 
 export async function setSessionUserId(userId: string) {
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, userId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 60,
-    path: "/",
-  });
+  cookieStore.set(SESSION_COOKIE, userId, getSessionCookieOptions());
 }
 
 export async function clearSession() {
@@ -29,8 +53,19 @@ function getRedirectUri() {
   return process.env.META_REDIRECT_URI!.replace(/\/$/, "");
 }
 
+function getInstagramCredentials() {
+  const appId = process.env.INSTAGRAM_APP_ID;
+  const appSecret = process.env.INSTAGRAM_APP_SECRET;
+
+  if (!appId || !appSecret) {
+    throw new Error("INSTAGRAM_APP_ID e INSTAGRAM_APP_SECRET são obrigatórios");
+  }
+
+  return { appId, appSecret };
+}
+
 export function getMetaAuthUrl(state: string) {
-  const appId = process.env.INSTAGRAM_APP_ID || process.env.META_APP_ID!;
+  const { appId } = getInstagramCredentials();
   const redirectUri = getRedirectUri();
   const params = new URLSearchParams({
     client_id: appId,
@@ -38,16 +73,10 @@ export function getMetaAuthUrl(state: string) {
     scope: "instagram_business_basic,instagram_business_content_publish",
     response_type: "code",
     state,
+    enable_fb_login: "0",
   });
 
   return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
-}
-
-function getInstagramCredentials() {
-  return {
-    appId: process.env.INSTAGRAM_APP_ID || process.env.META_APP_ID!,
-    appSecret: process.env.INSTAGRAM_APP_SECRET || process.env.META_APP_SECRET!,
-  };
 }
 
 export async function exchangeCodeForToken(code: string) {
@@ -71,9 +100,15 @@ export async function exchangeCodeForToken(code: string) {
     throw new Error(data.error_message ?? data.error?.message ?? "Falha ao trocar código por token");
   }
 
+  const tokenEntry = Array.isArray(data.data) ? data.data[0] : data;
+
+  if (!tokenEntry?.access_token || !tokenEntry?.user_id) {
+    throw new Error("Resposta de token inválida da API do Instagram");
+  }
+
   return {
-    access_token: data.access_token as string,
-    user_id: String(data.user_id),
+    access_token: tokenEntry.access_token as string,
+    user_id: String(tokenEntry.user_id),
   };
 }
 

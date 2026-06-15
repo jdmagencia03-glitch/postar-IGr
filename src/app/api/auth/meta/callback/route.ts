@@ -1,11 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   exchangeCodeForToken,
+  createSessionToken,
   getInstagramProfile,
   getLongLivedToken,
-  setSessionUserId,
+  getSessionCookieOptions,
+  SESSION_COOKIE,
 } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
+
+async function isValidOAuthState(state: string, cookieState?: string) {
+  if (cookieState && cookieState === state) {
+    return true;
+  }
+
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("oauth_states")
+    .select("state")
+    .eq("state", state)
+    .maybeSingle();
+
+  if (!data) {
+    return false;
+  }
+
+  await supabase.from("oauth_states").delete().eq("state", state);
+  return true;
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -14,7 +36,7 @@ export async function GET(request: NextRequest) {
   const storedState = request.cookies.get("meta_oauth_state")?.value;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001";
 
-  if (!code || !state || state !== storedState) {
+  if (!code || !state || !(await isValidOAuthState(state, storedState))) {
     return NextResponse.redirect(`${appUrl}/login?error=oauth_invalid`);
   }
 
@@ -26,9 +48,12 @@ export async function GET(request: NextRequest) {
 
     const supabase = createAdminClient();
 
+    const sessionToken = createSessionToken();
+
     await supabase.from("app_sessions").upsert(
       {
         user_id: userId,
+        session_token: sessionToken,
         access_token: longToken,
         updated_at: new Date().toISOString(),
       },
@@ -48,9 +73,8 @@ export async function GET(request: NextRequest) {
       { onConflict: "ig_user_id" },
     );
 
-    await setSessionUserId(userId);
-
     const response = NextResponse.redirect(`${appUrl}/dashboard`);
+    response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
     response.cookies.delete("meta_oauth_state");
     return response;
   } catch (error) {

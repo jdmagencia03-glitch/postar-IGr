@@ -3,13 +3,23 @@
 
 create extension if not exists "pgcrypto";
 
+create table if not exists oauth_states (
+  state text primary key,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_oauth_states_created_at on oauth_states(created_at);
+
 create table if not exists app_sessions (
   id uuid primary key default gen_random_uuid(),
   user_id text not null unique,
+  session_token text unique,
   access_token text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create index if not exists idx_app_sessions_session_token on app_sessions(session_token);
 
 create table if not exists instagram_accounts (
   id uuid primary key default gen_random_uuid(),

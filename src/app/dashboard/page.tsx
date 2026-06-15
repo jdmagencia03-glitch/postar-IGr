@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   const userId = await getSessionUserId();
   if (!userId) redirect("/login");
