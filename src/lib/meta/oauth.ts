@@ -23,17 +23,24 @@ export async function clearSession() {
   cookieStore.delete(SESSION_COOKIE);
 }
 
+function getRedirectUri() {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
+  if (base) return `${base}/api/auth/meta/callback`;
+  return process.env.META_REDIRECT_URI!.replace(/\/$/, "");
+}
+
 export function getMetaAuthUrl(state: string) {
   const appId = process.env.INSTAGRAM_APP_ID || process.env.META_APP_ID!;
+  const redirectUri = getRedirectUri();
   const params = new URLSearchParams({
     client_id: appId,
-    redirect_uri: process.env.META_REDIRECT_URI!,
+    redirect_uri: redirectUri,
     scope: "instagram_business_basic,instagram_business_content_publish",
     response_type: "code",
     state,
   });
 
-  return `https://api.instagram.com/oauth/authorize?${params.toString()}`;
+  return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
 }
 
 function getInstagramCredentials() {
@@ -53,7 +60,7 @@ export async function exchangeCodeForToken(code: string) {
       client_id: appId,
       client_secret: appSecret,
       grant_type: "authorization_code",
-      redirect_uri: process.env.META_REDIRECT_URI!,
+      redirect_uri: getRedirectUri(),
       code,
     }),
   });
