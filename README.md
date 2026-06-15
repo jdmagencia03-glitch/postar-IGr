@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# InstaScheduler
 
-## Getting Started
+Agendador de posts para Instagram usando **API oficial da Meta**, hospedado em **Vercel (grátis)** com banco **Supabase (grátis)**.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 + TypeScript + Tailwind
+- Supabase (PostgreSQL + Storage)
+- Vercel (deploy)
+- cron-job.org (cron gratuito a cada minuto)
+
+## Setup local
 
 ```bash
+cp .env.local.example .env.local
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 1. Supabase (gratuito)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Crie projeto em https://supabase.com
+2. SQL Editor → execute `supabase/schema.sql`
+3. Storage → crie bucket `media` → marque como **público**
+4. Copie URL, anon key e service role key para `.env.local`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 2. Meta Developer
 
-## Learn More
+1. Crie app em https://developers.facebook.com
+2. Adicione produto **Instagram Graph API**
+3. OAuth Redirect: `http://localhost:3000/api/auth/meta/callback`
+4. Permissões: `instagram_business_basic`, `instagram_business_content_publish`, `pages_show_list`, `pages_read_engagement`
+5. Conta Instagram **Business/Creator** vinculada a Página do Facebook
 
-To learn more about Next.js, take a look at the following resources:
+## 3. Deploy Vercel + GitHub
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Suba o repo no GitHub
+2. Importe no https://vercel.com
+3. Configure as variáveis de ambiente (todas do `.env.local.example`)
+4. Atualize `META_REDIRECT_URI` e `NEXT_PUBLIC_APP_URL` para sua URL da Vercel
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 4. Cron gratuito (publicação automática)
 
-## Deploy on Vercel
+O Vercel gratuito só permite cron 1x/dia. Use **cron-job.org** (grátis):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- URL: `https://SEU-DOMINIO.vercel.app/api/cron/publish`
+- Método: GET
+- Intervalo: a cada **1 minuto**
+- Header: `Authorization: Bearer SEU_CRON_SECRET`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Custo total
+
+| Serviço | Custo |
+|---------|-------|
+| Vercel | R$ 0 |
+| Supabase | R$ 0 (até 500MB DB + 1GB storage) |
+| cron-job.org | R$ 0 |
+| OpenAI (legendas, opcional) | ~R$ 0–30/mês |
+
+## Funcionalidades
+
+- Login via Meta OAuth
+- Agendamento individual e em massa
+- Reels, Feed e Carrossel
+- Calendário de posts
+- Logs de publicação
+- Legendas com IA (opcional)
