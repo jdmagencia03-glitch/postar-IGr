@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
+import { AccountsRanking } from "@/components/AccountsRanking";
 import { PostCard } from "@/components/PostCard";
 import { ReportsInsights } from "@/components/ReportsInsights";
 import { getOwnerAccounts } from "@/lib/accounts";
@@ -98,8 +99,10 @@ export default async function ReportsPage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <h1 className="mb-2 text-2xl font-bold text-white">Relatório</h1>
         <p className="mb-8 text-zinc-400">
-          Métricas do Instagram em tempo real e status dos seus agendamentos.
+          Métricas reais do Instagram, ranking Top 10 e status dos seus agendamentos.
         </p>
+
+        <AccountsRanking />
 
         <ReportsInsights
           accounts={accounts.map((a) => ({
