@@ -1,27 +1,62 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
 
 interface UploadContextValue {
-  progress: UploadEngineProgress | null;
-  setProgress: (progress: UploadEngineProgress | null) => void;
   isActive: boolean;
   setIsActive: (active: boolean) => void;
   batchNumber: number | null;
   setBatchNumber: (value: number | null) => void;
+  setProgress: (progress: UploadEngineProgress | null) => void;
+  subscribeProgress: (listener: () => void) => () => void;
+  getProgressSnapshot: () => UploadEngineProgress | null;
 }
 
 const UploadContext = createContext<UploadContextValue | null>(null);
 
 export function UploadProvider({ children }: { children: ReactNode }) {
-  const [progress, setProgress] = useState<UploadEngineProgress | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [batchNumber, setBatchNumber] = useState<number | null>(null);
+  const progressRef = useRef<UploadEngineProgress | null>(null);
+  const listenersRef = useRef(new Set<() => void>());
+
+  const subscribeProgress = useCallback((listener: () => void) => {
+    listenersRef.current.add(listener);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
+  }, []);
+
+  const getProgressSnapshot = useCallback(() => progressRef.current, []);
+
+  const setProgress = useCallback((progress: UploadEngineProgress | null) => {
+    progressRef.current = progress;
+    for (const listener of listenersRef.current) {
+      listener();
+    }
+  }, []);
 
   const value = useMemo(
-    () => ({ progress, setProgress, isActive, setIsActive, batchNumber, setBatchNumber }),
-    [progress, isActive, batchNumber],
+    () => ({
+      isActive,
+      setIsActive,
+      batchNumber,
+      setBatchNumber,
+      setProgress,
+      subscribeProgress,
+      getProgressSnapshot,
+    }),
+    [isActive, batchNumber, setProgress, subscribeProgress, getProgressSnapshot],
   );
 
   return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;
@@ -37,4 +72,14 @@ export function useUploadContext() {
 
 export function useOptionalUploadContext() {
   return useContext(UploadContext);
+}
+
+/** Assina progresso sem re-renderizar o restante da árvore (UploadProvider). */
+export function useUploadProgress() {
+  const context = useContext(UploadContext);
+  return useSyncExternalStore(
+    context?.subscribeProgress ?? (() => () => undefined),
+    context?.getProgressSnapshot ?? (() => null),
+    () => null,
+  );
 }

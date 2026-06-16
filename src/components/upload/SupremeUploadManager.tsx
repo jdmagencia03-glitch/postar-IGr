@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Pause, Play, Upload, X } from "lucide-react";
 import { useOptionalUploadContext } from "@/contexts/UploadContext";
 import {
@@ -116,7 +116,37 @@ export function SupremeUploadManager({
   } | null>(null);
 
   const syncBatch = useCallback((next: UploadBatch | null) => {
-    setBatch(next);
+    setBatch((prev) => {
+      if (next === null) return null;
+      if (!prev || prev.id !== next.id) return next;
+
+      const prevFiles = prev.upload_files ?? [];
+      const nextFiles = next.upload_files ?? [];
+      const filesEqual =
+        prevFiles.length === nextFiles.length &&
+        prevFiles.every((file) => {
+          const updated = nextFiles.find((item) => item.id === file.id);
+          return (
+            updated &&
+            updated.status === file.status &&
+            updated.bytes_uploaded === file.bytes_uploaded &&
+            updated.public_url === file.public_url
+          );
+        });
+
+      if (
+        filesEqual &&
+        prev.status === next.status &&
+        prev.completed_files === next.completed_files &&
+        prev.failed_files === next.failed_files &&
+        prev.total_files === next.total_files &&
+        prev.paused === next.paused
+      ) {
+        return prev;
+      }
+
+      return next;
+    });
     onBatchUpdateRef.current?.(next);
     uploadContextRef.current?.setBatchNumber(next?.batch_number ?? null);
   }, []);
@@ -432,7 +462,24 @@ export function SupremeUploadManager({
   const completedOnlyFiles = files
     .filter((file) => file.status === "completed")
     .sort((a, b) => a.sort_order - b.sort_order);
-  const listFiles = visibleFiles.length > 0 ? visibleFiles : completedOnlyFiles.slice(-20);
+  const listFiles = useMemo(() => {
+    const sorted = [...files].sort((a, b) => a.sort_order - b.sort_order);
+    const inProgress = sorted.filter(
+      (file) =>
+        file.status === "uploading" ||
+        file.status === "failed" ||
+        file.status === "pending",
+    );
+    const recentCompleted = sorted.filter((file) => file.status === "completed").slice(-8);
+
+    if (batch?.status !== "ready") {
+      const seen = new Set(inProgress.map((file) => file.id));
+      return [...inProgress, ...recentCompleted.filter((file) => !seen.has(file.id))];
+    }
+
+    if (visibleFiles.length > 0) return visibleFiles;
+    return completedOnlyFiles.slice(-20);
+  }, [batch?.status, completedOnlyFiles, files, visibleFiles]);
 
   if (initialLoading) {
     return (
@@ -575,7 +622,7 @@ export function SupremeUploadManager({
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
                   <div
-                    className={`h-full rounded-full bg-ig-primary ${running ? "" : "transition-all"}`}
+                    className="h-full rounded-full bg-ig-primary transition-none"
                     style={{ width: `${overallPercent}%` }}
                   />
                 </div>
@@ -636,11 +683,11 @@ export function SupremeUploadManager({
             </div>
           </div>
 
-          {progress && progress.activeFiles.length > 0 && (
-            <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
+          {(running || Boolean(progress?.activeFiles.length)) && (
+            <div className="min-h-[120px] rounded-xl border border-ig-border bg-ig-elevated p-4">
               <p className="mb-2 text-sm font-medium text-ig-text">Enviando agora</p>
               <div className="space-y-2">
-                {progress.activeFiles.map((file) => (
+                {(progress?.activeFiles ?? []).map((file) => (
                   <div key={file.id}>
                     <div className="flex justify-between text-xs">
                       <span className="truncate text-ig-text">{file.filename}</span>
@@ -651,8 +698,15 @@ export function SupremeUploadManager({
                     </div>
                   </div>
                 ))}
+                {!progress?.activeFiles.length && running && (
+                  <p className="text-xs text-ig-muted">Preparando próximo envio...</p>
+                )}
               </div>
-              <p className="mt-2 text-xs text-ig-muted">{progress.waiting} aguardando · {progress.completed} concluídos</p>
+              {progress && (
+                <p className="mt-2 text-xs text-ig-muted">
+                  {progress.waiting} aguardando · {progress.completed} concluídos
+                </p>
+              )}
             </div>
           )}
 

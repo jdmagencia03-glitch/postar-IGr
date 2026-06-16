@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, Plus, UserRound, X } from "lucide-react";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
 import { updateBatchSchedule } from "@/lib/upload/client";
@@ -152,6 +152,21 @@ function applyBatchSchedule(batch: UploadBatch) {
   return { scheduleMode: nextMode, customPostsPerDay: nextPosts, customTimeSlots: nextSlots };
 }
 
+function batchSummaryEqual(a: UploadBatch | null, b: UploadBatch | null) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.id === b.id &&
+    a.status === b.status &&
+    a.completed_files === b.completed_files &&
+    a.failed_files === b.failed_files &&
+    a.total_files === b.total_files &&
+    a.schedule_mode === b.schedule_mode &&
+    a.paused === b.paused &&
+    JSON.stringify(a.custom_schedule) === JSON.stringify(b.custom_schedule)
+  );
+}
+
 export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const initialAccountId = useMemo(() => {
     if (defaultAccountId && accounts.some((account) => account.id === defaultAccountId)) {
@@ -169,6 +184,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
   const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
   const restoredBatchIdRef = useRef<string | null>(null);
+  const handleScheduleRef = useRef<(partial?: boolean) => Promise<void>>(async () => {});
   const [isUploading, setIsUploading] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -200,6 +216,22 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
     effectiveCustomTimeSlots,
   );
 
+  const customSchedulePayload = useMemo(
+    () =>
+      scheduleMode === "custom"
+        ? { posts_per_day: customPostsPerDay, time_slots: customTimeSlots }
+        : null,
+    [scheduleMode, customPostsPerDay, customTimeSlots],
+  );
+
+  const handleBatchUpdate = useCallback((batch: UploadBatch | null) => {
+    setActiveBatch((prev) => (batchSummaryEqual(prev, batch) ? prev : batch));
+  }, []);
+
+  const handleUploadingChange = useCallback((uploading: boolean) => {
+    setIsUploading(uploading);
+  }, []);
+
   useEffect(() => {
     if (!activeBatch || restoredBatchIdRef.current === activeBatch.id) return;
     restoredBatchIdRef.current = activeBatch.id;
@@ -228,7 +260,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
             ? { posts_per_day: postsPerDay, time_slots: timeSlots }
             : null,
       });
-      setActiveBatch(updated);
+      setActiveBatch((prev) => (batchSummaryEqual(prev, updated) ? prev : updated));
     } catch (error) {
       setResult(error instanceof Error ? error.message : "Falha ao salvar modo de publicação");
     }
@@ -401,6 +433,11 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       setLoadingStep("");
     }
   }
+  handleScheduleRef.current = handleSchedule;
+
+  const handleSchedulePartial = useCallback(() => {
+    void handleScheduleRef.current(true);
+  }, []);
 
   const publicationModes: Array<{
     id: ScheduleMode;
@@ -499,14 +536,10 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
             <SupremeUploadManager
               accountId={selectedAccountId}
               scheduleMode={scheduleMode}
-              customSchedule={
-                scheduleMode === "custom"
-                  ? { posts_per_day: customPostsPerDay, time_slots: customTimeSlots }
-                  : null
-              }
-              onBatchUpdate={setActiveBatch}
-              onUploadingChange={setIsUploading}
-              onSchedulePartial={() => handleSchedule(true)}
+              customSchedule={customSchedulePayload}
+              onBatchUpdate={handleBatchUpdate}
+              onUploadingChange={handleUploadingChange}
+              onSchedulePartial={handleSchedulePartial}
             />
           </div>
 

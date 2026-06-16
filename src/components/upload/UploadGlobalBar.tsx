@@ -1,13 +1,15 @@
 "use client";
 
-import { useOptionalUploadContext } from "@/contexts/UploadContext";
+import { memo } from "react";
+import { useOptionalUploadContext, useUploadProgress } from "@/contexts/UploadContext";
 
-export function UploadGlobalBar() {
+export const UploadGlobalBar = memo(function UploadGlobalBar() {
   const context = useOptionalUploadContext();
+  const progress = useUploadProgress();
 
-  if (!context?.isActive || !context.progress) return null;
+  if (!context?.isActive || !progress) return null;
 
-  const { progress, batchNumber } = context;
+  const { batchNumber } = context;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-ig-border bg-ig-elevated/95 px-4 py-3 backdrop-blur">
@@ -21,7 +23,7 @@ export function UploadGlobalBar() {
           </p>
           <div className="mt-2 h-1.5 max-w-md overflow-hidden rounded-full bg-ig-secondary">
             <div
-              className="h-full rounded-full bg-ig-primary"
+              className="h-full rounded-full bg-ig-primary transition-none"
               style={{ width: `${progress.overallPercent}%` }}
             />
           </div>
@@ -29,4 +31,4 @@ export function UploadGlobalBar() {
       </div>
     </div>
   );
-}
+});
