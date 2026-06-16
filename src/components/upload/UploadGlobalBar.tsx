@@ -11,8 +11,8 @@ export function UploadGlobalBar() {
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-ig-border bg-ig-elevated/95 px-4 py-3 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="mx-auto max-w-6xl">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-ig-text">
             Upload em andamento{batchNumber ? ` · Lote #${batchNumber}` : ""}
           </p>
@@ -26,9 +26,6 @@ export function UploadGlobalBar() {
             />
           </div>
         </div>
-        <a href="/dashboard/bulk" className="ig-btn-secondary shrink-0 px-4 py-2 text-sm font-semibold">
-          Ver detalhes
-        </a>
       </div>
     </div>
   );
