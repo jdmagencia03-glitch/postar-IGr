@@ -21,7 +21,7 @@ export function UploadGlobalBar() {
           </p>
           <div className="mt-2 h-1.5 max-w-md overflow-hidden rounded-full bg-ig-secondary">
             <div
-              className="h-full rounded-full bg-ig-primary transition-all"
+              className="h-full rounded-full bg-ig-primary"
               style={{ width: `${progress.overallPercent}%` }}
             />
           </div>

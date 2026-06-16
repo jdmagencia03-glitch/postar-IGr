@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Pause, Play, Upload, X } from "lucide-react";
 import { useOptionalUploadContext } from "@/contexts/UploadContext";
 import {
@@ -39,6 +39,41 @@ interface Props {
   onSchedulePartial?: () => void;
 }
 
+const FileStatusRow = memo(function FileStatusRow({
+  file,
+  percent,
+  onRetry,
+}: {
+  file: UploadBatchFile;
+  percent: number;
+  onRetry: (file: UploadBatchFile) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="truncate text-ig-text">{file.filename}</span>
+        <span className="text-xs text-ig-muted">
+          {formatBytes(Number(file.file_size))} · {fileStatusLabel(file.status)}
+        </span>
+      </div>
+      {(file.status === "uploading" || percent > 0) && file.status !== "completed" && (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ig-elevated">
+          <div className="h-full rounded-full bg-ig-primary" style={{ width: `${percent || 5}%` }} />
+        </div>
+      )}
+      {file.status === "failed" && (
+        <button
+          type="button"
+          onClick={() => onRetry(file)}
+          className="mt-2 text-xs font-medium text-ig-primary hover:underline"
+        >
+          Tentar novamente
+        </button>
+      )}
+    </div>
+  );
+});
+
 export function SupremeUploadManager({
   accountId,
   scheduleMode,
@@ -52,9 +87,20 @@ export function SupremeUploadManager({
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const engineRef = useRef<UploadEngine | null>(null);
   const retryFileIdRef = useRef<string | null>(null);
+  const onBatchUpdateRef = useRef(onBatchUpdate);
+  const onUploadingChangeRef = useRef(onUploadingChange);
+  const uploadContextRef = useRef(uploadContext);
+  const progressFrameRef = useRef<number | null>(null);
+  const pendingProgressRef = useRef<UploadEngineProgress | null>(null);
+
+  useEffect(() => {
+    onBatchUpdateRef.current = onBatchUpdate;
+    onUploadingChangeRef.current = onUploadingChange;
+    uploadContextRef.current = uploadContext;
+  });
 
   const [batch, setBatch] = useState<UploadBatch | null>(null);
-  const [loadingBatch, setLoadingBatch] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const [speedMode, setSpeedMode] = useState<UploadSpeedMode>("normal");
@@ -68,48 +114,74 @@ export function SupremeUploadManager({
     pendingFiles: File[];
   } | null>(null);
 
-  const syncBatch = useCallback(
-    (next: UploadBatch | null) => {
-      setBatch(next);
-      onBatchUpdate?.(next);
-      uploadContext?.setBatchNumber(next?.batch_number ?? null);
+  const syncBatch = useCallback((next: UploadBatch | null) => {
+    setBatch(next);
+    onBatchUpdateRef.current?.(next);
+    uploadContextRef.current?.setBatchNumber(next?.batch_number ?? null);
+  }, []);
+
+  const flushProgress = useCallback(() => {
+    progressFrameRef.current = null;
+    const pending = pendingProgressRef.current;
+    if (!pending) return;
+    setProgress(pending);
+    uploadContextRef.current?.setProgress(pending);
+  }, []);
+
+  const scheduleProgressUpdate = useCallback(
+    (next: UploadEngineProgress) => {
+      pendingProgressRef.current = next;
+      if (progressFrameRef.current !== null) return;
+      progressFrameRef.current = requestAnimationFrame(flushProgress);
     },
-    [onBatchUpdate, uploadContext],
+    [flushProgress],
   );
 
-  const loadActiveBatch = useCallback(async () => {
-    setLoadingBatch(true);
-    try {
-      const active = await fetchActiveBatch();
-      syncBatch(active);
-      if (active?.upload_speed_mode) setSpeedMode(active.upload_speed_mode);
-      if (active?.paused) setPaused(true);
-      if (active?.upload_files?.length) {
-        const initialProgress: Record<string, number> = {};
-        for (const file of active.upload_files) {
-          const uploaded = Number(file.bytes_uploaded ?? 0);
-          const total = Number(file.file_size);
-          if (uploaded > 0 && total > 0 && file.status !== "completed") {
-            initialProgress[file.id] = Math.round((uploaded / total) * 100);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialBatch() {
+      setInitialLoading(true);
+      try {
+        const active = await fetchActiveBatch();
+        if (cancelled) return;
+
+        syncBatch(active);
+        if (active?.upload_speed_mode) setSpeedMode(active.upload_speed_mode);
+        if (active?.paused) setPaused(true);
+        if (active?.upload_files?.length) {
+          const initialProgress: Record<string, number> = {};
+          for (const file of active.upload_files) {
+            const uploaded = Number(file.bytes_uploaded ?? 0);
+            const total = Number(file.file_size);
+            if (uploaded > 0 && total > 0 && file.status !== "completed") {
+              initialProgress[file.id] = Math.round((uploaded / total) * 100);
+            }
           }
+          setProgressMap(initialProgress);
         }
-        setProgressMap(initialProgress);
+      } catch (error) {
+        if (!cancelled) {
+          setMessage(error instanceof Error ? error.message : "Erro ao carregar lote");
+        }
+      } finally {
+        if (!cancelled) setInitialLoading(false);
       }
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao carregar lote");
-    } finally {
-      setLoadingBatch(false);
     }
-  }, [syncBatch]);
+
+    loadInitialBatch();
+    return () => {
+      cancelled = true;
+      if (progressFrameRef.current !== null) {
+        cancelAnimationFrame(progressFrameRef.current);
+      }
+    };
+  }, [accountId, syncBatch]);
 
   useEffect(() => {
-    loadActiveBatch();
-  }, [loadActiveBatch]);
-
-  useEffect(() => {
-    onUploadingChange?.(running);
-    uploadContext?.setIsActive(running || Boolean(batch && batch.status !== "ready"));
-  }, [running, batch, onUploadingChange, uploadContext]);
+    onUploadingChangeRef.current?.(running);
+    uploadContextRef.current?.setIsActive(running || Boolean(batch && batch.status !== "ready"));
+  }, [running, batch]);
 
   useEffect(() => {
     if (!running && !batch) return;
@@ -127,23 +199,21 @@ export function SupremeUploadManager({
   async function startEngine(currentBatch: UploadBatch, fileMap: Map<string, File>, onlyFileIds?: string[]) {
     engineRef.current?.stop();
     const engine = new UploadEngine(speedMode, {
-      onProgress: (next) => {
-        setProgress(next);
-        uploadContext?.setProgress(next);
-      },
+      onProgress: scheduleProgressUpdate,
       onBatchUpdate: syncBatch,
       onFileProgress: (fileId, loaded, total) => {
-        setProgressMap((current) => ({
-          ...current,
-          [fileId]: Math.round((loaded / total) * 100),
-        }));
+        const percent = Math.round((loaded / total) * 100);
+        setProgressMap((current) => {
+          if (current[fileId] === percent) return current;
+          return { ...current, [fileId]: percent };
+        });
       },
       onComplete: async (latest) => {
         const refreshed = await refreshUploadBatch(latest.id);
         syncBatch(refreshed);
         setRunning(false);
         setPaused(false);
-        uploadContext?.setIsActive(false);
+        uploadContextRef.current?.setIsActive(false);
         if (refreshed.status === "ready") {
           setMessage("Upload concluído com sucesso. A IA pode agendar suas publicações.");
         }
@@ -154,7 +224,7 @@ export function SupremeUploadManager({
     engineRef.current = engine;
     setRunning(true);
     setPaused(false);
-    uploadContext?.setIsActive(true);
+    uploadContextRef.current?.setIsActive(true);
 
     await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
     setRunning(false);
@@ -292,8 +362,8 @@ export function SupremeUploadManager({
       setProgressMap({});
       setRunning(false);
       setPaused(false);
-      uploadContext?.setIsActive(false);
-      uploadContext?.setProgress(null);
+      uploadContextRef.current?.setIsActive(false);
+      uploadContextRef.current?.setProgress(null);
       setMessage("Lote cancelado.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Erro ao cancelar lote");
@@ -313,7 +383,22 @@ export function SupremeUploadManager({
   const username = batch?.instagram_accounts?.ig_username;
   const overallPercent = progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
 
-  if (loadingBatch) {
+  const visibleFiles = files
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .filter(
+      (file) =>
+        file.status === "uploading" ||
+        file.status === "failed" ||
+        file.status === "pending" ||
+        (progressMap[file.id] ?? 0) > 0,
+    );
+  const completedOnlyFiles = files
+    .filter((file) => file.status === "completed")
+    .sort((a, b) => a.sort_order - b.sort_order);
+  const listFiles = visibleFiles.length > 0 ? visibleFiles : completedOnlyFiles.slice(-20);
+
+  if (initialLoading) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-6 text-sm text-ig-muted">
         <Loader2 size={16} className="animate-spin" />
@@ -447,7 +532,7 @@ export function SupremeUploadManager({
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
                   <div
-                    className="h-full rounded-full bg-ig-primary transition-all"
+                    className={`h-full rounded-full bg-ig-primary ${running ? "" : "transition-all"}`}
                     style={{ width: `${overallPercent}%` }}
                   />
                 </div>
@@ -518,34 +603,23 @@ export function SupremeUploadManager({
           )}
 
           <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
-            <p className="mb-3 text-sm font-medium text-ig-text">Status por vídeo</p>
+            <p className="mb-3 text-sm font-medium text-ig-text">
+              Status por vídeo
+              {completedOnlyFiles.length > 0 && visibleFiles.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-ig-muted">
+                  · {completedOnlyFiles.length} enviados
+                </span>
+              )}
+            </p>
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {files
-                .slice()
-                .sort((a, b) => a.sort_order - b.sort_order)
-                .map((file) => {
-                  const percent = progressMap[file.id] ?? (file.status === "completed" ? 100 : 0);
-                  return (
-                    <div key={file.id} className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="truncate text-ig-text">{file.filename}</span>
-                        <span className="text-xs text-ig-muted">
-                          {formatBytes(Number(file.file_size))} · {fileStatusLabel(file.status)}
-                        </span>
-                      </div>
-                      {(file.status === "uploading" || percent > 0) && file.status !== "completed" && (
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ig-elevated">
-                          <div className="h-full rounded-full bg-ig-primary" style={{ width: `${percent || 5}%` }} />
-                        </div>
-                      )}
-                      {file.status === "failed" && (
-                        <button type="button" onClick={() => retryFile(file)} className="mt-2 text-xs font-medium text-ig-primary hover:underline">
-                          Tentar novamente
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+              {listFiles.map((file) => (
+                <FileStatusRow
+                  key={file.id}
+                  file={file}
+                  percent={progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
+                  onRetry={retryFile}
+                />
+              ))}
             </div>
           </div>
         </>
