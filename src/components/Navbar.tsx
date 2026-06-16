@@ -15,7 +15,9 @@ import {
   X,
 } from "lucide-react";
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
+import { BrandLogo } from "@/components/BrandLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { APP_NAME } from "@/lib/brand";
 
 const links = [
   { href: "/dashboard", label: "Início", shortLabel: "Início", icon: LayoutGrid },
@@ -61,11 +63,8 @@ export function Navbar() {
     <header className="ig-navbar">
       <div className="mx-auto max-w-6xl px-4 py-3">
         <div className="flex items-center justify-between">
-          <a
-            href="/dashboard"
-            className="ig-brand-script text-2xl leading-none text-ig-text sm:text-3xl"
-          >
-            Postar<span className="ig-brand-gradient">IGr</span>
+          <a href="/dashboard" aria-label={APP_NAME}>
+            <BrandLogo />
           </a>
           <nav className="flex items-center gap-0.5">
             <ThemeToggle />

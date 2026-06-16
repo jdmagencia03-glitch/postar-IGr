@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BrandLogo } from "@/components/BrandLogo";
+import { APP_TAGLINE } from "@/lib/brand";
 import { getSessionUserId } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -32,9 +34,10 @@ export default async function LoginPage({
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4">
       <div className="ig-card w-full p-8">
-        <h1 className="ig-brand-script mb-6 text-center text-4xl">
-          Postar <span className="ig-brand-gradient">IGr</span>
+        <h1 className="mb-3 text-center">
+          <BrandLogo className="ig-brand-script text-4xl leading-none text-ig-text" />
         </h1>
+        <p className="mb-8 text-center text-sm font-semibold text-ig-primary">{APP_TAGLINE}</p>
         <p className="mb-8 text-center text-sm text-ig-muted">
           Conecte Instagram Business/Creator diretamente ou sua conta TikTok.
           Instagram direto funciona para contas Business ou Creator; use Facebook

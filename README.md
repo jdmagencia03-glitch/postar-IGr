@@ -1,6 +1,6 @@
-# InstaScheduler
+# JDM Hub
 
-Agendador de posts para Instagram usando **API oficial da Meta**, hospedado em **Vercel (grátis)** com banco **Supabase (grátis)**.
+Agendador multi-plataforma (Instagram e TikTok) com **APIs oficiais**, hospedado em **Vercel** com banco **Supabase**.
 
 ## Stack
 

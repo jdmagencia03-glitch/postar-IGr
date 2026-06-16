@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Grand_Hotel } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
@@ -12,12 +13,11 @@ const instagramBrand = Grand_Hotel({
 
 export const metadata: Metadata = {
   title: {
-    default: "PostariGr",
-    template: "%s · PostariGr",
+    default: APP_NAME,
+    template: `%s · ${APP_NAME}`,
   },
-  description:
-    "Agende Reels e posts no Instagram com IA — legendas, hashtags e horários automáticos",
-  applicationName: "PostariGr",
+  description: APP_DESCRIPTION,
+  applicationName: APP_NAME,
 };
 
 export default function RootLayout({

@@ -1,8 +1,13 @@
+import Link from "next/link";
+import { APP_NAME, getAppDomainLabel } from "@/lib/brand";
+
 export const metadata = {
-  title: "Política de Privacidade — PostarIG",
+  title: `Política de Privacidade — ${APP_NAME}`,
 };
 
 export default function PrivacyPage() {
+  const domain = getAppDomainLabel();
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-12 text-ig-text">
       <h1 className="mb-6 text-2xl font-bold text-ig-text">Política de Privacidade</h1>
@@ -10,8 +15,8 @@ export default function PrivacyPage() {
 
       <section className="space-y-4 text-sm leading-relaxed">
         <p>
-          O PostarIG (&quot;postarigr.vercel.app&quot;) é uma ferramenta de agendamento de
-          conteúdo para Instagram e TikTok. Esta política descreve como tratamos seus dados.
+          O {APP_NAME} (&quot;{domain}&quot;) é uma ferramenta de agendamento de conteúdo para
+          Instagram e TikTok. Esta política descreve como tratamos seus dados.
         </p>
 
         <h2 className="text-lg font-semibold text-ig-text">Dados que coletamos</h2>
@@ -54,9 +59,9 @@ export default function PrivacyPage() {
       </section>
 
       <p className="mt-8">
-        <a href="/" className="text-sm text-ig-primary hover:underline">
-          ← Voltar ao PostarIG
-        </a>
+        <Link href="/" className="text-sm text-ig-primary hover:underline">
+          ← Voltar ao {APP_NAME}
+        </Link>
       </p>
     </main>
   );

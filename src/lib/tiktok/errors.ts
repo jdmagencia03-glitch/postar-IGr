@@ -1,4 +1,5 @@
 import { getTikTokRedirectUri } from "@/lib/tiktok/oauth";
+import { APP_NAME } from "@/lib/brand";
 
 export function resolveTikTokOAuthError(error?: string | null) {
   if (!error) return null;
@@ -17,7 +18,7 @@ export function resolveTikTokOAuthError(error?: string | null) {
     return {
       title: "Redirect URI incorreto",
       message:
-        "A URL de callback enviada pelo PostarIG não bate com a cadastrada no app TikTok (modo Sandbox).",
+        `A URL de callback enviada pelo ${APP_NAME} não bate com a cadastrada no app TikTok (modo Sandbox).`,
       steps: [
         "No TikTok for Developers, confirme modo Sandbox (não Production).",
         "Login Kit → Web → Redirect URI exatamente:",
@@ -36,7 +37,7 @@ export function resolveTikTokOAuthError(error?: string | null) {
       steps: [
         "Abra developers.tiktok.com → seu app → modo Sandbox.",
         "Vá em Sandbox settings → Target users → Add account.",
-        "Faça login com a MESMA conta TikTok que você usa para conectar no PostarIG.",
+        `Faça login com a MESMA conta TikTok que você usa para conectar no ${APP_NAME}.`,
         "Tente conectar novamente.",
       ],
     };

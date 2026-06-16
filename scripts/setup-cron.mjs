@@ -41,7 +41,7 @@ Passos:
 
 const payload = {
   job: {
-    title: "PostarIGr - publicar posts",
+    title: "JDM Hub - publicar posts",
     url: PUBLISH_URL,
     enabled: true,
     saveResponses: true,

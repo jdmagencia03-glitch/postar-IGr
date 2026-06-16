@@ -1,8 +1,13 @@
+import Link from "next/link";
+import { APP_NAME, getAppDomainLabel } from "@/lib/brand";
+
 export const metadata = {
-  title: "Termos de Uso — PostarIG",
+  title: `Termos de Uso — ${APP_NAME}`,
 };
 
 export default function TermsPage() {
+  const domain = getAppDomainLabel();
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-12 text-ig-text">
       <h1 className="mb-6 text-2xl font-bold text-ig-text">Termos de Uso</h1>
@@ -10,24 +15,24 @@ export default function TermsPage() {
 
       <section className="space-y-4 text-sm leading-relaxed">
         <p>
-          Estes Termos regem o uso do PostarIG (&quot;postarigr.vercel.app&quot;), ferramenta de
-          agendamento e publicação de conteúdo para Instagram e TikTok.
+          Estes Termos regem o uso do {APP_NAME} (&quot;{domain}&quot;), ferramenta de agendamento
+          e publicação de conteúdo para Instagram e TikTok.
         </p>
 
         <h2 className="text-lg font-semibold text-ig-text">1. Aceitação</h2>
         <p>
-          Ao usar o PostarIG, você concorda com estes Termos e com nossa{" "}
-          <a href="/privacy" className="text-ig-primary underline">
+          Ao usar o {APP_NAME}, você concorda com estes Termos e com nossa{" "}
+          <Link href="/privacy" className="text-ig-primary underline">
             Política de Privacidade
-          </a>
+          </Link>
           .
         </p>
 
         <h2 className="text-lg font-semibold text-ig-text">2. Serviço</h2>
         <p>
-          O PostarIG permite conectar contas Instagram e TikTok, enviar vídeos, gerar legendas
-          com IA e agendar publicações. Você é responsável pelo conteúdo publicado e pela
-          conformidade com as regras de cada plataforma.
+          O {APP_NAME} permite conectar contas Instagram e TikTok, enviar vídeos, gerar legendas com
+          IA e agendar publicações. Você é responsável pelo conteúdo publicado e pela conformidade
+          com as regras de cada plataforma.
         </p>
 
         <h2 className="text-lg font-semibold text-ig-text">3. Conta e acesso</h2>
@@ -45,7 +50,7 @@ export default function TermsPage() {
 
         <h2 className="text-lg font-semibold text-ig-text">5. Limitação de responsabilidade</h2>
         <p>
-          O PostarIG é fornecido &quot;como está&quot;. Não garantimos publicação ininterrupta,
+          O {APP_NAME} é fornecido &quot;como está&quot;. Não garantimos publicação ininterrupta,
           pois dependemos de APIs de terceiros (Meta, TikTok, hospedagem).
         </p>
 
@@ -59,9 +64,9 @@ export default function TermsPage() {
       </section>
 
       <p className="mt-8">
-        <a href="/" className="text-sm text-ig-primary hover:underline">
-          ← Voltar ao PostarIG
-        </a>
+        <Link href="/" className="text-sm text-ig-primary hover:underline">
+          ← Voltar ao {APP_NAME}
+        </Link>
       </p>
     </main>
   );
