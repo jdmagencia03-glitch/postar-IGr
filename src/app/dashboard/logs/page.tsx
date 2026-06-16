@@ -1,33 +1,55 @@
 import { redirect } from "next/navigation";
+import { AccountFilterBar } from "@/components/AccountFilterBar";
 import { Navbar } from "@/components/Navbar";
 import { formatDateTime } from "@/lib/utils";
-import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { SocialPlatform } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function LogsPage() {
+function isPlatformFilter(value: string | undefined): value is SocialPlatform | "all" {
+  return value === "instagram" || value === "tiktok" || value === "all" || value === undefined;
+}
+
+export default async function LogsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ account?: string; platform?: string }>;
+}) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard/logs");
 
+  const params = await searchParams;
+  const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
+    ? params.platform ?? "all"
+    : "all";
+
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
-  const accountIds = accounts.map((a) => a.id);
+  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+  const visibleRefs = accountRefs.filter(
+    (account) => platformFilter === "all" || account.platform === platformFilter,
+  );
+  const selectedAccountId =
+    params.account && visibleRefs.some((account) => account.id === params.account)
+      ? params.account
+      : undefined;
 
-  const { data: posts } = await supabase
-    .from("scheduled_posts")
-    .select("id")
-    .in("account_id", accountIds);
+  const posts = await getOwnerScheduledPosts(supabase, ownerId, {
+    platform: platformFilter,
+    accountId: selectedAccountId,
+  });
+  const postIds = posts.map((post) => post.id);
 
-  const postIds = posts?.map((p) => p.id) ?? [];
-
-  const { data: logs } = await supabase
-    .from("publish_logs")
-    .select("*")
-    .in("post_id", postIds)
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const { data: logs } = postIds.length
+    ? await supabase
+        .from("publish_logs")
+        .select("*")
+        .in("post_id", postIds)
+        .order("created_at", { ascending: false })
+        .limit(200)
+    : { data: [] };
 
   const levelColors = {
     info: "text-ig-link",
@@ -40,7 +62,14 @@ export default async function LogsPage() {
       <Navbar />
       <main className="mx-auto max-w-4xl px-4 py-8">
         <h1 className="mb-2 text-2xl font-bold text-ig-text">Logs de publicação</h1>
-        <p className="mb-8 text-ig-muted">Histórico de tentativas e resultados.</p>
+        <p className="mb-4 text-ig-muted">Histórico de tentativas e resultados — Instagram e TikTok.</p>
+
+        <AccountFilterBar
+          accounts={accountRefs}
+          selectedAccountId={selectedAccountId}
+          selectedPlatform={platformFilter}
+          basePath="/dashboard/logs"
+        />
 
         <div className="space-y-3">
           {logs?.map((log) => (

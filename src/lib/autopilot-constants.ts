@@ -2,7 +2,7 @@
 export const API_BATCH_SIZE = 50;
 
 /** Máximo total de vídeos por sessão de upload */
-export const MAX_VIDEOS_TOTAL = 1000;
+export const MAX_VIDEOS_TOTAL = 300;
 
 /** Tamanho do lote para geração de legendas GPT */
 export const CAPTION_BATCH_SIZE = 25;

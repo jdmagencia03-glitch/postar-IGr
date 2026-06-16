@@ -3,6 +3,7 @@ import {
   buildViralUserPrompt,
   getPlaybookForOwner,
 } from "@/lib/ai/playbook";
+import { formatInstagramCaption } from "@/lib/ai/caption-format";
 import { CAPTION_BATCH_SIZE } from "@/lib/autopilot-constants";
 
 const HOOKS = [
@@ -34,9 +35,11 @@ function buildFallbackCaption(index: number, filename: string, niche: string) {
   const hook = HOOKS[index % HOOKS.length];
   const tags = HASHTAG_SETS[index % HASHTAG_SETS.length];
   const fileHint = cleanFilename(filename);
-  const context = fileHint ? ` | Tema: ${fileHint}` : "";
+  const context = fileHint ? ` | tema: ${fileHint}` : "";
 
-  return `${hook}\n\nConteúdo sobre ${niche}${context}.\nComenta o que achou e compartilha com quem precisa ver isso.\n\n${tags}`;
+  return formatInstagramCaption(
+    `${hook}\n\nConteúdo sobre ${niche}${context}.\n💪 Comenta o que achou e salva pra treinar depois.\n\n${tags}`,
+  );
 }
 
 export function generateFallbackCaptions(params: {
@@ -150,7 +153,7 @@ async function generateBulkCaptionsChunk(params: {
     const content = data.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content) as { captions?: string[] };
     const captions = (parsed.captions ?? [])
-      .map((caption) => caption.trim())
+      .map((caption) => formatInstagramCaption(caption.trim()))
       .filter(Boolean)
       .slice(0, params.count);
 

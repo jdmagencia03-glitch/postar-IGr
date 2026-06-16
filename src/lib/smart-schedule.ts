@@ -5,6 +5,12 @@ import {
   estimateWarmupDuration,
   generateWarmupSchedule,
 } from "@/lib/account-warmup";
+import {
+  APP_TIMEZONE,
+  atHourInAppTz,
+  atHourOnDayOffsetInAppTz,
+  endOfPostingDayInAppTz,
+} from "@/lib/timezone";
 import { generateBulkSchedule } from "@/lib/utils";
 
 const PEAK_HOURS_BR = [7, 9, 11, 12, 14, 16, 18, 19, 20, 21];
@@ -19,9 +25,106 @@ const HOURS_BY_POSTS_PER_DAY: Record<number, number[]> = {
 
 export type ScheduleMode = "today" | "auto" | "warmup" | "custom";
 
+export const DEFAULT_CUSTOM_START_TIME = "07:00";
+export const DEFAULT_CUSTOM_END_TIME = "22:00";
+export const DEFAULT_CUSTOM_POSTS_PER_DAY = 15;
+
 export interface CustomScheduleOptions {
   postsPerDay: number;
   timeSlots: Array<{ hour: number; minute: number }>;
+  startTime?: string;
+  endTime?: string;
+}
+
+export function formatTimeSlot(hour: number, minute: number) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+export function buildEvenTimeSlotsBetween(
+  start: { hour: number; minute: number },
+  end: { hour: number; minute: number },
+  count: number,
+) {
+  if (count <= 0) return [] as Array<{ hour: number; minute: number }>;
+
+  const startMinutes = start.hour * 60 + start.minute;
+  const endMinutes = end.hour * 60 + end.minute;
+
+  if (count === 1) {
+    return [{ hour: start.hour, minute: start.minute }];
+  }
+
+  const step = (endMinutes - startMinutes) / (count - 1);
+  const slots: Array<{ hour: number; minute: number }> = [];
+
+  for (let index = 0; index < count; index++) {
+    const total = Math.round(startMinutes + step * index);
+    slots.push({
+      hour: Math.floor(total / 60),
+      minute: total % 60,
+    });
+  }
+
+  return slots;
+}
+
+export function buildEvenTimeSlotStrings(startTime: string, endTime: string, count: number) {
+  const start = parseTimeSlot(startTime);
+  const end = parseTimeSlot(endTime);
+  if (!start || !end || count < 1) return [] as string[];
+
+  return buildEvenTimeSlotsBetween(start, end, count).map((slot) =>
+    formatTimeSlot(slot.hour, slot.minute),
+  );
+}
+
+/** Garante 1 horário único por post/dia, distribuído entre início e fim. */
+export function resolveCustomScheduleOptions(options: CustomScheduleOptions): CustomScheduleOptions {
+  const { postsPerDay, timeSlots: providedSlots, startTime, endTime } = options;
+
+  if (providedSlots.length >= postsPerDay) {
+    return {
+      postsPerDay,
+      timeSlots: providedSlots.slice(0, postsPerDay),
+      startTime,
+      endTime,
+    };
+  }
+
+  const start =
+    (startTime ? parseTimeSlot(startTime) : null) ??
+    providedSlots[0] ??
+    parseTimeSlot(DEFAULT_CUSTOM_START_TIME);
+  const end =
+    (endTime ? parseTimeSlot(endTime) : null) ??
+    providedSlots[providedSlots.length - 1] ??
+    parseTimeSlot(DEFAULT_CUSTOM_END_TIME);
+
+  if (!start || !end) {
+    return { postsPerDay, timeSlots: providedSlots, startTime, endTime };
+  }
+
+  return {
+    postsPerDay,
+    timeSlots: buildEvenTimeSlotsBetween(start, end, postsPerDay),
+    startTime: startTime ?? formatTimeSlot(start.hour, start.minute),
+    endTime: endTime ?? formatTimeSlot(end.hour, end.minute),
+  };
+}
+
+export function parseCustomSchedulePayload(payload: {
+  posts_per_day: number;
+  time_slots?: string[];
+  start_time?: string;
+  end_time?: string;
+}): CustomScheduleOptions {
+  const parsedSlots = parseTimeSlots(payload.time_slots ?? []);
+  return resolveCustomScheduleOptions({
+    postsPerDay: payload.posts_per_day,
+    timeSlots: parsedSlots,
+    startTime: payload.start_time ?? DEFAULT_CUSTOM_START_TIME,
+    endTime: payload.end_time ?? DEFAULT_CUSTOM_END_TIME,
+  });
 }
 
 export interface WarmupScheduleOptions {
@@ -30,15 +133,11 @@ export interface WarmupScheduleOptions {
 }
 
 function atHour(base: Date, hour: number, minute = 0) {
-  const slot = new Date(base);
-  slot.setHours(hour, minute, 0, 0);
-  return slot;
+  return atHourInAppTz(base, hour, minute);
 }
 
 function endOfPostingDay(base: Date) {
-  const end = new Date(base);
-  end.setHours(23, 30, 0, 0);
-  return end;
+  return endOfPostingDayInAppTz(base);
 }
 
 export function parseTimeSlot(value: string): { hour: number; minute: number } | null {
@@ -66,39 +165,31 @@ export function generateCustomSchedule(
   options: CustomScheduleOptions,
   now = new Date(),
 ) {
-  const { postsPerDay, timeSlots } = options;
+  const { postsPerDay, timeSlots } = resolveCustomScheduleOptions(options);
   if (count <= 0 || !timeSlots.length || postsPerDay < 1) {
     return { schedule: [] as Date[], postsPerDay };
   }
 
   const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
-  let startDate = atHour(now, 0, 0);
+  let anchorDay = 0;
 
   for (let probeDay = 0; probeDay < 366; probeDay++) {
-    const day = addDays(startDate, probeDay);
     const hasFuture = timeSlots.some(
-      ({ hour, minute }) => atHour(day, hour, minute) >= earliest,
+      ({ hour, minute }) => atHourOnDayOffsetInAppTz(now, probeDay, hour, minute) >= earliest,
     );
     if (hasFuture) {
-      startDate = day;
+      anchorDay = probeDay;
       break;
     }
   }
 
   const schedule: Date[] = [];
-  let dayOffset = 0;
-  let slot = 0;
 
-  for (let i = 0; i < count; i++) {
-    const { hour, minute } = timeSlots[slot % timeSlots.length];
-    const day = addDays(startDate, dayOffset);
-    schedule.push(atHour(day, hour, minute));
-
-    slot++;
-    if (slot % postsPerDay === 0) {
-      dayOffset++;
-      slot = 0;
-    }
+  for (let index = 0; index < count; index++) {
+    const dayIndex = Math.floor(index / postsPerDay);
+    const slotInDay = index % postsPerDay;
+    const { hour, minute } = timeSlots[slotInDay % timeSlots.length];
+    schedule.push(atHourOnDayOffsetInAppTz(now, anchorDay + dayIndex, hour, minute));
   }
 
   return { schedule, postsPerDay };
@@ -108,6 +199,10 @@ export function resolveAutoPostsPerDay(videoCount: number) {
   if (videoCount <= 7) return 1;
   if (videoCount <= 30) return 2;
   return 3;
+}
+
+export function countTodayAvailableSlots(now = new Date()) {
+  return generateSmartScheduleToday(500, now).length;
 }
 
 export function generateSmartScheduleToday(count: number, now = new Date()): Date[] {
@@ -168,7 +263,9 @@ export function generateSmartScheduleAuto(count: number, now = new Date()) {
     return slot >= earliest && slot <= endOfPostingDay(now);
   });
 
-  const startDate = hasSlotToday ? earliest : atHour(addDays(now, 1), PEAK_HOURS_BR[0]);
+  const startDate = hasSlotToday
+    ? earliest
+    : atHourOnDayOffsetInAppTz(now, 1, PEAK_HOURS_BR[0]);
   const schedule = generateBulkSchedule({ count, startDate, postsPerDay, hours });
 
   return { schedule, postsPerDay };
@@ -350,6 +447,7 @@ export function describeSmartSchedule(schedule: Date[], mode: ScheduleMode = "to
   const dateTimeFmt = new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: APP_TIMEZONE,
   });
 
   const first = schedule[0];
@@ -359,6 +457,7 @@ export function describeSmartSchedule(schedule: Date[], mode: ScheduleMode = "to
     const timeFmt = new Intl.DateTimeFormat("pt-BR", {
       hour: "2-digit",
       minute: "2-digit",
+      timeZone: APP_TIMEZONE,
     });
     return `${schedule.length} posts hoje entre ${timeFmt.format(first)} e ${timeFmt.format(last)}`;
   }

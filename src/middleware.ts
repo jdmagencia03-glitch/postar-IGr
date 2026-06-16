@@ -12,6 +12,8 @@ const PROTECTED_APIS = [
   "/api/captions",
   "/api/instagram",
   "/api/ai",
+  "/api/tiktok",
+  "/api/health",
 ];
 
 function isProtectedPath(pathname: string) {
@@ -118,5 +120,7 @@ export const config = {
     "/api/captions/:path*",
     "/api/instagram/:path*",
     "/api/ai/:path*",
+    "/api/tiktok/:path*",
+    "/api/health/:path*",
   ],
 };

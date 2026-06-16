@@ -1,4 +1,8 @@
-import { addDays, setHours, setMinutes, setSeconds } from "date-fns";
+import { addDays } from "date-fns";
+import {
+  atHourInAppTz,
+  atHourOnDayOffsetInAppTz,
+} from "@/lib/timezone";
 
 export const DEFAULT_WARMUP_DAYS = 5;
 export const MIN_WARMUP_DAYS = 2;
@@ -159,20 +163,18 @@ export function assessPostingRisk(params: {
 }
 
 function atHour(base: Date, hour: number) {
-  return setSeconds(setMinutes(setHours(base, hour), 0), 0);
+  return atHourInAppTz(base, hour, 0);
 }
 
 function resolveStartDate(now = new Date()) {
   const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
-  const endToday = new Date(now);
-  endToday.setHours(23, 0, 0, 0);
+  const endToday = atHourInAppTz(now, 23, 0);
 
   if (earliest < endToday) {
-    return new Date(earliest);
+    return earliest;
   }
 
-  const tomorrow = addDays(now, 1);
-  return atHour(tomorrow, WARMUP_HOURS[1][0]);
+  return atHourOnDayOffsetInAppTz(now, 1, WARMUP_HOURS[1][0]);
 }
 
 function hoursForDay(postsPerDay: number, inWarmupRamp: boolean) {
@@ -212,15 +214,13 @@ export function generateWarmupSchedule(params: {
       ? ramp[absoluteWarmupDay]
       : resolveSafePostsPerDay(count, inProtection);
     const hours = hoursForDay(postsToday, inRamp || inProtection);
-    const dayBase = addDays(startDate, calendarDay);
-    dayBase.setHours(0, 0, 0, 0);
 
     for (let slot = 0; slot < postsToday && schedule.length < count; slot++) {
       const hour = hours[slot % hours.length];
-      let scheduled = atHour(dayBase, hour);
+      let scheduled = atHourOnDayOffsetInAppTz(startDate, calendarDay, hour, 0);
 
       if (calendarDay === 0 && scheduled < startDate) {
-        scheduled = atHour(dayBase, hours[hours.length - 1]);
+        scheduled = atHourOnDayOffsetInAppTz(startDate, calendarDay, hours[hours.length - 1], 0);
         if (scheduled < startDate) {
           scheduled = new Date(startDate.getTime() + slot * MIN_WARMUP_GAP_HOURS * 3_600_000);
         }

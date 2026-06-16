@@ -57,7 +57,8 @@ create table if not exists scheduled_posts (
   error_message text,
   published_at timestamptz,
   hidden_from_report boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_scheduled_posts_status_time

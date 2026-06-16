@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getBatchForOwner, updateUploadFileStatus } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -25,7 +26,7 @@ export async function PATCH(
   const parsed = patchSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const supabase = createAdminClient();

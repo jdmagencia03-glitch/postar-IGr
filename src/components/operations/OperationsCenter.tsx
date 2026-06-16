@@ -11,10 +11,11 @@ import {
   hoursUntilNextPost,
   type computeOperationsSnapshot,
 } from "@/lib/operations/compute";
-import type { ScheduledPost } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 
 interface AccountOption {
   id: string;
+  platform: SocialPlatform;
   ig_username: string | null;
   profile_picture_url: string | null;
 }
@@ -31,6 +32,7 @@ interface RankingRow {
 interface Props {
   accounts: AccountOption[];
   selectedAccountId: string;
+  selectedPlatform?: SocialPlatform | "all";
   posts: ScheduledPost[];
   snapshot: ReturnType<typeof computeOperationsSnapshot>;
   statusFilter: string;
@@ -75,6 +77,7 @@ function StatLine({ label, value }: { label: string; value: string }) {
 export function OperationsCenter({
   accounts,
   selectedAccountId,
+  selectedPlatform = "all",
   posts,
   snapshot,
   statusFilter,
@@ -91,9 +94,19 @@ export function OperationsCenter({
 
   const selectedAccount = accounts.find((account) => account.id === accountId) ?? accounts[0];
   const username = selectedAccount?.ig_username ?? "conta";
+  const isInstagramAccount = selectedAccount?.platform !== "tiktok";
 
   const loadLiveMetrics = useCallback(async () => {
-    if (!accountId) return;
+    if (!accountId || !isInstagramAccount) {
+      setTokenValid(true);
+      setRankingRows([]);
+      setFollowersToday(0);
+      setFollowers7d(0);
+      setFollowers30d(0);
+      setViews7d(0);
+      setLikes7d(0);
+      return;
+    }
 
     try {
       const [statsRes, rankingRes] = await Promise.all([
@@ -160,12 +173,23 @@ export function OperationsCenter({
 
   function buildHref(params: Record<string, string | undefined>) {
     const query = new URLSearchParams();
+    if (params.platform && params.platform !== "all") query.set("platform", params.platform);
     if (params.account) query.set("account", params.account);
     if (params.status && params.status !== "all") query.set("status", params.status);
     if (params.period && params.period !== "all") query.set("period", params.period);
     const qs = query.toString();
     return qs ? `/dashboard/reports?${qs}` : "/dashboard/reports";
   }
+
+  const platformTabs = [
+    ["all", "Todas"],
+    ["instagram", "Instagram"],
+    ["tiktok", "TikTok"],
+  ] as const;
+
+  const visibleAccounts = accounts.filter(
+    (account) => selectedPlatform === "all" || account.platform === selectedPlatform,
+  );
 
   const statusFilters = [
     ["all", "Todos"],
@@ -185,19 +209,58 @@ export function OperationsCenter({
 
   return (
     <div className="space-y-8">
-      {accounts.length > 1 && (
+      <div className="flex flex-wrap gap-2">
+        {platformTabs.map(([value, label]) => (
+          <a
+            key={value}
+            href={buildHref({
+              platform: value,
+              status: statusFilter,
+              period: periodFilter,
+            })}
+            className={`rounded-full px-4 py-2 text-sm transition ${
+              selectedPlatform === value
+                ? "bg-ig-primary text-ig-on-primary"
+                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
+            }`}
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+
+      {visibleAccounts.length > 1 && (
         <div className="flex flex-wrap gap-2">
-          {accounts.map((account) => (
+          <a
+            href={buildHref({
+              platform: selectedPlatform === "all" ? undefined : selectedPlatform,
+              status: statusFilter,
+              period: periodFilter,
+            })}
+            className={`rounded-full px-4 py-2 text-sm transition ${
+              !accountId
+                ? "bg-ig-primary text-ig-on-primary"
+                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
+            }`}
+          >
+            Todas as contas
+          </a>
+          {visibleAccounts.map((account) => (
             <a
               key={account.id}
-              href={buildHref({ account: account.id, status: statusFilter, period: periodFilter })}
+              href={buildHref({
+                platform: account.platform,
+                account: account.id,
+                status: statusFilter,
+                period: periodFilter,
+              })}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 accountId === account.id
                   ? "bg-ig-primary text-ig-on-primary"
-                  : "border border-ig-border bg-ig-secondary text-ig-text hover:bg-ig-elevated"
+                  : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
               }`}
             >
-              @{account.ig_username}
+              {account.platform === "tiktok" ? "TT" : "IG"} @{account.ig_username ?? "conta"}
             </a>
           ))}
         </div>

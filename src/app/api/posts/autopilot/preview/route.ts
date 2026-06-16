@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { buildAutopilotPlan, resolveAutopilotAccounts } from "@/lib/autopilot-plan";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
@@ -7,13 +8,16 @@ import {
   getWarmupStatus,
 } from "@/lib/account-warmup";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { parseTimeSlots } from "@/lib/smart-schedule";
+import { parseCustomSchedulePayload, parseTimeSlots } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { InstagramAccount, TikTokAccount } from "@/lib/types";
 import { z } from "zod";
 
 const customScheduleSchema = z.object({
   posts_per_day: z.number().int().min(1).max(100),
-  time_slots: z.array(z.string()).min(1).max(48),
+  time_slots: z.array(z.string()).max(48).optional(),
+  start_time: z.string().optional(),
+  end_time: z.string().optional(),
 });
 
 const previewSchema = z
@@ -22,6 +26,7 @@ const previewSchema = z
     account_ids: z.array(z.string().uuid()).min(1).optional(),
     niche: z.string().max(120).optional(),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+    platform: z.enum(["instagram", "tiktok"]).optional(),
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
@@ -57,7 +62,7 @@ export async function POST(request: NextRequest) {
   const parsed = previewSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const requestedAccountIds = [
@@ -66,9 +71,20 @@ export async function POST(request: NextRequest) {
 
   try {
     const supabase = createAdminClient();
-    const validAccounts = await resolveAutopilotAccounts(supabase, ownerId, requestedAccountIds);
+    const platform = parsed.data.platform ?? "instagram";
+    const validAccounts = await resolveAutopilotAccounts(
+      supabase,
+      ownerId,
+      requestedAccountIds,
+      platform,
+    );
     const primaryAccount = validAccounts[0];
-    const primaryUsername = primaryAccount?.ig_username ?? "perfil";
+    const primaryUsername =
+      platform === "tiktok"
+        ? (primaryAccount as TikTokAccount).username ??
+          (primaryAccount as TikTokAccount).display_name ??
+          "perfil"
+        : (primaryAccount as InstagramAccount).ig_username ?? "perfil";
     const scheduleMode = parsed.data.schedule_mode ?? "auto";
 
     let warmup:
@@ -78,21 +94,19 @@ export async function POST(request: NextRequest) {
         }
       | undefined;
 
-    if (scheduleMode === "warmup" && primaryAccount) {
+    if (scheduleMode === "warmup" && primaryAccount && platform === "instagram") {
+      const igAccount = primaryAccount as InstagramAccount;
       warmup = {
-        warmupDays: primaryAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
+        warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
         warmupDayOffset: getWarmupDayOffset(
-          primaryAccount.warmup_started_at ?? primaryAccount.created_at,
+          igAccount.warmup_started_at ?? igAccount.created_at,
         ),
       };
     }
 
     const custom =
       scheduleMode === "custom" && parsed.data.custom_schedule
-        ? {
-            postsPerDay: parsed.data.custom_schedule.posts_per_day,
-            timeSlots: parseTimeSlots(parsed.data.custom_schedule.time_slots),
-          }
+        ? parseCustomSchedulePayload(parsed.data.custom_schedule)
         : undefined;
 
     if (scheduleMode === "custom" && (!custom || !custom.timeSlots.length)) {
@@ -118,12 +132,19 @@ export async function POST(request: NextRequest) {
       ...plan,
       accounts: validAccounts.map((a) => ({
         id: a.id,
-        ig_username: a.ig_username,
-        warmup: getWarmupStatus({
-          warmupEnabled: a.warmup_enabled ?? true,
-          warmupStartedAt: a.warmup_started_at ?? a.created_at,
-          warmupDays: a.warmup_days ?? DEFAULT_WARMUP_DAYS,
-        }),
+        ig_username:
+          platform === "tiktok"
+            ? (a as TikTokAccount).username
+            : (a as InstagramAccount).ig_username,
+        warmup:
+          platform === "instagram"
+            ? getWarmupStatus({
+                warmupEnabled: (a as InstagramAccount).warmup_enabled ?? true,
+                warmupStartedAt:
+                  (a as InstagramAccount).warmup_started_at ?? a.created_at,
+                warmupDays: (a as InstagramAccount).warmup_days ?? DEFAULT_WARMUP_DAYS,
+              })
+            : null,
       })),
       videos: parsed.data.items.length,
       total_posts: (parsed.data.total_count ?? parsed.data.items.length) * validAccounts.length,

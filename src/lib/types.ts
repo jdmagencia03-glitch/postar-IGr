@@ -1,6 +1,7 @@
 export type MediaType = "IMAGE" | "REELS" | "CAROUSEL";
 export type PostStatus = "pending" | "processing" | "published" | "failed";
 export type LogLevel = "info" | "error" | "success";
+export type SocialPlatform = "instagram" | "tiktok";
 
 export interface InstagramAccount {
   id: string;
@@ -19,9 +20,27 @@ export interface InstagramAccount {
   updated_at: string;
 }
 
+export interface TikTokAccount {
+  id: string;
+  owner_id: string;
+  open_id: string;
+  username: string | null;
+  display_name: string | null;
+  profile_picture_url: string | null;
+  access_token: string;
+  refresh_token: string;
+  token_expires_at: string | null;
+  refresh_expires_at: string | null;
+  scopes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ScheduledPost {
   id: string;
-  account_id: string;
+  account_id: string | null;
+  platform?: SocialPlatform;
+  tiktok_account_id?: string | null;
   media_type: MediaType;
   media_urls: string[];
   caption: string | null;
@@ -35,6 +54,7 @@ export interface ScheduledPost {
   hidden_from_report?: boolean;
   created_at: string;
   instagram_accounts?: Pick<InstagramAccount, "ig_username" | "profile_picture_url">;
+  tiktok_accounts?: Pick<TikTokAccount, "username" | "display_name" | "profile_picture_url">;
 }
 
 export type ScheduledPostWithAccountSecrets = ScheduledPost & {
@@ -96,11 +116,15 @@ export interface UploadBatchFile {
 export interface UploadBatch {
   id: string;
   owner_id: string;
-  account_id: string;
+  account_id: string | null;
+  platform?: SocialPlatform;
+  tiktok_account_id?: string | null;
   schedule_mode: "today" | "auto" | "warmup" | "custom";
   custom_schedule: {
     posts_per_day?: number;
     time_slots?: string[];
+    start_time?: string;
+    end_time?: string;
   } | null;
   status: UploadBatchStatus;
   total_files: number;

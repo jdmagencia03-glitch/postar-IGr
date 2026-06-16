@@ -318,7 +318,13 @@ export async function publishPost(params: {
   const container = await createMediaContainer({ ...params, provider });
   await waitForContainer(container.id, params.token, 30, provider);
   const published = await publishContainer(params.igUserId, container.id, params.token, provider);
-  const permalink = await getMediaPermalink(published.id, params.token, provider);
+
+  let permalink: string | null = null;
+  try {
+    permalink = await getMediaPermalink(published.id, params.token, provider);
+  } catch {
+    // Publicação já ocorreu — permalink é opcional
+  }
 
   return {
     containerId: container.id as string,

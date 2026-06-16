@@ -32,6 +32,7 @@ import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types"
 
 interface Props {
   accountId: string;
+  platform?: UploadBatch["platform"];
   scheduleMode: UploadBatch["schedule_mode"];
   customSchedule?: UploadBatch["custom_schedule"];
   onBatchUpdate?: (batch: UploadBatch | null) => void;
@@ -76,6 +77,7 @@ const FileStatusRow = memo(function FileStatusRow({
 
 export function SupremeUploadManager({
   accountId,
+  platform = "instagram",
   scheduleMode,
   customSchedule,
   onBatchUpdate,
@@ -290,6 +292,7 @@ export function SupremeUploadManager({
       if (!currentBatch) {
         currentBatch = await createUploadBatch({
           accountId,
+          platform,
           scheduleMode,
           customSchedule,
           uploadSpeedMode: speedMode,

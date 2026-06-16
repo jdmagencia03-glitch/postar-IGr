@@ -1,3 +1,5 @@
+import { getAppUrl } from "@/lib/app-url";
+
 export interface MetaErrorGuide {
   title: string;
   message: string;
@@ -15,6 +17,7 @@ function normalizeError(value: string) {
 export function resolveMetaOAuthError(rawError?: string | null): MetaErrorGuide | null {
   if (!rawError?.trim()) return null;
 
+  const appUrl = getAppUrl();
   const error = normalizeError(rawError);
 
   if (
@@ -52,7 +55,7 @@ export function resolveMetaOAuthError(rawError?: string | null): MetaErrorGuide 
         "Meta Developer → Casos de uso → Gerenciar mensagens e conteúdo no Instagram",
         "Solicite Acesso Avançado para instagram_business_basic e instagram_business_content_publish",
         "Confirme se INSTAGRAM_APP_ID e INSTAGRAM_APP_SECRET na Vercel são do produto Instagram",
-        "Em Facebook Login → URIs de redirecionamento: https://postarigr.vercel.app/api/auth/facebook/callback",
+        `Em Facebook Login → URIs de redirecionamento: ${appUrl}/api/auth/facebook/callback`,
         "Tente Via Facebook em Contas após configurar",
       ],
       autoFixable: false,
@@ -74,7 +77,7 @@ export function resolveMetaOAuthError(rawError?: string | null): MetaErrorGuide 
       message: "A URL de callback não bate com a configurada no app Meta.",
       steps: [
         "No Meta Dashboard → Instagram → Login → OAuth redirect URIs",
-        "Adicione exatamente: https://postarigr.vercel.app/api/auth/meta/callback",
+        `Adicione exatamente: ${appUrl}/api/auth/meta/callback`,
         "Salve e tente novamente",
       ],
       autoFixable: false,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Grand_Hotel } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
 const instagramBrand = Grand_Hotel({
@@ -27,9 +28,12 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`${instagramBrand.variable} h-full antialiased`}
+      className={`${instagramBrand.variable} dark h-full antialiased`}
       suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="min-h-full font-sans">
         <ThemeProvider>{children}</ThemeProvider>
       </body>

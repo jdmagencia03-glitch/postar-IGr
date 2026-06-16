@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOwnerAccountById } from "@/lib/accounts";
+import { formatZodError } from "@/lib/api-errors";
+import { MAX_VIDEOS_TOTAL } from "@/lib/autopilot-constants";
+import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
   buildStoragePath,
   getActiveBatchForOwner,
@@ -10,13 +13,18 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
-const createSchema = z.object({
-  account_id: z.string().uuid(),
-  schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).default("auto"),
+const createSchema = z
+  .object({
+    platform: z.enum(["instagram", "tiktok"]).default("instagram"),
+    account_id: z.string().uuid().optional(),
+    tiktok_account_id: z.string().uuid().optional(),
+    schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).default("auto"),
   custom_schedule: z
     .object({
       posts_per_day: z.number().int().min(1).max(100),
-      time_slots: z.array(z.string()).min(1).max(48),
+      time_slots: z.array(z.string()).max(48).optional(),
+      start_time: z.string().optional(),
+      end_time: z.string().optional(),
     })
     .optional(),
   files: z
@@ -30,9 +38,15 @@ const createSchema = z.object({
       }),
     )
     .min(1)
-    .max(2000),
+    .max(MAX_VIDEOS_TOTAL),
   upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
-});
+  })
+  .refine(
+    (data) =>
+      (data.platform === "instagram" && Boolean(data.account_id)) ||
+      (data.platform === "tiktok" && Boolean(data.tiktok_account_id)),
+    { message: "Conta obrigatória para a plataforma selecionada" },
+  );
 
 export async function GET() {
   const ownerId = await getSessionUserId();
@@ -55,19 +69,36 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const supabase = createAdminClient();
-  const account = await getOwnerAccountById(supabase, ownerId, parsed.data.account_id);
-  if (!account) {
-    return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
+  const platform = parsed.data.platform;
+
+  if (platform === "tiktok") {
+    const tiktokAccount = await getOwnerTikTokAccountById(
+      supabase,
+      ownerId,
+      parsed.data.tiktok_account_id!,
+    );
+    if (!tiktokAccount) {
+      return NextResponse.json({ error: "Conta TikTok não encontrada" }, { status: 404 });
+    }
+  } else {
+    const account = await getOwnerAccountById(supabase, ownerId, parsed.data.account_id!);
+    if (!account) {
+      return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
+    }
   }
 
   const existing = await getActiveBatchForOwner(supabase, ownerId);
   if (existing) {
     return NextResponse.json(
-      { error: "Já existe um lote em andamento.", batch: existing },
+      {
+        error:
+          "Já existe um lote em andamento. Retome o upload anterior ou cancele-o antes de criar outro.",
+        batch: existing,
+      },
       { status: 409 },
     );
   }
@@ -76,7 +107,9 @@ export async function POST(request: NextRequest) {
     .from("upload_batches")
     .insert({
       owner_id: ownerId,
-      account_id: parsed.data.account_id,
+      platform,
+      account_id: platform === "instagram" ? parsed.data.account_id! : null,
+      tiktok_account_id: platform === "tiktok" ? parsed.data.tiktok_account_id! : null,
       schedule_mode: parsed.data.schedule_mode,
       custom_schedule: parsed.data.custom_schedule ?? null,
       upload_speed_mode: parsed.data.upload_speed_mode ?? "normal",

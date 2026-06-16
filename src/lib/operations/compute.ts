@@ -11,6 +11,7 @@ import {
   getDay,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { formatInAppTimezone } from "@/lib/timezone";
 import type { ScheduledPost } from "@/lib/types";
 
 const DAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
@@ -21,11 +22,17 @@ export function extractHashtags(caption: string | null) {
 }
 
 export function formatShortDate(date: string | Date) {
-  return format(new Date(date), "dd/MM/yyyy", { locale: ptBR });
+  return formatInAppTimezone(date, { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 export function formatShortDateTime(date: string | Date) {
-  return format(new Date(date), "dd/MM/yyyy • HH:mm", { locale: ptBR });
+  return formatInAppTimezone(date, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).replace(",", " •");
 }
 
 export function formatDuration(minutes: number) {

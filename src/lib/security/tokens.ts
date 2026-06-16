@@ -17,3 +17,21 @@ export function decryptSessionAccessToken(stored: string | null | undefined) {
   if (!stored) return null;
   return decryptSecret(stored);
 }
+
+export function encryptTikTokAccessToken(token: string) {
+  return encryptSecret(token);
+}
+
+export function decryptTikTokAccessToken(stored: string | null | undefined) {
+  if (!stored) return null;
+  return decryptSecret(stored);
+}
+
+export function encryptTikTokRefreshToken(token: string) {
+  return encryptSecret(token);
+}
+
+export function decryptTikTokRefreshToken(stored: string | null | undefined) {
+  if (!stored) return null;
+  return decryptSecret(stored);
+}

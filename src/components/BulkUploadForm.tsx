@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, Plus, UserRound, X } from "lucide-react";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
-import { updateBatchSchedule } from "@/lib/upload/client";
+import { updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
-import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots } from "@/lib/smart-schedule";
-import type { InstagramAccount, UploadBatch } from "@/lib/types";
+import { formatApiError } from "@/lib/api-errors";
+import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots, countTodayAvailableSlots, buildEvenTimeSlotStrings, DEFAULT_CUSTOM_START_TIME, DEFAULT_CUSTOM_END_TIME, DEFAULT_CUSTOM_POSTS_PER_DAY } from "@/lib/smart-schedule";
+import type { InstagramAccount, SocialPlatform, TikTokAccount, UploadBatch } from "@/lib/types";
 
 interface Props {
+  platform?: SocialPlatform;
   accounts: InstagramAccount[];
+  tiktokAccounts?: TikTokAccount[];
   defaultAccountId?: string;
 }
 
@@ -18,16 +21,13 @@ type ScheduleMode = "auto" | "warmup" | "today" | "custom";
 
 const SCHEDULE_DRAFT_KEY = "postarigr-bulk-schedule-draft";
 
-const DEFAULT_CUSTOM_TIMES = [
-  "06:00",
-  "08:00",
-  "10:00",
-  "12:00",
-  "14:00",
-  "16:00",
-  "18:00",
-  "20:00",
-];
+function buildDefaultCustomTimeSlots(
+  postsPerDay = DEFAULT_CUSTOM_POSTS_PER_DAY,
+  startTime = DEFAULT_CUSTOM_START_TIME,
+  endTime = DEFAULT_CUSTOM_END_TIME,
+) {
+  return buildEvenTimeSlotStrings(startTime, endTime, postsPerDay);
+}
 
 const AI_TASKS = [
   "Criar legendas",
@@ -90,7 +90,7 @@ function formatDurationPreview(
   mode: ScheduleMode,
   warmupDays = DEFAULT_WARMUP_DAYS,
   customPostsPerDay = 15,
-  customTimeSlots: string[] = DEFAULT_CUSTOM_TIMES,
+  customTimeSlots: string[] = buildDefaultCustomTimeSlots(),
 ) {
   if (!count) return { days: "", summary: "" };
   if (mode === "today") return { days: "Publicação ainda hoje", summary: "Hoje" };
@@ -121,14 +121,16 @@ function formatDurationPreview(
   };
 }
 
-function readScheduleDraft(accountId: string) {
+function readScheduleDraft(platform: SocialPlatform, accountId: string) {
   if (typeof window === "undefined" || !accountId) return null;
   try {
-    const raw = sessionStorage.getItem(`${SCHEDULE_DRAFT_KEY}:${accountId}`);
+    const raw = sessionStorage.getItem(`${SCHEDULE_DRAFT_KEY}:${platform}:${accountId}`);
     if (!raw) return null;
     return JSON.parse(raw) as {
       scheduleMode: ScheduleMode;
       customPostsPerDay: number;
+      customStartTime: string;
+      customEndTime: string;
       customTimeSlots: string[];
     };
   } catch {
@@ -137,19 +139,36 @@ function readScheduleDraft(accountId: string) {
 }
 
 function writeScheduleDraft(
+  platform: SocialPlatform,
   accountId: string,
-  draft: { scheduleMode: ScheduleMode; customPostsPerDay: number; customTimeSlots: string[] },
+  draft: {
+    scheduleMode: ScheduleMode;
+    customPostsPerDay: number;
+    customStartTime: string;
+    customEndTime: string;
+    customTimeSlots: string[];
+  },
 ) {
   if (typeof window === "undefined" || !accountId) return;
-  sessionStorage.setItem(`${SCHEDULE_DRAFT_KEY}:${accountId}`, JSON.stringify(draft));
+  sessionStorage.setItem(`${SCHEDULE_DRAFT_KEY}:${platform}:${accountId}`, JSON.stringify(draft));
 }
 
 function applyBatchSchedule(batch: UploadBatch) {
   const nextMode = batch.schedule_mode;
-  const nextPosts = batch.custom_schedule?.posts_per_day ?? 15;
+  const nextPosts = batch.custom_schedule?.posts_per_day ?? DEFAULT_CUSTOM_POSTS_PER_DAY;
+  const nextStart = batch.custom_schedule?.start_time ?? DEFAULT_CUSTOM_START_TIME;
+  const nextEnd = batch.custom_schedule?.end_time ?? DEFAULT_CUSTOM_END_TIME;
   const nextSlots =
-    batch.custom_schedule?.time_slots?.length ? batch.custom_schedule.time_slots : DEFAULT_CUSTOM_TIMES;
-  return { scheduleMode: nextMode, customPostsPerDay: nextPosts, customTimeSlots: nextSlots };
+    batch.custom_schedule?.time_slots?.length
+      ? batch.custom_schedule.time_slots
+      : buildDefaultCustomTimeSlots(nextPosts, nextStart, nextEnd);
+  return {
+    scheduleMode: nextMode,
+    customPostsPerDay: nextPosts,
+    customStartTime: nextStart,
+    customEndTime: nextEnd,
+    customTimeSlots: nextSlots,
+  };
 }
 
 function batchSummaryEqual(a: UploadBatch | null, b: UploadBatch | null) {
@@ -167,19 +186,44 @@ function batchSummaryEqual(a: UploadBatch | null, b: UploadBatch | null) {
   );
 }
 
-export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
+export function BulkUploadForm({
+  platform = "instagram",
+  accounts,
+  tiktokAccounts = [],
+  defaultAccountId,
+}: Props) {
+  const activeAccounts = platform === "tiktok" ? tiktokAccounts : accounts;
+
   const initialAccountId = useMemo(() => {
-    if (defaultAccountId && accounts.some((account) => account.id === defaultAccountId)) {
+    if (defaultAccountId && activeAccounts.some((account) => account.id === defaultAccountId)) {
       return defaultAccountId;
     }
-    return accounts[0]?.id ?? "";
-  }, [accounts, defaultAccountId]);
+    return activeAccounts[0]?.id ?? "";
+  }, [activeAccounts, defaultAccountId]);
 
-  const draft = useMemo(() => readScheduleDraft(initialAccountId), [initialAccountId]);
+  const draft = useMemo(
+    () => readScheduleDraft(platform, initialAccountId),
+    [platform, initialAccountId],
+  );
 
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(draft?.scheduleMode ?? "auto");
-  const [customPostsPerDay, setCustomPostsPerDay] = useState(draft?.customPostsPerDay ?? 15);
-  const [customTimeSlots, setCustomTimeSlots] = useState<string[]>(draft?.customTimeSlots ?? DEFAULT_CUSTOM_TIMES);
+  const [customPostsPerDay, setCustomPostsPerDay] = useState(
+    draft?.customPostsPerDay ?? DEFAULT_CUSTOM_POSTS_PER_DAY,
+  );
+  const [customStartTime, setCustomStartTime] = useState(
+    draft?.customStartTime ?? DEFAULT_CUSTOM_START_TIME,
+  );
+  const [customEndTime, setCustomEndTime] = useState(
+    draft?.customEndTime ?? DEFAULT_CUSTOM_END_TIME,
+  );
+  const [customTimeSlots, setCustomTimeSlots] = useState<string[]>(
+    draft?.customTimeSlots ??
+      buildDefaultCustomTimeSlots(
+        draft?.customPostsPerDay ?? DEFAULT_CUSTOM_POSTS_PER_DAY,
+        draft?.customStartTime ?? DEFAULT_CUSTOM_START_TIME,
+        draft?.customEndTime ?? DEFAULT_CUSTOM_END_TIME,
+      ),
+  );
   const [newTimeInput, setNewTimeInput] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
   const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
@@ -191,11 +235,29 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const [progress, setProgress] = useState(0);
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [result, setResult] = useState<string | null>(null);
+  const [captionSource, setCaptionSource] = useState<"ai" | "fallback" | null>(null);
 
-  const selectedAccount = accounts.find((account) => account.id === selectedAccountId) ?? accounts[0];
+  useEffect(() => {
+    if (platform === "tiktok" && scheduleMode === "warmup") {
+      setScheduleMode("auto");
+    }
+  }, [platform, scheduleMode]);
+
+  const selectedAccount =
+    activeAccounts.find((account) => account.id === selectedAccountId) ?? activeAccounts[0];
+  const selectedUsername =
+    platform === "tiktok"
+      ? (selectedAccount as TikTokAccount | undefined)?.username ??
+        (selectedAccount as TikTokAccount | undefined)?.display_name ??
+        "conta"
+      : (selectedAccount as InstagramAccount | undefined)?.ig_username ?? "conta";
+  const selectedAvatar = selectedAccount?.profile_picture_url ?? null;
   const completedCount = activeBatch?.completed_files ?? 0;
   const totalCount = activeBatch?.total_files ?? 0;
-  const warmupDays = selectedAccount?.warmup_days ?? DEFAULT_WARMUP_DAYS;
+  const warmupDays =
+    platform === "instagram"
+      ? ((selectedAccount as InstagramAccount | undefined)?.warmup_days ?? DEFAULT_WARMUP_DAYS)
+      : DEFAULT_WARMUP_DAYS;
   const batchReady = activeBatch?.status === "ready";
   const canSchedulePartial = completedCount > 0 && !batchReady;
   const canScheduleAll = batchReady && completedCount > 0;
@@ -219,9 +281,14 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const customSchedulePayload = useMemo(
     () =>
       scheduleMode === "custom"
-        ? { posts_per_day: customPostsPerDay, time_slots: customTimeSlots }
+        ? {
+            posts_per_day: customPostsPerDay,
+            start_time: customStartTime,
+            end_time: customEndTime,
+            time_slots: customTimeSlots,
+          }
         : null,
-    [scheduleMode, customPostsPerDay, customTimeSlots],
+    [scheduleMode, customPostsPerDay, customStartTime, customEndTime, customTimeSlots],
   );
 
   const handleBatchUpdate = useCallback((batch: UploadBatch | null) => {
@@ -238,17 +305,41 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
     const restored = applyBatchSchedule(activeBatch);
     setScheduleMode(restored.scheduleMode);
     setCustomPostsPerDay(restored.customPostsPerDay);
+    setCustomStartTime(restored.customStartTime);
+    setCustomEndTime(restored.customEndTime);
     setCustomTimeSlots(restored.customTimeSlots);
-    writeScheduleDraft(selectedAccountId, restored);
-  }, [activeBatch, selectedAccountId]);
+    writeScheduleDraft(platform, selectedAccountId, restored);
+  }, [activeBatch, platform, selectedAccountId]);
 
   useEffect(() => {
-    writeScheduleDraft(selectedAccountId, { scheduleMode, customPostsPerDay, customTimeSlots });
-  }, [selectedAccountId, scheduleMode, customPostsPerDay, customTimeSlots]);
+    writeScheduleDraft(platform, selectedAccountId, {
+      scheduleMode,
+      customPostsPerDay,
+      customStartTime,
+      customEndTime,
+      customTimeSlots,
+    });
+  }, [platform, selectedAccountId, scheduleMode, customPostsPerDay, customStartTime, customEndTime, customTimeSlots]);
+
+  function buildCustomSchedulePayload(
+    postsPerDay: number,
+    startTime: string,
+    endTime: string,
+    timeSlots: string[],
+  ) {
+    return {
+      posts_per_day: postsPerDay,
+      start_time: startTime,
+      end_time: endTime,
+      time_slots: timeSlots,
+    };
+  }
 
   async function persistSchedule(
     mode: ScheduleMode,
     postsPerDay: number,
+    startTime: string,
+    endTime: string,
     timeSlots: string[],
   ) {
     if (!activeBatch) return;
@@ -257,7 +348,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
         schedule_mode: mode,
         custom_schedule:
           mode === "custom"
-            ? { posts_per_day: postsPerDay, time_slots: timeSlots }
+            ? buildCustomSchedulePayload(postsPerDay, startTime, endTime, timeSlots)
             : null,
       });
       setActiveBatch((prev) => (batchSummaryEqual(prev, updated) ? prev : updated));
@@ -268,20 +359,37 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
 
   async function changeScheduleMode(mode: ScheduleMode) {
     setScheduleMode(mode);
-    await persistSchedule(mode, customPostsPerDay, customTimeSlots);
+    await persistSchedule(mode, customPostsPerDay, customStartTime, customEndTime, customTimeSlots);
+  }
+
+  async function applyCustomScheduleRange(
+    postsPerDay: number,
+    startTime: string,
+    endTime: string,
+  ) {
+    const nextSlots = buildDefaultCustomTimeSlots(postsPerDay, startTime, endTime);
+    setCustomPostsPerDay(postsPerDay);
+    setCustomStartTime(startTime);
+    setCustomEndTime(endTime);
+    setCustomTimeSlots(nextSlots);
+    if (scheduleMode === "custom") {
+      await persistSchedule("custom", postsPerDay, startTime, endTime, nextSlots);
+    }
   }
 
   async function changeCustomPostsPerDay(value: number) {
-    setCustomPostsPerDay(value);
-    if (scheduleMode === "custom") {
-      await persistSchedule("custom", value, customTimeSlots);
-    }
+    const safeValue = Math.max(1, Math.min(100, value));
+    await applyCustomScheduleRange(safeValue, customStartTime, customEndTime);
+  }
+
+  async function changeCustomTimeRange(startTime: string, endTime: string) {
+    await applyCustomScheduleRange(customPostsPerDay, startTime, endTime);
   }
 
   async function changeCustomTimeSlots(next: string[]) {
     setCustomTimeSlots(next);
     if (scheduleMode === "custom") {
-      await persistSchedule("custom", customPostsPerDay, next);
+      await persistSchedule("custom", customPostsPerDay, customStartTime, customEndTime, next);
     }
   }
 
@@ -292,10 +400,12 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   function buildSchedulePayload(mode = effectiveScheduleMode) {
     if (mode !== "custom") return {};
     return {
-      custom_schedule: {
-        posts_per_day: effectiveCustomPostsPerDay,
-        time_slots: effectiveCustomTimeSlots,
-      },
+      custom_schedule: buildCustomSchedulePayload(
+        effectiveCustomPostsPerDay,
+        activeBatch?.custom_schedule?.start_time ?? customStartTime,
+        activeBatch?.custom_schedule?.end_time ?? customEndTime,
+        effectiveCustomTimeSlots,
+      ),
     };
   }
 
@@ -324,6 +434,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        platform,
         account_ids: [selectedAccountId],
         schedule_mode: effectiveScheduleMode,
         items: params.items,
@@ -334,7 +445,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
     });
     const autopilotData = await readJsonResponse(autopilotRes);
     if (!autopilotRes.ok) {
-      throw new Error(String(autopilotData.error ?? "Falha ao confirmar agendamento"));
+      throw new Error(formatApiError(autopilotData.error) || "Falha ao confirmar agendamento");
     }
     return Number(autopilotData.created ?? 0);
   }
@@ -360,6 +471,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          platform,
           account_ids: [selectedAccountId],
           schedule_mode: effectiveScheduleMode,
           items: batchItems,
@@ -371,7 +483,13 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
 
       const previewData = await readJsonResponse(previewRes);
       if (!previewRes.ok) {
-        throw new Error(String(previewData.error ?? "Falha ao gerar plano IA"));
+        throw new Error(formatApiError(previewData.error) || "Falha ao gerar plano IA");
+      }
+
+      if (previewData.caption_source === "fallback") {
+        setCaptionSource("fallback");
+      } else if (previewData.caption_source === "ai") {
+        setCaptionSource("ai");
       }
 
       const entries = (previewData.preview as Array<{ caption: string }>) ?? [];
@@ -402,6 +520,16 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       return;
     }
 
+    if (effectiveScheduleMode === "today") {
+      const maxToday = countTodayAvailableSlots();
+      if (items.length > maxToday) {
+        setResult(
+          `Só há espaço para ${maxToday} post(s) hoje. Use "Automático" ou envie menos vídeos.`,
+        );
+        return;
+      }
+    }
+
     if (effectiveScheduleMode === "custom") {
       if (effectiveCustomPostsPerDay < 1 || effectiveCustomPostsPerDay > 100) {
         setResult("Posts por dia deve ficar entre 1 e 100.");
@@ -421,11 +549,31 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
 
     try {
       const { totalCreated, lastScheduleSummary } = await runAutopilot(items);
-      setResult(
-        partial
-          ? `${totalCreated} publicações agendadas agora. Continue enviando o restante depois. ${lastScheduleSummary}`
-          : `${totalCreated} publicações agendadas. ${lastScheduleSummary}`,
-      );
+
+      if (activeBatch?.id) {
+        await markBatchFilesScheduled(
+          activeBatch.id,
+          items.flatMap((item) => item.media_urls),
+        ).catch(() => undefined);
+      }
+
+      const successMessage = partial
+        ? `${totalCreated} publicações agendadas agora. Continue enviando o restante depois. ${lastScheduleSummary}`
+        : `${totalCreated} publicações agendadas. ${lastScheduleSummary}`;
+      setResult(successMessage);
+
+      if (!partial) {
+        const query = new URLSearchParams({
+          platform,
+          account: selectedAccountId,
+        });
+        window.setTimeout(() => {
+          window.location.href =
+            platform === "tiktok"
+              ? `/dashboard/tiktok?${query.toString()}`
+              : `/dashboard/reports?${query.toString()}`;
+        }, 1200);
+      }
     } catch (error) {
       setResult(error instanceof Error ? error.message : "Erro desconhecido");
     } finally {
@@ -454,13 +602,17 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       description:
         "A IA escolhe quantos posts por dia, os melhores horários e a distribuição no calendário.",
     },
-    {
-      id: "warmup",
-      badge: "Conta nova",
-      title: "Aquecimento",
-      emoji: "🛡️",
-      description: "Ideal para contas recém-criadas. Começa devagar e aumenta gradualmente.",
-    },
+    ...(platform === "instagram"
+      ? [
+          {
+            id: "warmup" as ScheduleMode,
+            badge: "Conta nova",
+            title: "Aquecimento",
+            emoji: "🛡️",
+            description: "Ideal para contas recém-criadas. Começa devagar e aumenta gradualmente.",
+          },
+        ]
+      : []),
     {
       id: "today",
       badge: "Urgente",
@@ -487,11 +639,13 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       <section className="ig-panel space-y-5 p-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Conta</p>
-          <p className="mt-1 text-sm text-ig-text">Instagram conectado</p>
+          <p className="mt-1 text-sm text-ig-text">
+            {platform === "tiktok" ? "TikTok conectado" : "Instagram conectado"}
+          </p>
           <div className="mt-3 flex items-center gap-3 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
-            {selectedAccount?.profile_picture_url ? (
+            {selectedAvatar ? (
               <img
-                src={selectedAccount.profile_picture_url}
+                src={selectedAvatar}
                 alt=""
                 className="h-10 w-10 rounded-full object-cover"
               />
@@ -501,21 +655,25 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold text-ig-text">
-                @{selectedAccount?.ig_username ?? "conta"}
-              </p>
-              {accounts.length > 1 && (
+              <p className="truncate font-semibold text-ig-text">@{selectedUsername}</p>
+              {activeAccounts.length > 1 && (
                 <div className="relative mt-1">
                   <select
                     value={selectedAccountId}
                     onChange={(event) => setSelectedAccountId(event.target.value)}
                     className="w-full appearance-none rounded-lg border border-ig-border bg-ig-elevated py-1.5 pl-2 pr-8 text-xs text-ig-text"
                   >
-                    {accounts.map((account) => (
-                      <option key={account.id} value={account.id}>
-                        @{account.ig_username}
-                      </option>
-                    ))}
+                    {activeAccounts.map((account) => {
+                      const label =
+                        platform === "tiktok"
+                          ? `@${(account as TikTokAccount).username ?? (account as TikTokAccount).display_name ?? "conta"}`
+                          : `@${(account as InstagramAccount).ig_username ?? "conta"}`;
+                      return (
+                        <option key={account.id} value={account.id}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                   <ChevronDown
                     size={14}
@@ -535,6 +693,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
           <div className="mt-3">
             <SupremeUploadManager
               accountId={selectedAccountId}
+              platform={platform}
               scheduleMode={scheduleMode}
               customSchedule={customSchedulePayload}
               onBatchUpdate={handleBatchUpdate}
@@ -615,8 +774,33 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
                 className="ig-input w-full max-w-[120px] text-center text-lg font-semibold"
               />
             </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-ig-text">Início (Brasília)</label>
+                <input
+                  type="time"
+                  value={customStartTime}
+                  onChange={(event) => setCustomStartTime(event.target.value)}
+                  onBlur={(event) => void changeCustomTimeRange(event.target.value, customEndTime)}
+                  className="ig-input w-full"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-ig-text">Fim (Brasília)</label>
+                <input
+                  type="time"
+                  value={customEndTime}
+                  onChange={(event) => setCustomEndTime(event.target.value)}
+                  onBlur={(event) => void changeCustomTimeRange(customStartTime, event.target.value)}
+                  className="ig-input w-full"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-ig-muted">
+              {customPostsPerDay} horários distribuídos entre {customStartTime} e {customEndTime} (horário de Brasília).
+            </p>
             <div>
-              <label className="mb-2 block text-sm font-medium text-ig-text">Horários</label>
+              <label className="mb-2 block text-sm font-medium text-ig-text">Horários gerados</label>
               <div className="flex flex-wrap gap-2">
                 {customTimeSlots.map((time) => (
                   <button
@@ -663,7 +847,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Conta</dt>
-              <dd className="font-medium text-ig-text">@{selectedAccount?.ig_username ?? "—"}</dd>
+              <dd className="font-medium text-ig-text">@{selectedUsername}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Vídeos</dt>
@@ -685,6 +869,13 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
         </section>
       )}
 
+      {captionSource === "fallback" && (
+        <div className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
+          A IA de legendas está indisponível. Foram usadas legendas automáticas genéricas — configure{" "}
+          <strong className="text-ig-text">OPENAI_API_KEY</strong> ou ajuste o playbook para melhorar.
+        </div>
+      )}
+
       {canSchedulePartial && (
         <button
           type="button"
@@ -703,9 +894,11 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       >
         {scheduling
           ? loadingStep || "Processando..."
-          : canScheduleAll
-            ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
-            : "🚀 DEIXAR A IA PROGRAMAR TUDO"}
+          : isUploading
+            ? "Aguardando upload..."
+            : canScheduleAll
+              ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
+              : "Aguardando vídeos para agendar"}
       </button>
 
       {!canScheduleAll && completedCount === 0 && totalCount > 0 && (

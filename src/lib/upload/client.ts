@@ -146,16 +146,20 @@ export async function fetchActiveBatch() {
 
 export async function createUploadBatch(params: {
   accountId: string;
+  platform?: UploadBatch["platform"];
   scheduleMode: UploadBatch["schedule_mode"];
   customSchedule?: UploadBatch["custom_schedule"];
   uploadSpeedMode?: UploadSpeedMode;
   files: Array<{ file: File; fingerprint: string }>;
 }) {
+  const platform = params.platform ?? "instagram";
   const res = await apiFetch("/api/upload/batches", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      account_id: params.accountId,
+      platform,
+      account_id: platform === "instagram" ? params.accountId : undefined,
+      tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
       schedule_mode: params.scheduleMode,
       custom_schedule: params.customSchedule ?? undefined,
       upload_speed_mode: params.uploadSpeedMode ?? "normal",
@@ -218,6 +222,17 @@ export async function refreshUploadBatch(batchId: string) {
   const res = await apiFetch(`/api/upload/batches/${batchId}`, { cache: "no-store" });
   const data = await res.json();
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao atualizar lote"));
+  return data.batch as UploadBatch;
+}
+
+export async function markBatchFilesScheduled(batchId: string, publicUrls: string[]) {
+  const res = await apiFetch(`/api/upload/batches/${batchId}/mark-scheduled`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ public_urls: publicUrls }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(String(data.error ?? "Falha ao marcar vídeos agendados"));
   return data.batch as UploadBatch;
 }
 

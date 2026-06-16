@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById } from "@/lib/accounts";
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
   const parsed = bulkSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const requestedAccountIds = [

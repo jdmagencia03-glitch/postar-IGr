@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import {
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
   const parsed = actionsSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const { action, post_ids, scheduled_at, caption } = parsed.data;
@@ -112,7 +113,9 @@ export async function POST(request: NextRequest) {
       duplicateAt.setDate(duplicateAt.getDate() + 1 + index);
 
       const { error } = await supabase.from("scheduled_posts").insert({
+        platform: post.platform ?? "instagram",
         account_id: post.account_id,
+        tiktok_account_id: post.tiktok_account_id,
         media_type: post.media_type,
         media_urls: post.media_urls,
         caption: post.caption,

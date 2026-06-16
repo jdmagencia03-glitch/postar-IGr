@@ -6,6 +6,7 @@ import {
   type ContentAssistantForm,
 } from "@/lib/ai/playbook-form";
 import { buildViralSystemPrompt, buildViralUserPrompt } from "@/lib/ai/playbook";
+import { formatInstagramCaption } from "@/lib/ai/caption-format";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import type { AiPlaybook } from "@/lib/types";
 
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
     const content = data.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content) as { captions?: string[] };
     const captions = (parsed.captions ?? [])
-      .map((caption) => caption.trim())
+      .map((caption) => formatInstagramCaption(caption.trim()))
       .filter(Boolean)
       .slice(0, SAMPLE_COUNT);
 

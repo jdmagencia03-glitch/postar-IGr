@@ -1,14 +1,14 @@
 import { redirect } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { OperationsCenter } from "@/components/operations/OperationsCenter";
-import { getOwnerAccounts } from "@/lib/accounts";
 import {
   computeOperationsSnapshot,
   filterPostsByPeriod,
 } from "@/lib/operations/compute";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -31,10 +31,14 @@ function isPeriodFilter(value: string | undefined): value is PeriodFilter {
   return value === "all" || value === "today" || value === "tomorrow" || value === "week" || value === "month";
 }
 
+function isPlatformFilter(value: string | undefined): value is SocialPlatform | "all" {
+  return value === "instagram" || value === "tiktok" || value === "all" || value === undefined;
+}
+
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; account?: string; period?: string }>;
+  searchParams: Promise<{ status?: string; account?: string; period?: string; platform?: string }>;
 }) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard/reports");
@@ -42,23 +46,28 @@ export default async function ReportsPage({
   const params = await searchParams;
   const filter: StatusFilter = isStatusFilter(params.status) ? params.status : "all";
   const period: PeriodFilter = isPeriodFilter(params.period) ? params.period : "all";
+  const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
+    ? params.platform ?? "all"
+    : "all";
 
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
-  const accountIds = accounts.map((account) => account.id);
+  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+  const visibleRefs = accountRefs.filter(
+    (account) => platformFilter === "all" || account.platform === platformFilter,
+  );
   const selectedAccountId =
-    params.account && accountIds.includes(params.account) ? params.account : accounts[0]?.id;
-  const filteredAccountIds = selectedAccountId ? [selectedAccountId] : accountIds;
+    params.account && visibleRefs.some((account) => account.id === params.account)
+      ? params.account
+      : undefined;
 
-  const { data: allPostsRaw } = await supabase
-    .from("scheduled_posts")
-    .select("*, instagram_accounts(ig_username, profile_picture_url)")
-    .in("account_id", filteredAccountIds)
-    .eq("hidden_from_report", false)
-    .order("scheduled_at", { ascending: true })
-    .limit(500);
+  const allPosts = await getOwnerScheduledPosts(supabase, ownerId, {
+    platform: platformFilter,
+    accountId: selectedAccountId,
+    hiddenFromReport: false,
+    order: "asc",
+    limit: 2000,
+  });
 
-  const allPosts = (allPostsRaw as ScheduledPost[]) ?? [];
   const snapshot = computeOperationsSnapshot(allPosts);
 
   let visiblePosts = allPosts;
@@ -77,13 +86,15 @@ export default async function ReportsPage({
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <OperationsCenter
-          accounts={accounts.map((account) => ({
+          accounts={accountRefs.map((account) => ({
             id: account.id,
-            ig_username: account.ig_username,
+            platform: account.platform,
+            ig_username: account.username,
             profile_picture_url: account.profile_picture_url,
           }))}
-          selectedAccountId={selectedAccountId ?? accounts[0]?.id ?? ""}
-          posts={visiblePosts}
+          selectedAccountId={selectedAccountId ?? ""}
+          selectedPlatform={platformFilter}
+          posts={visiblePosts as ScheduledPost[]}
           snapshot={snapshot}
           statusFilter={filter}
           periodFilter={period}

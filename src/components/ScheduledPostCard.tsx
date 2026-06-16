@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PostCard } from "@/components/PostCard";
 import { formatDateTime } from "@/lib/utils";
+import { fromDateTimeLocalInAppTz, toDateTimeLocalInAppTz } from "@/lib/timezone";
 import type { PostStatus, ScheduledPost } from "@/lib/types";
 
 type DialogKind =
@@ -36,14 +37,11 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 function toDateTimeLocalValue(iso: string) {
-  const date = new Date(iso);
-  const offset = date.getTimezoneOffset();
-  const local = new Date(date.getTime() - offset * 60_000);
-  return local.toISOString().slice(0, 16);
+  return toDateTimeLocalInAppTz(iso);
 }
 
 function fromDateTimeLocalValue(value: string) {
-  return new Date(value).toISOString();
+  return fromDateTimeLocalInAppTz(value);
 }
 
 function actionButtonClass() {
@@ -265,6 +263,9 @@ export function ScheduledPostCard({
     if (status === "processing") {
       return (
         <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleRetry}>
+            {loading ? "Reenviando..." : "Tentar novamente"}
+          </button>
           <button type="button" className={actionButtonClass()} onClick={() => setDialog("cancel-processing")}>
             Cancelar envio
           </button>
@@ -273,6 +274,8 @@ export function ScheduledPostCard({
     }
 
     if (status === "published") {
+      const isTikTok = post.platform === "tiktok";
+
       return (
         <div className="mt-3 flex flex-wrap gap-2">
           {post.permalink && (
@@ -282,7 +285,7 @@ export function ScheduledPostCard({
               rel="noreferrer"
               className={actionButtonClass()}
             >
-              📲 Ver no Instagram
+              {isTikTok ? "🎵 Ver no TikTok" : "📲 Ver no Instagram"}
             </a>
           )}
           <button type="button" className={actionButtonClass()} onClick={() => setDialog("hide")}>
@@ -291,13 +294,15 @@ export function ScheduledPostCard({
           <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleDuplicate}>
             📋 Duplicar
           </button>
-          <button
-            type="button"
-            className="rounded-lg border border-ig-danger/30 bg-ig-danger/10 px-3 py-1.5 text-xs font-medium text-ig-danger hover:bg-ig-danger/15 disabled:opacity-50"
-            onClick={() => setDialog("instagram-delete")}
-          >
-            Excluir publicação do Instagram
-          </button>
+          {!isTikTok && (
+            <button
+              type="button"
+              className="rounded-lg border border-ig-danger/30 bg-ig-danger/10 px-3 py-1.5 text-xs font-medium text-ig-danger hover:bg-ig-danger/15 disabled:opacity-50"
+              onClick={() => setDialog("instagram-delete")}
+            >
+              Excluir publicação do Instagram
+            </button>
+          )}
         </div>
       );
     }
@@ -384,7 +389,9 @@ export function ScheduledPostCard({
           <button type="button" aria-label="Fechar" className="absolute inset-0 bg-black/50" onClick={() => setDialog(null)} />
           <div className="relative w-full max-w-lg rounded-2xl border border-ig-border bg-ig-elevated p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-ig-text">Reagendar publicação</h3>
-            <p className="mt-1 text-sm text-ig-muted">Agendado para {formatDateTime(post.scheduled_at)}</p>
+            <p className="mt-1 text-sm text-ig-muted">
+              Agendado para {formatDateTime(post.scheduled_at)} (horário de Brasília)
+            </p>
             <input
               type="datetime-local"
               value={scheduleDraft}

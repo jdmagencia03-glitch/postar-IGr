@@ -5,9 +5,10 @@ import {
   getWarmupDayOffset,
 } from "@/lib/account-warmup";
 import { getOwnerAccountById } from "@/lib/accounts";
+import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import { buildSmartScheduleSlice, type CustomScheduleOptions, type ScheduleMode, type WarmupScheduleOptions } from "@/lib/smart-schedule";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { InstagramAccount } from "@/lib/types";
+import type { InstagramAccount, SocialPlatform, TikTokAccount } from "@/lib/types";
 
 export interface AutopilotItem {
   media_urls: string[];
@@ -25,7 +26,20 @@ export async function resolveAutopilotAccounts(
   supabase: SupabaseClient,
   ownerId: string,
   accountIds: string[],
-) {
+  platform: SocialPlatform = "instagram",
+): Promise<(InstagramAccount | TikTokAccount)[]> {
+  if (platform === "tiktok") {
+    const validAccounts: TikTokAccount[] = [];
+    for (const accountId of accountIds) {
+      const account = await getOwnerTikTokAccountById(supabase, ownerId, accountId);
+      if (!account) {
+        throw new Error(`Conta TikTok não encontrada: ${accountId}`);
+      }
+      validAccounts.push(account);
+    }
+    return validAccounts;
+  }
+
   const validAccounts: InstagramAccount[] = [];
 
   for (const accountId of accountIds) {

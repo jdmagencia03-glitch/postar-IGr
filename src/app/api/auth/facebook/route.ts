@@ -39,5 +39,10 @@ export async function GET(request: NextRequest) {
   );
   response.cookies.set("meta_oauth_state", state, getOAuthStateCookieOptions());
   response.cookies.set("meta_oauth_next", nextPath, getOAuthStateCookieOptions());
+  response.cookies.set(
+    "oauth_add_account",
+    addAccount ? "1" : "",
+    getOAuthStateCookieOptions(),
+  );
   return response;
 }

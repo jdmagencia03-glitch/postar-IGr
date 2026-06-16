@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { EMPTY_PLAYBOOK, playbookHasContent } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -53,7 +54,7 @@ export async function PUT(request: NextRequest) {
   const parsed = playbookSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const supabase = createAdminClient();

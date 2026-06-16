@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ScheduledPostCard } from "@/components/ScheduledPostCard";
+import { fromDateTimeLocalInAppTz } from "@/lib/timezone";
 import { formatDateTime } from "@/lib/utils";
 import type { ScheduledPost } from "@/lib/types";
 
@@ -25,7 +26,7 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 function fromDateTimeLocalValue(value: string) {
-  return new Date(value).toISOString();
+  return fromDateTimeLocalInAppTz(value);
 }
 
 export function PostsManager({ posts, enableBulk = false, showPublishedMeta = false, rich = false }: Props) {
@@ -44,10 +45,61 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
     [posts, selectedIds],
   );
 
+  const allPostIds = useMemo(() => posts.map((post) => post.id), [posts]);
+  const allSelected =
+    allPostIds.length > 0 && allPostIds.every((id) => selectedIds.includes(id));
+
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? [] : allPostIds);
+  }
+
   function toggleSelect(postId: string, selected: boolean) {
     setSelectedIds((current) =>
       selected ? [...new Set([...current, postId])] : current.filter((id) => id !== postId),
     );
+  }
+
+  const editablePostIds = useMemo(
+    () =>
+      posts
+        .filter((post) => post.status === "pending" || post.status === "failed")
+        .map((post) => post.id),
+    [posts],
+  );
+
+  async function formatCaptions() {
+    const targetIds = selectedIds.length
+      ? selectedIds.filter((id) => editablePostIds.includes(id))
+      : editablePostIds;
+
+    if (!targetIds.length) {
+      setBulkMessage("Nenhum post pendente ou com falha para formatar legendas.");
+      return;
+    }
+
+    setBulkLoading(true);
+    setBulkMessage(null);
+
+    try {
+      const response = await apiFetch("/api/posts/format-captions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ post_ids: targetIds }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(String(data.error ?? "Falha ao formatar legendas"));
+      }
+
+      setSelectedIds([]);
+      setBulkMessage(String(data.message ?? `${data.updated ?? 0} legenda(s) reformatada(s)`));
+      router.refresh();
+    } catch (error) {
+      setBulkMessage(error instanceof Error ? error.message : "Erro ao formatar legendas");
+    } finally {
+      setBulkLoading(false);
+    }
   }
 
   async function runBulkAction(action: "delete" | "reschedule" | "update_caption" | "duplicate") {
@@ -95,13 +147,30 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
       {enableBulk && posts.length > 0 && (
         <div className="rounded-xl border border-ig-border bg-ig-secondary p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-medium text-ig-text">Selecionar posts</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm font-medium text-ig-text">Selecionar posts</p>
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="rounded-lg border border-ig-border bg-ig-elevated px-3 py-1.5 text-xs font-medium text-ig-text hover:bg-ig-secondary"
+              >
+                {allSelected ? "Desmarcar todos" : "Selecionar todos"}
+              </button>
+            </div>
             <p className="text-xs text-ig-muted">
               {selectedIds.length
                 ? `${selectedIds.length} selecionado(s)`
                 : "Marque os cards abaixo para agir em lote"}
             </p>
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!editablePostIds.length || bulkLoading}
+                onClick={() => void formatCaptions()}
+                className="rounded-lg border border-ig-primary/40 bg-ig-primary/10 px-3 py-2 text-sm text-ig-primary disabled:opacity-50"
+              >
+                ✨ {selectedIds.length ? "Formatar selecionados" : "Formatar todas as legendas"}
+              </button>
               <button
                 type="button"
                 disabled={!selectionMode || bulkLoading}

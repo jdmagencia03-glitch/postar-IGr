@@ -26,7 +26,9 @@ export async function POST(
   const { data, error } = await supabase
     .from("scheduled_posts")
     .insert({
+      platform: post.platform ?? "instagram",
       account_id: post.account_id,
+      tiktok_account_id: post.tiktok_account_id,
       media_type: post.media_type,
       media_urls: post.media_urls,
       caption: post.caption,

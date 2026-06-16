@@ -1,28 +1,25 @@
-import { NextResponse } from "next/server";
-import { getOwnerAccounts } from "@/lib/accounts";
+import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const ownerId = await getSessionUserId();
   if (!ownerId) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
-  const accountIds = accounts.map((a) => a.id);
+  const posts = await getOwnerScheduledPosts(supabase, ownerId);
+  const postIds = posts.map((post) => post.id);
 
-  const { data: posts } = await supabase
-    .from("scheduled_posts")
-    .select("id")
-    .in("account_id", accountIds);
-
-  const postIds = posts?.map((p) => p.id) ?? [];
+  if (!postIds.length) {
+    return NextResponse.json([]);
+  }
 
   const { data, error } = await supabase
     .from("publish_logs")
-    .select("*, scheduled_posts(caption, media_type, scheduled_at)")
+    .select("*, scheduled_posts(caption, media_type, scheduled_at, platform)")
     .in("post_id", postIds)
     .order("created_at", { ascending: false })
     .limit(100);

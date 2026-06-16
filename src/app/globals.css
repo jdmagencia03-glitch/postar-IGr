@@ -4,6 +4,7 @@
 
 /* Tema claro — fundo suave, cards brancos com sombra */
 :root {
+  color-scheme: light;
   --ig-bg: #f0f2f5;
   --ig-elevated: #ffffff;
   --ig-secondary: #f7f8fa;
@@ -37,6 +38,7 @@
 
 /* Tema escuro — estilo Instagram dark */
 .dark {
+  color-scheme: dark;
   --ig-bg: #000000;
   --ig-elevated: #121212;
   --ig-secondary: #262626;
@@ -99,7 +101,6 @@ body {
   line-height: 1.5;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 h1,

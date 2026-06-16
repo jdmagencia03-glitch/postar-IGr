@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { resolveAutopilotAccounts, resolveScheduleForAccount } from "@/lib/autopilot-plan";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
@@ -13,10 +14,13 @@ const autopilotSchema = z
     account_ids: z.array(z.string().uuid()).min(1).optional(),
     niche: z.string().max(120).optional(),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+    platform: z.enum(["instagram", "tiktok"]).optional(),
     custom_schedule: z
       .object({
         posts_per_day: z.number().int().min(1).max(100),
-        time_slots: z.array(z.string()).min(1).max(48),
+        time_slots: z.array(z.string()).max(48).optional(),
+        start_time: z.string().optional(),
+        end_time: z.string().optional(),
       })
       .optional(),
     captions: z.array(z.string()).min(1),
@@ -54,7 +58,7 @@ export async function POST(request: NextRequest) {
   const parsed = autopilotSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const requestedAccountIds = [
@@ -64,7 +68,13 @@ export async function POST(request: NextRequest) {
   const supabase = createAdminClient();
 
   try {
-    const validAccounts = await resolveAutopilotAccounts(supabase, ownerId, requestedAccountIds);
+    const platform = parsed.data.platform ?? "instagram";
+    const validAccounts = await resolveAutopilotAccounts(
+      supabase,
+      ownerId,
+      requestedAccountIds,
+      platform,
+    );
 
     for (const item of parsed.data.items) {
       const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
@@ -74,19 +84,21 @@ export async function POST(request: NextRequest) {
     }
 
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
-    const usePerAccountSchedule = scheduleMode === "warmup";
+    const usePerAccountSchedule = scheduleMode === "warmup" && platform === "instagram";
 
     const rows = validAccounts.flatMap((account) => {
       const schedule = usePerAccountSchedule
         ? resolveScheduleForAccount({
-            account,
+            account: account as import("@/lib/types").InstagramAccount,
             videoCount: parsed.data.items.length,
             scheduleMode,
           })
         : parsed.data.schedule.map((slot) => new Date(slot));
 
       return parsed.data.items.map((item, index) => ({
-        account_id: account.id,
+        platform,
+        account_id: platform === "instagram" ? account.id : null,
+        tiktok_account_id: platform === "tiktok" ? account.id : null,
         media_type: "REELS" as const,
         media_urls: item.media_urls,
         caption: parsed.data.captions[index]?.trim() || null,

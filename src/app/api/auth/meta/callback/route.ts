@@ -7,6 +7,10 @@ import {
 } from "@/lib/meta/oauth";
 import { getAppUrl } from "@/lib/app-url";
 import {
+  readOAuthAddAccountFlag,
+  resolveOAuthOwnerId,
+} from "@/lib/auth/resolve-owner";
+import {
   SESSION_COOKIE,
   createOpaqueSessionToken,
   getSessionCookieDeleteOptions,
@@ -20,7 +24,6 @@ import {
   encryptPageAccessToken,
   encryptSessionAccessToken,
 } from "@/lib/security/tokens";
-import { randomUUID } from "crypto";
 
 function sanitizeNextPath(value: string | null | undefined) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
@@ -32,6 +35,11 @@ function sanitizeNextPath(value: string | null | undefined) {
 function redirectWithError(appUrl: string, nextPath: string, message: string) {
   const params = new URLSearchParams({ error: message });
   return NextResponse.redirect(`${appUrl}${nextPath}?${params.toString()}`);
+}
+
+function isProfessionalInstagramAccount(accountType?: string) {
+  const normalized = accountType?.toUpperCase() ?? "";
+  return normalized === "BUSINESS" || normalized === "MEDIA_CREATOR";
 }
 
 async function validateAndConsumeOAuthState(state: string, cookieState?: string) {
@@ -52,34 +60,6 @@ async function validateAndConsumeOAuthState(state: string, cookieState?: string)
     valid,
     nextPath: sanitizeNextPath(data?.next_path),
   };
-}
-
-async function resolveOwnerId(request: NextRequest, igUserId: string) {
-  const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
-  const supabase = createAdminClient();
-
-  const { data: existingByIg } = await supabase
-    .from("instagram_accounts")
-    .select("owner_id, user_id")
-    .eq("ig_user_id", igUserId)
-    .maybeSingle();
-
-  if (existingByIg?.owner_id) {
-    return existingByIg.owner_id;
-  }
-
-  if (existingByIg?.user_id) {
-    return existingByIg.user_id;
-  }
-
-  if (sessionToken) {
-    const ownerFromSession = await lookupSessionToken(sessionToken);
-    if (ownerFromSession) {
-      return ownerFromSession;
-    }
-  }
-
-  return randomUUID();
 }
 
 async function resolveSessionToken(request: NextRequest, ownerId: string) {
@@ -104,6 +84,7 @@ export async function GET(request: NextRequest) {
   const storedNext = request.cookies.get("meta_oauth_next")?.value;
   const appUrl = getAppUrl();
   const fallbackNext = sanitizeNextPath(storedNext);
+  const addAccount = readOAuthAddAccountFlag(request);
 
   if (oauthError && !code) {
     await logSecurityEvent({
@@ -115,6 +96,7 @@ export async function GET(request: NextRequest) {
     const response = redirectWithError(appUrl, fallbackNext, oauthError);
     response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
     response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
+    response.cookies.set("oauth_add_account", "", getSessionCookieDeleteOptions());
     return response;
   }
 
@@ -139,10 +121,35 @@ export async function GET(request: NextRequest) {
     const tokenData = await exchangeCodeForToken(code);
     const longToken = await getLongLivedToken(tokenData.access_token);
     const profile = await getInstagramProfile(longToken);
-    const ownerId = await resolveOwnerId(request, profile.id);
-    const sessionToken = await resolveSessionToken(request, ownerId);
+
+    if (!isProfessionalInstagramAccount(profile.account_type)) {
+      return redirectWithError(appUrl, nextPath, "no_instagram");
+    }
 
     const supabase = createAdminClient();
+    const ownerResult = await resolveOAuthOwnerId(request, supabase, {
+      requireExistingSession: addAccount,
+      findExistingOwnerId: async () => {
+        const { data: existingByIg } = await supabase
+          .from("instagram_accounts")
+          .select("owner_id, user_id")
+          .eq("ig_user_id", profile.id)
+          .maybeSingle();
+
+        return existingByIg?.owner_id ?? existingByIg?.user_id ?? null;
+      },
+    });
+
+    if ("error" in ownerResult) {
+      return redirectWithError(
+        appUrl,
+        "/login",
+        "Faça login antes de adicionar outra conta Instagram.",
+      );
+    }
+
+    const ownerId = ownerResult.ownerId;
+    const sessionToken = await resolveSessionToken(request, ownerId);
 
     await supabase.from("app_sessions").upsert(
       {
@@ -181,6 +188,7 @@ export async function GET(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
     response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
     response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
+    response.cookies.set("oauth_add_account", "", getSessionCookieDeleteOptions());
 
     await logSecurityEvent({
       ownerId,

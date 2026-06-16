@@ -1,5 +1,6 @@
 import type { AiPlaybook } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { CAPTION_LAYOUT_EXAMPLE } from "@/lib/ai/caption-format";
 
 export const EMPTY_PLAYBOOK: Omit<AiPlaybook, "owner_id" | "created_at" | "updated_at"> = {
   brand_name: "",
@@ -119,7 +120,17 @@ REGRAS DE OURO PARA LEGENDAS VIRAIS:
 - Português do Brasil, natural, sem parecer robô
 - Máximo 2200 caracteres por legenda
 
-Retorne APENAS JSON válido: {"captions":["legenda 1","legenda 2",...]}`;
+FORMATO OBRIGATÓRIO (use \\n literalmente no JSON para quebrar linha):
+- Cada bloco de mensagem em UMA linha separada
+- Linha em branco (\\n\\n) antes do bloco de hashtags
+- Quando houver CTA com emoji (📌, 🔥, 💪, 👇), cada um começa uma NOVA linha
+- NUNCA junte frases diferentes na mesma linha
+
+Exemplo exato de formatação:
+${CAPTION_LAYOUT_EXAMPLE}
+
+Retorne APENAS JSON válido: {"captions":["legenda 1","legenda 2",...]}
+Cada string do array deve conter \\n para quebras de linha reais.`;
 }
 
 export function buildViralUserPrompt(params: {
@@ -150,5 +161,6 @@ Para cada vídeo, escreva APENAS a legenda com hashtags:
 1. Use o nome do arquivo como referência de tema
 2. Aplique o playbook da marca
 3. Otimize a legenda para viralização no algoritmo do Instagram
-4. Varie o estilo entre as legendas (storytelling, lista, pergunta, desafio, etc.)`;
+4. Varie o estilo entre as legendas (storytelling, lista, pergunta, desafio, etc.)
+5. Siga o FORMATO OBRIGATÓRIO: uma ideia por linha, linha em branco antes das hashtags`;
 }

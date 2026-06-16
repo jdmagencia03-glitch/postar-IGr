@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { formatZodError } from "@/lib/api-errors";
 import {
   clampWarmupDays,
   DEFAULT_WARMUP_DAYS,
@@ -7,6 +8,7 @@ import {
 import { getOwnerAccounts, getOwnerAccountById, ownerAccountsFilter } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { z } from "zod";
 
 function mapAccountResponse(account: Awaited<ReturnType<typeof getOwnerAccounts>>[number]) {
@@ -59,7 +61,7 @@ export async function PATCH(request: Request) {
   const parsed = patchSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const supabase = createAdminClient();
@@ -111,9 +113,12 @@ export async function DELETE(request: Request) {
   }
 
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const [accounts, tiktokAccounts] = await Promise.all([
+    getOwnerAccounts(supabase, ownerId),
+    getOwnerTikTokAccounts(supabase, ownerId),
+  ]);
 
-  if (accounts.length <= 1) {
+  if (accounts.length <= 1 && tiktokAccounts.length === 0) {
     return NextResponse.json(
       { error: "Você precisa manter pelo menos uma conta conectada" },
       { status: 400 },

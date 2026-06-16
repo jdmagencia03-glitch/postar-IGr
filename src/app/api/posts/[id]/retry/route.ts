@@ -20,10 +20,32 @@ export async function POST(
     return NextResponse.json({ error: "Post não encontrado" }, { status: 404 });
   }
 
-  if (!canRetryPost(post.status)) {
+  if (!canRetryPost(post)) {
+    if (post.media_id) {
+      return NextResponse.json(
+        { error: "Este post já foi publicado no Instagram e não pode ser reenviado" },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
-      { error: "Só posts com falha podem ser reenviados" },
+      { error: "Só posts com falha ou em publicação podem ser reenviados" },
       { status: 400 },
+    );
+  }
+
+  const { count: successLogs } = await supabase
+    .from("publish_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("post_id", id)
+    .eq("level", "success");
+
+  if (successLogs && successLogs > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Este post já foi publicado anteriormente (detectado nos logs). Republicação bloqueada por segurança.",
+      },
+      { status: 409 },
     );
   }
 
@@ -34,6 +56,7 @@ export async function POST(
       error_message: null,
     })
     .eq("id", id)
+    .is("media_id", null)
     .select("*, instagram_accounts(ig_username, profile_picture_url)")
     .single();
 

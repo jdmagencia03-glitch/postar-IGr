@@ -161,6 +161,40 @@ with checks as (
       where n.nspname = 'public'
         and c.relname = 'security_audit_logs'
         and c.relrowsecurity = true
+    )),
+    ('tiktok-accounts.sql', 'tabela tiktok_accounts', exists(
+      select 1 from information_schema.tables
+      where table_schema = 'public' and table_name = 'tiktok_accounts'
+    )),
+    ('tiktok-posts.sql', 'coluna scheduled_posts.platform', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'scheduled_posts'
+        and column_name = 'platform'
+    )),
+    ('tiktok-posts.sql', 'coluna scheduled_posts.tiktok_account_id', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'scheduled_posts'
+        and column_name = 'tiktok_account_id'
+    )),
+    ('tiktok-upload-batches.sql', 'coluna upload_batches.platform', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'upload_batches'
+        and column_name = 'platform'
+    )),
+    ('tiktok-upload-batches.sql', 'coluna upload_batches.tiktok_account_id', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'upload_batches'
+        and column_name = 'tiktok_account_id'
+    )),
+    ('scheduled-posts-updated-at.sql', 'coluna scheduled_posts.updated_at', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'scheduled_posts'
+        and column_name = 'updated_at'
     ))
   ) as t(script_file, check_name, ok)
 ),

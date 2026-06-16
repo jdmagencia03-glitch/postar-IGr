@@ -18,27 +18,66 @@ export function AccountStatusBadge() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const [healthRes, accountsRes] = await Promise.all([
+      const [healthRes, igAccountsRes, tiktokAccountsRes] = await Promise.all([
         fetch("/api/instagram/health", { credentials: "include", cache: "no-store" }),
         fetch("/api/accounts", { credentials: "include", cache: "no-store" }),
+        fetch("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }),
       ]);
 
-      const data = (await healthRes.json()) as HealthResponse;
-      const accounts = accountsRes.ok ? await accountsRes.json() : [];
+      const igAccounts = igAccountsRes.ok ? await igAccountsRes.json() : [];
+      const tiktokAccounts = tiktokAccountsRes.ok ? await tiktokAccountsRes.json() : [];
+      const igCount = Array.isArray(igAccounts) ? igAccounts.length : 0;
+      const tiktokCount = Array.isArray(tiktokAccounts) ? tiktokAccounts.length : 0;
+      const totalCount = igCount + tiktokCount;
 
-      if (!healthRes.ok) {
-        setStatus("error");
-        setMessage("Falha ao verificar conta");
-        setAccountCount(Array.isArray(accounts) ? accounts.length : 0);
+      setAccountCount(totalCount);
+
+      if (tiktokCount > 0 && igCount === 0) {
+        setStatus("active");
+        setMessage(
+          tiktokCount === 1
+            ? "Conta TikTok conectada"
+            : `${tiktokCount} contas TikTok conectadas`,
+        );
         return;
       }
 
-      setStatus(data.account_status);
-      setMessage(data.status_message);
-      setAccountCount(Array.isArray(accounts) ? accounts.length : 0);
+      const health = healthRes.ok
+        ? ((await healthRes.json()) as HealthResponse)
+        : null;
+      const igActive = health?.account_status === "active";
+      const tiktokActive = tiktokCount > 0;
+
+      if (igCount > 0 && tiktokCount > 0) {
+        setStatus(igActive || tiktokActive ? "active" : "error");
+        if (igActive && tiktokActive) {
+          setMessage(`${igCount} IG · ${tiktokCount} TikTok conectadas`);
+        } else if (igActive) {
+          setMessage(health?.status_message ?? "Instagram ativo · TikTok indisponível");
+        } else if (tiktokActive) {
+          setMessage("TikTok ativo · Instagram indisponível");
+        } else {
+          setMessage(health?.status_message ?? "Contas indisponíveis");
+        }
+        return;
+      }
+
+      if (igCount > 0) {
+        if (!healthRes.ok || !health) {
+          setStatus("error");
+          setMessage("Falha ao verificar conta Instagram");
+          return;
+        }
+        setStatus(health.account_status);
+        setMessage(health.status_message);
+        return;
+      }
+
+      setStatus("error");
+      setMessage("Nenhuma conta conectada");
     } catch {
       setStatus("error");
-      setMessage("Instagram indisponível no momento");
+      setMessage("Contas indisponíveis no momento");
     }
   }, []);
 

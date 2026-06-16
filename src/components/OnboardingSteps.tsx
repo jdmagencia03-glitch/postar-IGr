@@ -68,7 +68,7 @@ export function OnboardingSteps({ playbookReady, hasScheduledPosts, currentStep 
               {step2Done && <span className="ml-2 text-xs font-normal text-ig-text">Feito</span>}
             </p>
             <p className="mt-1 text-xs text-ig-muted">
-              Arraste seus Reels prontos. A IA programa legendas e horários automaticamente.
+              Arraste seus vídeos prontos. A IA programa legendas e horários para Instagram e TikTok.
             </p>
           </div>
         </a>

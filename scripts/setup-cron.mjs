@@ -11,7 +11,19 @@
 const API_KEY = process.env.CRON_JOB_ORG_API_KEY;
 const PUBLISH_URL =
   process.env.PUBLISH_URL || "https://postarigr.vercel.app/api/cron/publish";
-const CRON_SECRET = process.env.CRON_SECRET || "insta-scheduler-cron-7f3k9m2p";
+const CRON_SECRET = process.env.CRON_SECRET;
+
+if (!CRON_SECRET) {
+  console.error(`
+❌ Falta CRON_SECRET.
+
+Defina CRON_SECRET no ambiente antes de rodar este script.
+Exemplo:
+
+  CRON_SECRET=sua-chave-segura CRON_JOB_ORG_API_KEY=SUA_CHAVE node scripts/setup-cron.mjs
+`);
+  process.exit(1);
+}
 
 if (!API_KEY) {
   console.error(`

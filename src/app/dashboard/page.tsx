@@ -1,39 +1,58 @@
 import { redirect } from "next/navigation";
 import { Sparkles } from "lucide-react";
+import { AccountFilterBar } from "@/components/AccountFilterBar";
 import { Navbar } from "@/components/Navbar";
 import { OnboardingSteps } from "@/components/OnboardingSteps";
 import { PostsManager } from "@/components/PostsManager";
-import { getOwnerAccounts } from "@/lib/accounts";
+import { PublisherHealthBanner } from "@/components/PublisherHealthBanner";
 import { getPlaybookForOwner, playbookHasContent } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost } from "@/lib/types";
+import type { SocialPlatform } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+function isPlatformFilter(value: string | undefined): value is SocialPlatform | "all" {
+  return value === "instagram" || value === "tiktok" || value === "all" || value === undefined;
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ account?: string; platform?: string }>;
+}) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard");
 
+  const params = await searchParams;
+  const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
+    ? params.platform ?? "all"
+    : "all";
+
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
-  const accountIds = accounts.map((a) => a.id);
+  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+  const visibleRefs = accountRefs.filter(
+    (account) => platformFilter === "all" || account.platform === platformFilter,
+  );
+  const selectedAccountId =
+    params.account && visibleRefs.some((account) => account.id === params.account)
+      ? params.account
+      : undefined;
+
   const playbook = await getPlaybookForOwner(ownerId);
   const playbookReady = playbookHasContent(playbook);
 
-  const { data: posts } = await supabase
-    .from("scheduled_posts")
-    .select("*, instagram_accounts(ig_username, profile_picture_url)")
-    .in("account_id", accountIds)
-    .order("scheduled_at", { ascending: true })
-    .limit(12);
+  const postFilters = {
+    platform: platformFilter,
+    accountId: selectedAccountId,
+    order: "asc" as const,
+  };
 
-  const { data: allPosts } = await supabase
-    .from("scheduled_posts")
-    .select("status")
-    .in("account_id", accountIds);
+  const posts = await getOwnerScheduledPosts(supabase, ownerId, { ...postFilters, limit: 12 });
+  const allPosts = await getOwnerScheduledPosts(supabase, ownerId, postFilters);
 
-  const rows = allPosts ?? [];
+  const rows = allPosts;
   const stats = {
     pending: rows.filter((p) => p.status === "pending").length,
     published: rows.filter((p) => p.status === "published").length,
@@ -45,6 +64,8 @@ export default async function DashboardPage() {
     <div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
+        <PublisherHealthBanner />
+
         <section className="ig-hero mb-10 p-8 text-center">
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-ig-info-border bg-ig-info-bg px-4 py-1.5 text-sm font-medium text-ig-info-text">
             <Sparkles size={16} />
@@ -80,9 +101,9 @@ export default async function DashboardPage() {
               </a>
             )}
           </div>
-          {accounts.length > 0 && (
+          {accountRefs.length > 0 && (
             <p className="mt-4 text-xs text-ig-muted">
-              {accounts.length} conta(s) conectada(s) ·{" "}
+              {accountRefs.length} conta(s) conectada(s) ·{" "}
               <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
                 Gerenciar
               </a>
@@ -94,6 +115,13 @@ export default async function DashboardPage() {
           playbookReady={playbookReady}
           hasScheduledPosts={hasScheduledPosts}
           currentStep={playbookReady ? 2 : 1}
+        />
+
+        <AccountFilterBar
+          accounts={accountRefs}
+          selectedAccountId={selectedAccountId}
+          selectedPlatform={platformFilter}
+          basePath="/dashboard"
         />
 
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
@@ -119,9 +147,9 @@ export default async function DashboardPage() {
           </a>
         </div>
 
-        <PostsManager posts={(posts as ScheduledPost[]) ?? []} enableBulk />
+        <PostsManager posts={posts} enableBulk />
 
-        {!posts?.length && (
+        {!posts.length && (
           <div className="rounded-xl border border-dashed border-ig-border bg-ig-elevated p-12 text-center text-ig-muted shadow-sm">
             Nenhum post agendado ainda.{" "}
             <a href="/dashboard/bulk" className="text-ig-primary hover:underline">

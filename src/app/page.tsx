@@ -9,8 +9,8 @@ const FEATURES = [
   "Legendas geradas por IA",
   "Hashtags otimizadas automaticamente",
   "Agendamento inteligente",
-  "Reels, Feed e Carrosséis",
-  "API Oficial da Meta",
+  "Vídeos e Reels para Instagram e TikTok",
+  "APIs oficiais Meta e TikTok",
 ] as const;
 
 export default async function HomePage() {
@@ -20,7 +20,7 @@ export default async function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col items-center justify-center px-4 text-center">
       <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-ig-primary">
-        🚀 Automação para Instagram
+        🚀 Automação para Instagram e TikTok
       </p>
 
       <h1 className="mb-6 text-4xl font-bold text-ig-text sm:text-5xl">
@@ -30,8 +30,8 @@ export default async function HomePage() {
       </h1>
 
       <p className="mb-8 max-w-2xl text-lg text-ig-muted">
-        A IA cria legendas, gera hashtags e agenda suas publicações automaticamente para que sua
-        página continue crescendo todos os dias.
+        A IA cria legendas, gera hashtags e agenda suas publicações no Instagram e TikTok
+        automaticamente para que sua página continue crescendo todos os dias.
       </p>
 
       <ul className="mb-8 grid max-w-md gap-2 text-left sm:grid-cols-2 sm:gap-x-6">
@@ -60,6 +60,15 @@ export default async function HomePage() {
           Entrar
         </Link>
       </div>
+
+      <footer className="mt-16 flex gap-4 text-xs text-ig-muted">
+        <Link href="/privacy" className="hover:text-ig-text hover:underline">
+          Privacidade
+        </Link>
+        <Link href="/terms" className="hover:text-ig-text hover:underline">
+          Termos
+        </Link>
+      </footer>
     </main>
   );
 }

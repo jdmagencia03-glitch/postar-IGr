@@ -10,7 +10,9 @@ export type SecurityEventType =
   | "post_scheduled"
   | "post_deleted"
   | "account_deleted"
-  | "suspicious_access";
+  | "suspicious_access"
+  | "tiktok_connect"
+  | "tiktok_publish";
 
 export async function logSecurityEvent(params: {
   ownerId?: string | null;

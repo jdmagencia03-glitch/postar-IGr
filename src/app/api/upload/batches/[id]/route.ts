@@ -1,3 +1,4 @@
+import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getBatchForOwner } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -11,7 +12,9 @@ const patchSchema = z.object({
   custom_schedule: z
     .object({
       posts_per_day: z.number().int().min(1).max(100),
-      time_slots: z.array(z.string()).min(1).max(48),
+      time_slots: z.array(z.string()).max(48).optional(),
+      start_time: z.string().optional(),
+      end_time: z.string().optional(),
     })
     .nullable()
     .optional(),
@@ -51,7 +54,7 @@ export async function PATCH(
   const parsed = patchSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const supabase = createAdminClient();
