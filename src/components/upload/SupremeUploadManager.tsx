@@ -107,6 +107,7 @@ export function SupremeUploadManager({
   const [progress, setProgress] = useState<UploadEngineProgress | null>(null);
   const [progressMap, setProgressMap] = useState<Record<string, number>>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
   const [validationPreview, setValidationPreview] = useState<{
     validCount: number;
     invalid: InvalidFile[];
@@ -313,21 +314,56 @@ export function SupremeUploadManager({
   async function handleResume(selected: FileList | null) {
     if (!selected?.length || !batch) return;
 
-    const files = Array.from(selected);
-    const manifest = await getManifestForBatch(batch.id);
-    const fromManifest = matchFilesToManifest(files, manifest);
-    const fromRecords = buildFileMapFromRecords(files, batch.upload_files ?? []);
-    const fileMap = new Map([...fromManifest, ...fromRecords]);
+    setResuming(true);
+    setMessage("Reconhecendo arquivos selecionados...");
 
-    const onlyFileId = retryFileIdRef.current;
-    retryFileIdRef.current = null;
+    try {
+      const files = Array.from(selected).filter((file) => file.type.startsWith("video/") || /\.(mp4|mov|webm)$/i.test(file.name));
+      if (!files.length) {
+        setMessage("Nenhum vídeo encontrado na seleção.");
+        return;
+      }
 
-    if (onlyFileId && fileMap.has(onlyFileId)) {
-      await startEngine(batch, fileMap, [onlyFileId]);
-      return;
+      const manifest = await getManifestForBatch(batch.id);
+      const fromManifest = matchFilesToManifest(files, manifest);
+      const fromRecords = buildFileMapFromRecords(files, batch.upload_files ?? []);
+      const fileMap = new Map([...fromManifest, ...fromRecords]);
+
+      const pendingRecords = (batch.upload_files ?? []).filter(
+        (record) => !record.removed && record.status !== "completed",
+      );
+      const matchedPending = pendingRecords.filter((record) => fileMap.has(record.id)).length;
+      const alreadyDone = (batch.upload_files ?? []).filter((record) => record.status === "completed").length;
+
+      if (matchedPending === 0) {
+        setMessage(
+          `Nenhum vídeo pendente foi reconhecido. Selecione a mesma pasta/arquivos do lote (${alreadyDone} já enviados).`,
+        );
+        return;
+      }
+
+      setPaused(false);
+      await setBatchPaused(batch.id, false);
+
+      setMessage(
+        `${fileMap.size} arquivo(s) reconhecido(s) · ${alreadyDone} já enviados · retomando ${matchedPending} pendente(s). Os concluídos não serão reenviados.`,
+      );
+
+      const onlyFileId = retryFileIdRef.current;
+      retryFileIdRef.current = null;
+
+      if (onlyFileId && fileMap.has(onlyFileId)) {
+        await startEngine(batch, fileMap, [onlyFileId]);
+        return;
+      }
+
+      await startEngine(batch, fileMap);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Erro ao retomar upload");
+      setRunning(false);
+    } finally {
+      setResuming(false);
     }
-
-    await startEngine(batch, fileMap);
   }
 
   async function togglePause() {
@@ -521,6 +557,13 @@ export function SupremeUploadManager({
                 <p className="mt-1 text-xs text-ig-muted">
                   Nenhum vídeo enviado será perdido. Lote #{batch.batch_number} · @{username}
                 </p>
+                {paused && !running && (
+                  <p className="mt-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-xs text-ig-muted">
+                    Para continuar, clique em <strong className="text-ig-text">Continuar</strong> e selecione a{" "}
+                    <strong className="text-ig-text">mesma pasta</strong> com os {totalCount} vídeos. Os{" "}
+                    {completedCount} já enviados não serão reenviados.
+                  </p>
+                )}
               </>
             )}
 
@@ -556,9 +599,14 @@ export function SupremeUploadManager({
             )}
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {batch.status !== "ready" && !running && (
-                <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={() => resumeInputRef.current?.click()}>
-                  Continuar upload
+              {batch.status !== "ready" && !running && !paused && (
+                <button
+                  type="button"
+                  className="ig-btn-secondary px-3 py-2 text-sm"
+                  disabled={resuming}
+                  onClick={() => resumeInputRef.current?.click()}
+                >
+                  Selecionar pasta para continuar
                 </button>
               )}
               {running && (
@@ -567,8 +615,14 @@ export function SupremeUploadManager({
                 </button>
               )}
               {paused && (
-                <button type="button" className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" onClick={togglePause}>
-                  <Play size={14} /> Continuar
+                <button
+                  type="button"
+                  className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+                  disabled={resuming}
+                  onClick={togglePause}
+                >
+                  {resuming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  {resuming ? "Preparando..." : "Continuar"}
                 </button>
               )}
               {completedCount > 0 && onSchedulePartial && batch.status !== "ready" && (
@@ -626,12 +680,25 @@ export function SupremeUploadManager({
       )}
 
       <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { handleFileSelection(e.target.files); e.target.value = ""; }} />
-      <input ref={resumeInputRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { handleResume(e.target.files); e.target.value = ""; }} />
+      <input
+        ref={resumeInputRef}
+        type="file"
+        accept="video/*"
+        multiple
+        className="hidden"
+        {...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)}
+        onChange={(e) => {
+          handleResume(e.target.files);
+          e.target.value = "";
+        }}
+      />
 
-      {running && (
+      {(running || resuming) && (
         <div className="flex items-center gap-2 text-sm text-ig-primary">
           <Loader2 size={16} className="animate-spin" />
-          Enviando em paralelo ({SPEED_PRESETS[speedMode].label})...
+          {resuming
+            ? "Reconhecendo arquivos e retomando upload..."
+            : `Enviando em paralelo (${SPEED_PRESETS[speedMode].label})...`}
         </div>
       )}
 
