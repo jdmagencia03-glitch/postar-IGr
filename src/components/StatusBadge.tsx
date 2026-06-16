@@ -15,9 +15,20 @@ const labels: Record<PostStatus, string> = {
   failed: "Falhou",
 };
 
-export function StatusBadge({ status }: { status: PostStatus }) {
+export function StatusBadge({
+  status,
+  onPrimary = false,
+}: {
+  status: PostStatus;
+  onPrimary?: boolean;
+}) {
   return (
-    <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", styles[status])}>
+    <span
+      className={cn(
+        "rounded-full px-2.5 py-1 text-xs font-medium",
+        onPrimary ? "bg-white/20 text-ig-on-primary" : styles[status],
+      )}
+    >
       {labels[status]}
     </span>
   );

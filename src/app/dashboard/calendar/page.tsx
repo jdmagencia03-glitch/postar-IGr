@@ -1,5 +1,14 @@
 import { redirect } from "next/navigation";
-import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from "date-fns";
+import {
+  eachDayOfInterval,
+  endOfMonth,
+  format,
+  isBefore,
+  isSameDay,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Navbar } from "@/components/Navbar";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -7,6 +16,7 @@ import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -46,29 +56,56 @@ export default async function CalendarPage() {
             const dayPosts = typedPosts.filter((p) =>
               isSameDay(parseISO(p.scheduled_at), day),
             );
+            const isPastDay = isBefore(startOfDay(day), startOfDay(now));
+            const hasPublished = dayPosts.some((post) => post.status === "published");
+            const isPublishedDay = isPastDay && hasPublished;
 
             return (
               <div
                 key={day.toISOString()}
-                className="min-h-28 rounded-xl border border-ig-border bg-ig-secondary p-3"
+                className={cn(
+                  "min-h-28 rounded-xl border p-3",
+                  isPublishedDay
+                    ? "border-ig-primary bg-ig-primary text-ig-on-primary"
+                    : "border-ig-border bg-ig-secondary",
+                )}
               >
-                <p className="mb-2 text-sm font-medium text-ig-text">
+                <p
+                  className={cn(
+                    "mb-2 text-sm font-medium",
+                    isPublishedDay ? "text-ig-on-primary" : "text-ig-text",
+                  )}
+                >
                   {format(day, "dd/MM")}
                 </p>
                 {dayPosts.length === 0 ? (
-                  <p className="text-xs text-ig-muted">—</p>
+                  <p className={cn("text-xs", isPublishedDay ? "text-ig-on-primary/80" : "text-ig-muted")}>
+                    —
+                  </p>
                 ) : (
                   <div className="space-y-1">
                     {dayPosts.slice(0, 3).map((p) => (
                       <div key={p.id} className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-ig-muted">
+                        <span
+                          className={cn(
+                            "text-xs",
+                            isPublishedDay ? "text-ig-on-primary" : "text-ig-muted",
+                          )}
+                        >
                           {format(parseISO(p.scheduled_at), "HH:mm")}
                         </span>
-                        <StatusBadge status={p.status} />
+                        <StatusBadge status={p.status} onPrimary={isPublishedDay} />
                       </div>
                     ))}
                     {dayPosts.length > 3 && (
-                      <p className="text-xs text-ig-muted">+{dayPosts.length - 3} mais</p>
+                      <p
+                        className={cn(
+                          "text-xs",
+                          isPublishedDay ? "text-ig-on-primary/90" : "text-ig-muted",
+                        )}
+                      >
+                        +{dayPosts.length - 3} mais
+                      </p>
                     )}
                   </div>
                 )}
