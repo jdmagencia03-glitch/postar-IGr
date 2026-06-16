@@ -7,6 +7,14 @@ import { z } from "zod";
 const patchSchema = z.object({
   paused: z.boolean().optional(),
   upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
+  schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+  custom_schedule: z
+    .object({
+      posts_per_day: z.number().int().min(1).max(100),
+      time_slots: z.array(z.string()).min(1).max(48),
+    })
+    .nullable()
+    .optional(),
 });
 
 export async function GET(

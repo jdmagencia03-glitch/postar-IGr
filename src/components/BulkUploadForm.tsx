@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, Plus, UserRound, X } from "lucide-react";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
+import { updateBatchSchedule } from "@/lib/upload/client";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
 import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots } from "@/lib/smart-schedule";
@@ -14,6 +15,8 @@ interface Props {
 }
 
 type ScheduleMode = "auto" | "warmup" | "today" | "custom";
+
+const SCHEDULE_DRAFT_KEY = "postarigr-bulk-schedule-draft";
 
 const DEFAULT_CUSTOM_TIMES = [
   "06:00",
@@ -118,6 +121,37 @@ function formatDurationPreview(
   };
 }
 
+function readScheduleDraft(accountId: string) {
+  if (typeof window === "undefined" || !accountId) return null;
+  try {
+    const raw = sessionStorage.getItem(`${SCHEDULE_DRAFT_KEY}:${accountId}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as {
+      scheduleMode: ScheduleMode;
+      customPostsPerDay: number;
+      customTimeSlots: string[];
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeScheduleDraft(
+  accountId: string,
+  draft: { scheduleMode: ScheduleMode; customPostsPerDay: number; customTimeSlots: string[] },
+) {
+  if (typeof window === "undefined" || !accountId) return;
+  sessionStorage.setItem(`${SCHEDULE_DRAFT_KEY}:${accountId}`, JSON.stringify(draft));
+}
+
+function applyBatchSchedule(batch: UploadBatch) {
+  const nextMode = batch.schedule_mode;
+  const nextPosts = batch.custom_schedule?.posts_per_day ?? 15;
+  const nextSlots =
+    batch.custom_schedule?.time_slots?.length ? batch.custom_schedule.time_slots : DEFAULT_CUSTOM_TIMES;
+  return { scheduleMode: nextMode, customPostsPerDay: nextPosts, customTimeSlots: nextSlots };
+}
+
 export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const initialAccountId = useMemo(() => {
     if (defaultAccountId && accounts.some((account) => account.id === defaultAccountId)) {
@@ -126,12 +160,15 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
     return accounts[0]?.id ?? "";
   }, [accounts, defaultAccountId]);
 
-  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("auto");
-  const [customPostsPerDay, setCustomPostsPerDay] = useState(15);
-  const [customTimeSlots, setCustomTimeSlots] = useState<string[]>(DEFAULT_CUSTOM_TIMES);
+  const draft = useMemo(() => readScheduleDraft(initialAccountId), [initialAccountId]);
+
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(draft?.scheduleMode ?? "auto");
+  const [customPostsPerDay, setCustomPostsPerDay] = useState(draft?.customPostsPerDay ?? 15);
+  const [customTimeSlots, setCustomTimeSlots] = useState<string[]>(draft?.customTimeSlots ?? DEFAULT_CUSTOM_TIMES);
   const [newTimeInput, setNewTimeInput] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
   const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
+  const restoredBatchIdRef = useRef<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -143,27 +180,89 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
   const completedCount = activeBatch?.completed_files ?? 0;
   const totalCount = activeBatch?.total_files ?? 0;
   const warmupDays = selectedAccount?.warmup_days ?? DEFAULT_WARMUP_DAYS;
-  const durationPreview = formatDurationPreview(
-    totalCount || completedCount,
-    scheduleMode,
-    warmupDays,
-    customPostsPerDay,
-    customTimeSlots,
-  );
   const batchReady = activeBatch?.status === "ready";
   const canSchedulePartial = completedCount > 0 && !batchReady;
   const canScheduleAll = batchReady && completedCount > 0;
+
+  const effectiveScheduleMode = activeBatch?.schedule_mode ?? scheduleMode;
+  const effectiveCustomPostsPerDay =
+    activeBatch?.custom_schedule?.posts_per_day ?? customPostsPerDay;
+  const effectiveCustomTimeSlots =
+    activeBatch?.custom_schedule?.time_slots?.length
+      ? activeBatch.custom_schedule.time_slots
+      : customTimeSlots;
+
+  const durationPreview = formatDurationPreview(
+    totalCount || completedCount,
+    effectiveScheduleMode,
+    warmupDays,
+    effectiveCustomPostsPerDay,
+    effectiveCustomTimeSlots,
+  );
+
+  useEffect(() => {
+    if (!activeBatch || restoredBatchIdRef.current === activeBatch.id) return;
+    restoredBatchIdRef.current = activeBatch.id;
+    const restored = applyBatchSchedule(activeBatch);
+    setScheduleMode(restored.scheduleMode);
+    setCustomPostsPerDay(restored.customPostsPerDay);
+    setCustomTimeSlots(restored.customTimeSlots);
+    writeScheduleDraft(selectedAccountId, restored);
+  }, [activeBatch, selectedAccountId]);
+
+  useEffect(() => {
+    writeScheduleDraft(selectedAccountId, { scheduleMode, customPostsPerDay, customTimeSlots });
+  }, [selectedAccountId, scheduleMode, customPostsPerDay, customTimeSlots]);
+
+  async function persistSchedule(
+    mode: ScheduleMode,
+    postsPerDay: number,
+    timeSlots: string[],
+  ) {
+    if (!activeBatch) return;
+    try {
+      const updated = await updateBatchSchedule(activeBatch.id, {
+        schedule_mode: mode,
+        custom_schedule:
+          mode === "custom"
+            ? { posts_per_day: postsPerDay, time_slots: timeSlots }
+            : null,
+      });
+      setActiveBatch(updated);
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "Falha ao salvar modo de publicação");
+    }
+  }
+
+  async function changeScheduleMode(mode: ScheduleMode) {
+    setScheduleMode(mode);
+    await persistSchedule(mode, customPostsPerDay, customTimeSlots);
+  }
+
+  async function changeCustomPostsPerDay(value: number) {
+    setCustomPostsPerDay(value);
+    if (scheduleMode === "custom") {
+      await persistSchedule("custom", value, customTimeSlots);
+    }
+  }
+
+  async function changeCustomTimeSlots(next: string[]) {
+    setCustomTimeSlots(next);
+    if (scheduleMode === "custom") {
+      await persistSchedule("custom", customPostsPerDay, next);
+    }
+  }
 
   function markStep(stepId: string) {
     setCompletedSteps((current) => (current.includes(stepId) ? current : [...current, stepId]));
   }
 
-  function buildSchedulePayload() {
-    if (scheduleMode !== "custom") return {};
+  function buildSchedulePayload(mode = effectiveScheduleMode) {
+    if (mode !== "custom") return {};
     return {
       custom_schedule: {
-        posts_per_day: customPostsPerDay,
-        time_slots: customTimeSlots,
+        posts_per_day: effectiveCustomPostsPerDay,
+        time_slots: effectiveCustomTimeSlots,
       },
     };
   }
@@ -178,7 +277,8 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       setNewTimeInput("");
       return;
     }
-    setCustomTimeSlots((current) => sortTimes([...current, normalized]));
+    const next = sortTimes([...customTimeSlots, normalized]);
+    void changeCustomTimeSlots(next);
     setNewTimeInput("");
     setResult(null);
   }
@@ -193,7 +293,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         account_ids: [selectedAccountId],
-        schedule_mode: scheduleMode,
+        schedule_mode: effectiveScheduleMode,
         items: params.items,
         captions: params.captions,
         schedule: params.schedule,
@@ -229,7 +329,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           account_ids: [selectedAccountId],
-          schedule_mode: scheduleMode,
+          schedule_mode: effectiveScheduleMode,
           items: batchItems,
           batch_offset: offset,
           total_count: total,
@@ -270,12 +370,12 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
       return;
     }
 
-    if (scheduleMode === "custom") {
-      if (customPostsPerDay < 1 || customPostsPerDay > 100) {
+    if (effectiveScheduleMode === "custom") {
+      if (effectiveCustomPostsPerDay < 1 || effectiveCustomPostsPerDay > 100) {
         setResult("Posts por dia deve ficar entre 1 e 100.");
         return;
       }
-      if (!parseTimeSlots(customTimeSlots).length) {
+      if (!parseTimeSlots(effectiveCustomTimeSlots).length) {
         setResult("Adicione pelo menos um horário válido no modo personalizado.");
         return;
       }
@@ -444,7 +544,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
               <button
                 key={mode.id}
                 type="button"
-                onClick={() => setScheduleMode(mode.id)}
+                onClick={() => void changeScheduleMode(mode.id)}
                 className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
                   selected
                     ? "border-ig-primary bg-ig-primary/10"
@@ -478,6 +578,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
                 max={100}
                 value={customPostsPerDay}
                 onChange={(event) => setCustomPostsPerDay(Number(event.target.value))}
+                onBlur={(event) => void changeCustomPostsPerDay(Number(event.target.value))}
                 className="ig-input w-full max-w-[120px] text-center text-lg font-semibold"
               />
             </div>
@@ -488,10 +589,10 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
                   <button
                     key={time}
                     type="button"
-                    onClick={() =>
-                      customTimeSlots.length > 1 &&
-                      setCustomTimeSlots((current) => current.filter((item) => item !== time))
-                    }
+                    onClick={() => {
+                      if (customTimeSlots.length <= 1) return;
+                      void changeCustomTimeSlots(customTimeSlots.filter((item) => item !== time));
+                    }}
                     className="inline-flex items-center gap-1 rounded-full border border-ig-border bg-ig-elevated px-3 py-1.5 text-sm font-medium text-ig-text"
                   >
                     {time}
@@ -539,7 +640,7 @@ export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Modo</dt>
-              <dd className="font-medium text-ig-text">{modeLabel(scheduleMode)}</dd>
+              <dd className="font-medium text-ig-text">{modeLabel(effectiveScheduleMode)}</dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Previsão</dt>

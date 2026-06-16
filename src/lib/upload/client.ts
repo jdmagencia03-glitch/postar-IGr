@@ -188,6 +188,26 @@ export async function setBatchPaused(batchId: string, paused: boolean) {
   return data.batch as UploadBatch;
 }
 
+export async function updateBatchSchedule(
+  batchId: string,
+  params: {
+    schedule_mode: UploadBatch["schedule_mode"];
+    custom_schedule?: UploadBatch["custom_schedule"];
+  },
+) {
+  const res = await apiFetch(`/api/upload/batches/${batchId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      schedule_mode: params.schedule_mode,
+      custom_schedule: params.custom_schedule ?? null,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(String(data.error ?? "Falha ao salvar modo de publicação"));
+  return data.batch as UploadBatch;
+}
+
 export async function cancelUploadBatch(batchId: string) {
   const res = await apiFetch(`/api/upload/batches/${batchId}`, { method: "DELETE" });
   const data = await res.json();
