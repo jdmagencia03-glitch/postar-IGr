@@ -1,0 +1,91 @@
+import * as tus from "tus-js-client";
+import { TUS_CHUNK_SIZE } from "@/lib/upload/storage-url";
+
+export interface TusPrepareResponse {
+  tusEndpoint: string;
+  signature: string;
+  path: string;
+  publicUrl: string;
+  contentType: string;
+  chunkSize: number;
+}
+
+export function buildTusFingerprint(batchId: string, recordId: string, file: File) {
+  return `postarigr:${batchId}:${recordId}:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+export function uploadFileWithTus(params: {
+  file: File;
+  prepare: TusPrepareResponse;
+  batchId: string;
+  recordId: string;
+  onProgress?: (loaded: number, total: number) => void;
+  signal?: AbortSignal;
+}) {
+  let uploadRef: tus.Upload | null = null;
+  let abortedByUser = false;
+
+  const promise = new Promise<void>((resolve, reject) => {
+    const upload = new tus.Upload(params.file, {
+      endpoint: params.prepare.tusEndpoint,
+      retryDelays: [0, 3000, 10000, 30000],
+      headers: {
+        "x-signature": params.prepare.signature,
+        "x-upsert": "true",
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      metadata: {
+        bucketName: "media",
+        objectName: params.prepare.path,
+        contentType: params.prepare.contentType,
+        cacheControl: "3600",
+      },
+      chunkSize: params.prepare.chunkSize || TUS_CHUNK_SIZE,
+      fingerprint: () =>
+        Promise.resolve(buildTusFingerprint(params.batchId, params.recordId, params.file)),
+      onProgress: (bytesUploaded, bytesTotal) => {
+        params.onProgress?.(bytesUploaded, bytesTotal);
+      },
+      onError: (error) => {
+        if (abortedByUser) {
+          reject(new DOMException("Upload pausado", "AbortError"));
+          return;
+        }
+        reject(error);
+      },
+      onSuccess: () => resolve(),
+    });
+
+    uploadRef = upload;
+
+    if (params.signal) {
+      params.signal.addEventListener(
+        "abort",
+        () => {
+          abortedByUser = true;
+          upload.abort(false);
+        },
+        { once: true },
+      );
+    }
+
+    upload
+      .findPreviousUploads()
+      .then((previousUploads) => {
+        if (previousUploads.length > 0) {
+          upload.resumeFromPreviousUpload(previousUploads[0]);
+        }
+        upload.start();
+      })
+      .catch(reject);
+  });
+
+  return {
+    promise,
+    abort: (terminate = false) => {
+      abortedByUser = true;
+      uploadRef?.abort(terminate);
+    },
+  };
+}

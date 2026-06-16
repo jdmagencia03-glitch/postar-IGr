@@ -56,6 +56,7 @@ create table if not exists scheduled_posts (
   permalink text,
   error_message text,
   published_at timestamptz,
+  hidden_from_report boolean not null default false,
   created_at timestamptz not null default now()
 );
 

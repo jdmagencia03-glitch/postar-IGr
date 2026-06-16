@@ -288,6 +288,24 @@ export async function getInstagramAccountStats(
   };
 }
 
+export async function deletePublishedMedia(
+  mediaId: string,
+  token: string,
+  provider: AuthProvider = "instagram",
+) {
+  const graph = getGraphBase(provider);
+  const res = await fetch(`${graph}/${mediaId}?access_token=${token}`, {
+    method: "DELETE",
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.error?.message ?? "Erro ao excluir publicação no Instagram");
+  }
+
+  return data;
+}
+
 export async function publishPost(params: {
   igUserId: string;
   token: string;

@@ -38,7 +38,7 @@ export function AutopilotPreview({
   const accountLabels = accounts.map((a) => `@${a.ig_username ?? "conta"}`).join(", ");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center">
+    <div className="ig-overlay fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
       <div className="ig-card flex max-h-[90vh] w-full max-w-3xl flex-col shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-ig-border px-5 py-4">
           <div>
@@ -107,7 +107,7 @@ export function AutopilotPreview({
             type="button"
             onClick={onConfirm}
             disabled={loading}
-            className="flex-1 rounded-lg bg-ig-primary px-4 py-3 text-sm font-medium text-ig-text hover:opacity-90 disabled:opacity-50"
+            className="flex-1 ig-btn px-4 py-3 text-sm disabled:opacity-50"
           >
             {loading ? "Agendando..." : `Confirmar ${totalPosts} post(s)`}
           </button>

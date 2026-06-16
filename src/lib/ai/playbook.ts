@@ -66,7 +66,7 @@ export function buildPlaybookContext(playbook: AiPlaybook | null, fallbackNiche:
   }
 
   if (playbook?.viral_hooks?.trim()) {
-    sections.push(`Ganchos que viralizam (use como inspiração):\n${trimSection(playbook.viral_hooks, 2500)}`);
+    sections.push(`Contexto da página:\n${trimSection(playbook.viral_hooks, 2500)}`);
   }
 
   if (playbook?.hashtag_strategy?.trim()) {
@@ -85,8 +85,9 @@ export function buildPlaybookContext(playbook: AiPlaybook | null, fallbackNiche:
     sections.push(`Nunca faça / evite:\n${trimSection(playbook.avoid_rules, 1000)}`);
   }
 
-  if (playbook?.extra_knowledge?.trim()) {
-    sections.push(`Base de conhecimento extra:\n${trimSection(playbook.extra_knowledge, 8000)}`);
+  const extra = playbook?.extra_knowledge?.trim();
+  if (extra && !extra.startsWith("__meta_v2__:")) {
+    sections.push(`Observações extras:\n${trimSection(extra, 8000)}`);
   }
 
   const context = sections.join("\n\n");

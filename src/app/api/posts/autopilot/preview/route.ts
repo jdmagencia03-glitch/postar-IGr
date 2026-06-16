@@ -7,15 +7,22 @@ import {
   getWarmupStatus,
 } from "@/lib/account-warmup";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { parseTimeSlots } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
+
+const customScheduleSchema = z.object({
+  posts_per_day: z.number().int().min(1).max(100),
+  time_slots: z.array(z.string()).min(1).max(48),
+});
 
 const previewSchema = z
   .object({
     account_id: z.string().uuid().optional(),
     account_ids: z.array(z.string().uuid()).min(1).optional(),
     niche: z.string().max(120).optional(),
-    schedule_mode: z.enum(["today", "auto", "warmup"]).optional(),
+    schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+    custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
     items: z
@@ -31,7 +38,14 @@ const previewSchema = z
   .refine((data) => Boolean(data.account_ids?.length || data.account_id), {
     message: "Selecione pelo menos uma conta",
     path: ["account_ids"],
-  });
+  })
+  .refine(
+    (data) => data.schedule_mode !== "custom" || Boolean(data.custom_schedule),
+    {
+      message: "Informe posts por dia e horários no modo personalizado",
+      path: ["custom_schedule"],
+    },
+  );
 
 export async function POST(request: NextRequest) {
   const ownerId = await getSessionUserId();
@@ -73,6 +87,21 @@ export async function POST(request: NextRequest) {
       };
     }
 
+    const custom =
+      scheduleMode === "custom" && parsed.data.custom_schedule
+        ? {
+            postsPerDay: parsed.data.custom_schedule.posts_per_day,
+            timeSlots: parseTimeSlots(parsed.data.custom_schedule.time_slots),
+          }
+        : undefined;
+
+    if (scheduleMode === "custom" && (!custom || !custom.timeSlots.length)) {
+      return NextResponse.json(
+        { error: "Horários inválidos. Use o formato HH:mm." },
+        { status: 400 },
+      );
+    }
+
     const plan = await buildAutopilotPlan({
       items: parsed.data.items,
       niche: parsed.data.niche,
@@ -82,6 +111,7 @@ export async function POST(request: NextRequest) {
       batch_offset: parsed.data.batch_offset,
       total_count: parsed.data.total_count ?? parsed.data.items.length,
       warmup,
+      custom,
     });
 
     return NextResponse.json({

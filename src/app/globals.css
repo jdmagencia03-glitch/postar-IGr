@@ -1,9 +1,46 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tema claro — fundo suave, cards brancos com sombra */
 :root {
+  --ig-bg: #f0f2f5;
+  --ig-elevated: #ffffff;
+  --ig-secondary: #f7f8fa;
+  --ig-surface: #e4e6eb;
+  --ig-border: #d8dadf;
+  --ig-text: #050505;
+  --ig-muted: #4b4f56;
+  --ig-primary: #0095f6;
+  --ig-primary-hover: #1877f2;
+  --ig-link: #0095f6;
+  --ig-danger: #ed4956;
+  --ig-danger-text: #c13545;
+  --ig-success: #050505;
+  --ig-warning: #65676b;
+  --ig-on-primary: #ffffff;
+  --ig-overlay: rgba(0, 0, 0, 0.55);
+  --ig-facebook: #1877f2;
+  --ig-info-bg: #e7f3ff;
+  --ig-info-border: #b6d9f7;
+  --ig-info-text: #0064c8;
+  --ig-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --ig-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --ig-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+  --ig-radius: 8px;
+  --ig-radius-lg: 12px;
+  --ig-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --background: var(--ig-bg);
+  --foreground: var(--ig-text);
+}
+
+/* Tema escuro — estilo Instagram dark */
+.dark {
   --ig-bg: #000000;
   --ig-elevated: #121212;
   --ig-secondary: #262626;
+  --ig-surface: #363636;
   --ig-border: #363636;
   --ig-text: #f5f5f5;
   --ig-muted: #a8a8a8;
@@ -11,13 +48,18 @@
   --ig-primary-hover: #1877f2;
   --ig-link: #e0f1ff;
   --ig-danger: #ed4956;
-  /* Sem verde/amarelo forte — tons neutros estilo Instagram */
+  --ig-danger-text: #ff8a96;
   --ig-success: #f5f5f5;
   --ig-warning: #a8a8a8;
-  --ig-radius: 8px;
-  --ig-radius-lg: 12px;
-  --ig-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  --ig-on-primary: #ffffff;
+  --ig-overlay: rgba(0, 0, 0, 0.72);
+  --ig-facebook: #1877f2;
+  --ig-info-bg: color-mix(in srgb, var(--ig-primary) 12%, transparent);
+  --ig-info-border: color-mix(in srgb, var(--ig-primary) 28%, transparent);
+  --ig-info-text: var(--ig-link);
+  --ig-shadow-sm: none;
+  --ig-shadow: none;
+  --ig-shadow-lg: none;
   --background: var(--ig-bg);
   --foreground: var(--ig-text);
 }
@@ -28,6 +70,7 @@
   --color-ig-bg: var(--ig-bg);
   --color-ig-elevated: var(--ig-elevated);
   --color-ig-secondary: var(--ig-secondary);
+  --color-ig-surface: var(--ig-surface);
   --color-ig-border: var(--ig-border);
   --color-ig-text: var(--ig-text);
   --color-ig-muted: var(--ig-muted);
@@ -37,6 +80,12 @@
   --color-ig-danger: var(--ig-danger);
   --color-ig-success: var(--ig-success);
   --color-ig-warning: var(--ig-warning);
+  --color-ig-facebook: var(--ig-facebook);
+  --color-ig-overlay: var(--ig-overlay);
+  --color-ig-on-primary: var(--ig-on-primary);
+  --color-ig-info-bg: var(--ig-info-bg);
+  --color-ig-info-border: var(--ig-info-border);
+  --color-ig-info-text: var(--ig-info-text);
   --font-sans: var(--ig-font);
   --radius-ig: var(--ig-radius);
   --radius-ig-lg: var(--ig-radius-lg);
@@ -47,9 +96,10 @@ body {
   color: var(--ig-text);
   font-family: var(--ig-font);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 h1,
@@ -57,14 +107,24 @@ h2,
 h3,
 h4 {
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 a {
   color: var(--ig-link);
 }
 
-/* Botão primário estilo Instagram */
+/* Navbar */
+.ig-navbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  border-bottom: 1px solid var(--ig-border);
+  background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow-sm);
+}
+
+/* Botão primário */
 .ig-btn {
   display: inline-flex;
   align-items: center;
@@ -74,12 +134,12 @@ a {
   padding: 0.5rem 1rem;
   font-size: 14px;
   font-weight: 600;
-  color: #ffffff;
-  transition: opacity 0.15s ease;
+  color: var(--ig-on-primary);
+  transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
 .ig-btn:hover {
-  opacity: 0.9;
+  background: var(--ig-primary-hover);
 }
 
 .ig-btn:disabled {
@@ -87,21 +147,68 @@ a {
   cursor: not-allowed;
 }
 
+/* Botão secundário */
+.ig-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ig-radius);
+  border: 1px solid var(--ig-border);
+  background: var(--ig-elevated);
+  padding: 0.5rem 1rem;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ig-text);
+  box-shadow: var(--ig-shadow-sm);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.ig-btn-secondary:hover {
+  background: var(--ig-secondary);
+  border-color: var(--ig-muted);
+}
+
 /* Card / superfície */
 .ig-card {
   border-radius: var(--ig-radius-lg);
   border: 1px solid var(--ig-border);
   background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow);
 }
 
-/* Input estilo Instagram */
+/* Painel / seção com fundo diferenciado */
+.ig-panel {
+  border-radius: var(--ig-radius-lg);
+  border: 1px solid var(--ig-border);
+  background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow-sm);
+}
+
+/* Caixa informativa */
+.ig-callout {
+  border-radius: var(--ig-radius-lg);
+  border: 1px solid var(--ig-info-border);
+  background: var(--ig-info-bg);
+  color: var(--ig-info-text);
+}
+
+/* Hero / destaque */
+.ig-hero {
+  border-radius: 1rem;
+  border: 1px solid var(--ig-info-border);
+  background: linear-gradient(135deg, var(--ig-info-bg) 0%, var(--ig-elevated) 100%);
+  box-shadow: var(--ig-shadow);
+}
+
+/* Input */
 .ig-input {
   border-radius: var(--ig-radius);
   border: 1px solid var(--ig-border);
-  background: var(--ig-secondary);
+  background: var(--ig-elevated);
   padding: 0.5rem 0.75rem;
   font-size: 14px;
   color: var(--ig-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .ig-input::placeholder {
@@ -110,10 +217,11 @@ a {
 
 .ig-input:focus {
   outline: none;
-  border-color: var(--ig-muted);
+  border-color: var(--ig-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ig-primary) 18%, transparent);
 }
 
-/* Logo / marca com gradiente Instagram */
+/* Logo gradiente Instagram */
 .ig-brand-gradient {
   background: linear-gradient(
     45deg,
@@ -134,30 +242,34 @@ a {
   letter-spacing: 0;
 }
 
-/* Pill / tag de filtro */
+/* Pill / filtro */
 .ig-pill {
   border-radius: 9999px;
   border: 1px solid var(--ig-border);
-  background: var(--ig-secondary);
+  background: var(--ig-elevated);
   padding: 0.375rem 1rem;
   font-size: 14px;
   font-weight: 600;
   color: var(--ig-text);
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ig-pill:hover {
+  background: var(--ig-secondary);
 }
 
 .ig-pill-active {
   background: var(--ig-primary);
   border-color: var(--ig-primary);
-  color: #ffffff;
+  color: var(--ig-on-primary);
 }
 
 /* Alertas */
 .ig-alert-danger {
   border-radius: var(--ig-radius);
   border: 1px solid color-mix(in srgb, var(--ig-danger) 35%, transparent);
-  background: color-mix(in srgb, var(--ig-danger) 12%, transparent);
-  color: #ff8a96;
+  background: color-mix(in srgb, var(--ig-danger) 10%, var(--ig-elevated));
+  color: var(--ig-danger-text);
 }
 
 .ig-alert-success {
@@ -165,6 +277,7 @@ a {
   border: 1px solid var(--ig-border);
   background: var(--ig-elevated);
   color: var(--ig-text);
+  box-shadow: var(--ig-shadow-sm);
 }
 
 .ig-alert-warning {
@@ -172,4 +285,17 @@ a {
   border: 1px solid var(--ig-border);
   background: var(--ig-secondary);
   color: var(--ig-muted);
+}
+
+/* Overlay de modais */
+.ig-overlay {
+  background: var(--ig-overlay);
+}
+
+/* Stat card */
+.ig-stat {
+  border-radius: var(--ig-radius-lg);
+  border: 1px solid var(--ig-border);
+  background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow-sm);
 }

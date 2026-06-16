@@ -1,43 +1,53 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Calendar, Sparkles, Settings2, Zap, Flame, ShieldAlert } from "lucide-react";
-import { AutopilotPreview, type PreviewEntry } from "@/components/AutopilotPreview";
-import { OnboardingSteps } from "@/components/OnboardingSteps";
-import {
-  API_BATCH_SIZE,
-  MAX_PREVIEW_VIDEOS,
-  MAX_VIDEOS_TOTAL,
-  UPLOAD_BATCH_SIZE,
-} from "@/lib/autopilot-constants";
-import {
-  assessPostingRisk,
-  DEFAULT_WARMUP_DAYS,
-  describeWarmupPlan,
-} from "@/lib/account-warmup";
-import { estimateScheduleDuration } from "@/lib/smart-schedule";
-import type { InstagramAccount } from "@/lib/types";
+import { Check, ChevronDown, Loader2, Plus, UserRound, X } from "lucide-react";
+import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
+import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
+import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
+import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots } from "@/lib/smart-schedule";
+import type { InstagramAccount, UploadBatch } from "@/lib/types";
 
 interface Props {
   accounts: InstagramAccount[];
   defaultAccountId?: string;
-  playbookReady?: boolean;
 }
 
-type UploadMode = "autopilot" | "manual";
-type ScheduleMode = "auto" | "today" | "warmup";
+type ScheduleMode = "auto" | "warmup" | "today" | "custom";
+
+const DEFAULT_CUSTOM_TIMES = [
+  "06:00",
+  "08:00",
+  "10:00",
+  "12:00",
+  "14:00",
+  "16:00",
+  "18:00",
+  "20:00",
+];
+
+const AI_TASKS = [
+  "Criar legendas",
+  "Gerar hashtags",
+  "Definir horários",
+  "Organizar calendário",
+  "Publicar automaticamente",
+] as const;
+
+const PROGRESS_STEPS = [
+  { id: "videos", label: (count: number) => `${count} vídeos recebidos` },
+  { id: "captions", label: () => "Legendas sendo criadas" },
+  { id: "hashtags", label: () => "Hashtags sendo geradas" },
+  { id: "calendar", label: () => "Calendário sendo montado" },
+  { id: "scheduling", label: () => "Agendamento em andamento" },
+] as const;
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const response = await fetch(input, {
-    ...init,
-    credentials: "include",
-  });
-
+  const response = await fetch(input, { ...init, credentials: "include" });
   if (response.status === 401) {
     window.location.href = "/login?next=/dashboard/bulk";
     throw new Error("Sessão expirada. Faça login novamente.");
   }
-
   return response;
 }
 
@@ -46,195 +56,131 @@ async function readJsonResponse(response: Response) {
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
-    if (text.includes("Request Entity Too Large")) {
-      throw new Error("Vídeo muito grande para enviar pelo servidor. Tente novamente.");
-    }
     throw new Error(text.slice(0, 120) || "Resposta inválida do servidor");
   }
 }
 
-function parseHours(value: string) {
-  return value
-    .split(",")
-    .map((part) => {
-      const trimmed = part.trim();
-      const match = trimmed.match(/^(\d{1,2})/);
-      return match ? parseInt(match[1], 10) : NaN;
-    })
-    .filter((hour) => !Number.isNaN(hour) && hour >= 0 && hour <= 23);
-}
-
 function chunkArray<T>(items: T[], size: number) {
   const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
 }
 
-export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = false }: Props) {
-  const initialSelection = useMemo(() => {
-    if (defaultAccountId && accounts.some((a) => a.id === defaultAccountId)) {
-      return [defaultAccountId];
+function sortTimes(times: string[]) {
+  return [...times].sort((a, b) => {
+    const left = parseTimeSlot(a);
+    const right = parseTimeSlot(b);
+    if (!left || !right) return 0;
+    return left.hour * 60 + left.minute - (right.hour * 60 + right.minute);
+  });
+}
+
+function modeLabel(mode: ScheduleMode) {
+  if (mode === "auto") return "Automático";
+  if (mode === "warmup") return "Aquecimento";
+  if (mode === "custom") return "Personalizado";
+  return "Publicar Hoje";
+}
+
+function formatDurationPreview(
+  count: number,
+  mode: ScheduleMode,
+  warmupDays = DEFAULT_WARMUP_DAYS,
+  customPostsPerDay = 15,
+  customTimeSlots: string[] = DEFAULT_CUSTOM_TIMES,
+) {
+  if (!count) return { days: "", summary: "" };
+  if (mode === "today") return { days: "Publicação ainda hoje", summary: "Hoje" };
+  if (mode === "warmup") {
+    const estimate = estimateScheduleDuration(count, "warmup", warmupDays);
+    return { days: estimate.label, summary: estimate.shortLabel };
+  }
+  if (mode === "custom") {
+    const estimate = estimateScheduleDuration(count, "custom", warmupDays, {
+      postsPerDay: customPostsPerDay,
+      timeSlots: parseTimeSlots(customTimeSlots),
+    });
+    return {
+      days: estimate.label || `≈ ${Math.ceil(count / customPostsPerDay)} dias de conteúdo`,
+      summary: estimate.shortLabel || `~${Math.ceil(count / customPostsPerDay)} dias`,
+    };
+  }
+  const minDays = Math.ceil(count / 2);
+  const maxDays = count;
+  const minMonths = Math.max(1, Math.round(minDays / 30));
+  const maxMonths = Math.max(minMonths, Math.round(maxDays / 30));
+  return {
+    days: `≈ ${minDays} a ${maxDays} dias de conteúdo`,
+    summary:
+      minMonths === maxMonths
+        ? `~${minMonths} mês${minMonths > 1 ? "es" : ""} de conteúdo`
+        : `${minMonths} a ${maxMonths} meses de conteúdo`,
+  };
+}
+
+export function BulkUploadForm({ accounts, defaultAccountId }: Props) {
+  const initialAccountId = useMemo(() => {
+    if (defaultAccountId && accounts.some((account) => account.id === defaultAccountId)) {
+      return defaultAccountId;
     }
-    return accounts[0]?.id ? [accounts[0].id] : [];
+    return accounts[0]?.id ?? "";
   }, [accounts, defaultAccountId]);
 
-  const [mode, setMode] = useState<UploadMode>("autopilot");
-  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("warmup");
-  const [oneClickMode, setOneClickMode] = useState(true);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>(initialSelection);
-  const [startDate, setStartDate] = useState("");
-  const [postsPerDay, setPostsPerDay] = useState(1);
-  const [hours, setHours] = useState("9");
-  const [captionTemplate, setCaptionTemplate] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("auto");
+  const [customPostsPerDay, setCustomPostsPerDay] = useState(15);
+  const [customTimeSlots, setCustomTimeSlots] = useState<string[]>(DEFAULT_CUSTOM_TIMES);
+  const [newTimeInput, setNewTimeInput] = useState("");
+  const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
+  const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
   const [progress, setProgress] = useState(0);
+  const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [result, setResult] = useState<string | null>(null);
 
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewEntries, setPreviewEntries] = useState<PreviewEntry[]>([]);
-  const [previewSchedule, setPreviewSchedule] = useState<string[]>([]);
-  const [previewAccounts, setPreviewAccounts] = useState<Array<{ ig_username: string | null }>>([]);
-  const [previewCaptionSource, setPreviewCaptionSource] = useState<"ai" | "fallback">("fallback");
-  const [previewScheduleSummary, setPreviewScheduleSummary] = useState("");
-  const [previewDurationLabel, setPreviewDurationLabel] = useState("");
-  const [previewTotalPosts, setPreviewTotalPosts] = useState(0);
-  const [pendingItems, setPendingItems] = useState<Array<{ media_urls: string[]; filename: string }>>(
-    [],
+  const selectedAccount = accounts.find((account) => account.id === selectedAccountId) ?? accounts[0];
+  const completedCount = activeBatch?.completed_files ?? 0;
+  const totalCount = activeBatch?.total_files ?? 0;
+  const warmupDays = selectedAccount?.warmup_days ?? DEFAULT_WARMUP_DAYS;
+  const durationPreview = formatDurationPreview(
+    totalCount || completedCount,
+    scheduleMode,
+    warmupDays,
+    customPostsPerDay,
+    customTimeSlots,
   );
-  const [confirming, setConfirming] = useState(false);
+  const batchReady = activeBatch?.status === "ready";
+  const canSchedulePartial = completedCount > 0 && !batchReady;
+  const canScheduleAll = batchReady && completedCount > 0;
 
-  const allSelected = selectedAccountIds.length === accounts.length && accounts.length > 0;
-  const videoCount = files?.length ?? 0;
-  const totalPosts = videoCount * selectedAccountIds.length;
-
-  const selectedAccounts = useMemo(
-    () => accounts.filter((a) => selectedAccountIds.includes(a.id)),
-    [accounts, selectedAccountIds],
-  );
-
-  const hasWarmupAccounts = selectedAccounts.some((a) => a.warmup_enabled !== false);
-
-  const postingRisk = useMemo(() => {
-    if (!videoCount || mode !== "autopilot") return null;
-    return assessPostingRisk({
-      scheduleMode,
-      videoCount,
-      accounts: selectedAccounts,
-    });
-  }, [videoCount, scheduleMode, mode, selectedAccounts]);
-
-  const scheduleEstimate = useMemo(() => {
-    if (!videoCount || mode !== "autopilot") return null;
-    const warmupDays = selectedAccounts[0]?.warmup_days ?? DEFAULT_WARMUP_DAYS;
-    return estimateScheduleDuration(videoCount, scheduleMode, warmupDays);
-  }, [videoCount, scheduleMode, mode, selectedAccounts]);
-
-  const canUsePreview = videoCount > 0 && videoCount <= MAX_PREVIEW_VIDEOS && !oneClickMode;
-  const batchCount = videoCount > 0 ? Math.ceil(videoCount / API_BATCH_SIZE) : 0;
-
-  function toggleAccount(accountId: string) {
-    setSelectedAccountIds((current) =>
-      current.includes(accountId)
-        ? current.filter((id) => id !== accountId)
-        : [...current, accountId],
-    );
+  function markStep(stepId: string) {
+    setCompletedSteps((current) => (current.includes(stepId) ? current : [...current, stepId]));
   }
 
-  function toggleAllAccounts() {
-    if (allSelected) {
-      setSelectedAccountIds(accounts[0]?.id ? [accounts[0].id] : []);
+  function buildSchedulePayload() {
+    if (scheduleMode !== "custom") return {};
+    return {
+      custom_schedule: {
+        posts_per_day: customPostsPerDay,
+        time_slots: customTimeSlots,
+      },
+    };
+  }
+
+  function addCustomTime() {
+    const normalized = newTimeInput.trim();
+    if (!parseTimeSlot(normalized)) {
+      setResult("Use o formato HH:mm, por exemplo 06:15 ou 20:45.");
       return;
     }
-    setSelectedAccountIds(accounts.map((a) => a.id));
-  }
-
-  async function uploadFileBatch(fileArray: File[]) {
-    const prepareRes = await apiFetch("/api/upload/prepare", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        files: fileArray.map((file) => ({
-          name: file.name,
-          type: file.type,
-          size: file.size,
-        })),
-      }),
-    });
-
-    const prepareData = await readJsonResponse(prepareRes);
-    if (!prepareRes.ok) {
-      throw new Error(String(prepareData.error ?? "Falha ao preparar upload"));
+    if (customTimeSlots.includes(normalized)) {
+      setNewTimeInput("");
+      return;
     }
-
-    const uploads = prepareData.uploads as Array<{
-      signedUrl: string;
-      publicUrl: string;
-      contentType: string;
-      name: string;
-    }>;
-
-    const items: Array<{ media_urls: string[]; filename: string }> = [];
-
-    for (let i = 0; i < fileArray.length; i++) {
-      const file = fileArray[i];
-      const target = uploads[i];
-      const uploadRes = await fetch(target.signedUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": target.contentType,
-          "x-upsert": "false",
-        },
-        body: file,
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error(`Falha ao enviar ${target.name}`);
-      }
-
-      items.push({
-        media_urls: [target.publicUrl],
-        filename: file.name,
-      });
-    }
-
-    return items;
-  }
-
-  async function uploadFiles(fileArray: File[]) {
-    const allItems: Array<{ media_urls: string[]; filename: string }> = [];
-    const batches = chunkArray(fileArray, UPLOAD_BATCH_SIZE);
-
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      const start = i * UPLOAD_BATCH_SIZE + 1;
-      const end = Math.min((i + 1) * UPLOAD_BATCH_SIZE, fileArray.length);
-      setLoadingStep(`Enviando vídeos ${start}-${end} de ${fileArray.length}...`);
-      setProgress(Math.round((i / batches.length) * 30));
-      const items = await uploadFileBatch(batch);
-      allItems.push(...items);
-    }
-
-    return allItems;
-  }
-
-  function closePreview() {
-    setShowPreview(false);
-    setPreviewEntries([]);
-    setPreviewSchedule([]);
-    setPreviewAccounts([]);
-    setPendingItems([]);
-    setConfirming(false);
-  }
-
-  function handleCaptionChange(index: number, caption: string) {
-    setPreviewEntries((current) =>
-      current.map((entry) => (entry.index === index ? { ...entry, caption } : entry)),
-    );
+    setCustomTimeSlots((current) => sortTimes([...current, normalized]));
+    setNewTimeInput("");
+    setResult(null);
   }
 
   async function confirmAutopilotBatch(params: {
@@ -246,45 +192,19 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        account_ids: selectedAccountIds,
+        account_ids: [selectedAccountId],
         schedule_mode: scheduleMode,
         items: params.items,
         captions: params.captions,
         schedule: params.schedule,
+        ...buildSchedulePayload(),
       }),
     });
-
     const autopilotData = await readJsonResponse(autopilotRes);
     if (!autopilotRes.ok) {
       throw new Error(String(autopilotData.error ?? "Falha ao confirmar agendamento"));
     }
-
     return Number(autopilotData.created ?? 0);
-  }
-
-  async function handleConfirmPreview() {
-    if (!pendingItems.length || !previewEntries.length) return;
-
-    setConfirming(true);
-    setResult(null);
-
-    try {
-      const created = await confirmAutopilotBatch({
-        items: pendingItems,
-        captions: previewEntries.map((entry) => entry.caption),
-        schedule: previewSchedule,
-      });
-
-      closePreview();
-      setResult(`${created} Reels agendados! ${previewScheduleSummary}`);
-    } catch (err) {
-      setResult(err instanceof Error ? err.message : "Erro desconhecido");
-    } finally {
-      setConfirming(false);
-      setLoading(false);
-      setLoadingStep("");
-      setProgress(0);
-    }
   }
 
   async function runAutopilot(items: Array<{ media_urls: string[]; filename: string }>) {
@@ -292,31 +212,28 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
     const batches = chunkArray(items, API_BATCH_SIZE);
     let totalCreated = 0;
     let lastScheduleSummary = "";
-    let lastDurationLabel = "";
-    let captionSource: "ai" | "fallback" = "fallback";
+
+    markStep("captions");
+    markStep("hashtags");
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batchItems = batches[batchIndex];
       const offset = batchIndex * API_BATCH_SIZE;
-      const start = offset + 1;
-      const end = Math.min(offset + batchItems.length, total);
 
-      setLoadingStep(
-        batches.length > 1
-          ? `IA processando lote ${batchIndex + 1}/${batches.length} (vídeos ${start}-${end})...`
-          : "IA gerando legendas, hashtags e horários...",
-      );
-      setProgress(30 + Math.round(((batchIndex + 0.5) / batches.length) * 50));
+      setLoadingStep("A IA está montando legendas, hashtags e horários...");
+      setProgress(30 + Math.round(((batchIndex + 0.5) / batches.length) * 40));
+      markStep("calendar");
 
       const previewRes = await apiFetch("/api/posts/autopilot/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          account_ids: selectedAccountIds,
+          account_ids: [selectedAccountId],
           schedule_mode: scheduleMode,
           items: batchItems,
           batch_offset: offset,
           total_count: total,
+          ...buildSchedulePayload(),
         }),
       });
 
@@ -325,506 +242,374 @@ export function BulkUploadForm({ accounts, defaultAccountId, playbookReady = fal
         throw new Error(String(previewData.error ?? "Falha ao gerar plano IA"));
       }
 
-      const entries = (previewData.preview as PreviewEntry[]) ?? [];
+      const entries = (previewData.preview as Array<{ caption: string }>) ?? [];
       const schedule = (previewData.schedule as string[]) ?? [];
       lastScheduleSummary = String(previewData.schedule_summary ?? "");
-      lastDurationLabel = String(
-        (previewData.duration as { label?: string } | undefined)?.label ?? "",
-      );
-      captionSource = previewData.caption_source === "ai" ? "ai" : "fallback";
 
-      if (canUsePreview && batchIndex === 0) {
-        setPendingItems(batchItems);
-        setPreviewEntries(entries);
-        setPreviewSchedule(schedule);
-        setPreviewAccounts(
-          (previewData.accounts as Array<{ ig_username: string | null }>) ??
-            selectedAccountIds.map((id) => ({
-              ig_username: accounts.find((a) => a.id === id)?.ig_username ?? null,
-            })),
-        );
-        setPreviewCaptionSource(captionSource);
-        setPreviewScheduleSummary(lastScheduleSummary);
-        setPreviewDurationLabel(lastDurationLabel);
-        setPreviewTotalPosts(total * selectedAccountIds.length);
-        setShowPreview(true);
-        return;
-      }
+      setLoadingStep("Agendando publicações...");
+      setProgress(75 + Math.round((batchIndex / batches.length) * 20));
+      markStep("scheduling");
 
-      setLoadingStep(`Agendando lote ${batchIndex + 1}/${batches.length}...`);
-      setProgress(80 + Math.round((batchIndex / batches.length) * 15));
-
-      const created = await confirmAutopilotBatch({
+      totalCreated += await confirmAutopilotBatch({
         items: batchItems,
         captions: entries.map((entry) => entry.caption),
         schedule,
       });
-      totalCreated += created;
     }
 
-    const accountCount = selectedAccountIds.length;
-    const sourceLabel = captionSource === "ai" ? "GPT" : "automáticas";
-    setResult(
-      `${totalCreated} Reels agendados! (${total} vídeo(s) × ${accountCount} conta(s)). ` +
-        `Legendas ${sourceLabel}. ${lastDurationLabel || lastScheduleSummary}.`,
-    );
+    setProgress(100);
+    return { totalCreated, lastScheduleSummary };
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!files?.length || !selectedAccountIds.length) return;
-    if (mode === "manual" && !startDate) return;
+  async function handleSchedule(partial = false) {
+    if (!activeBatch || !selectedAccountId) return;
 
-    if (files.length > MAX_VIDEOS_TOTAL) {
-      setResult(`Máximo de ${MAX_VIDEOS_TOTAL} vídeos por vez. Divida em lotes menores.`);
+    const items = getCompletedUploadItems(activeBatch);
+    if (!items.length) {
+      setResult("Envie pelo menos um vídeo antes de agendar.");
       return;
     }
 
-    setLoading(true);
+    if (scheduleMode === "custom") {
+      if (customPostsPerDay < 1 || customPostsPerDay > 100) {
+        setResult("Posts por dia deve ficar entre 1 e 100.");
+        return;
+      }
+      if (!parseTimeSlots(customTimeSlots).length) {
+        setResult("Adicione pelo menos um horário válido no modo personalizado.");
+        return;
+      }
+    }
+
+    setScheduling(true);
     setResult(null);
     setProgress(0);
+    setCompletedSteps([]);
+    markStep("videos");
 
     try {
-      const fileArray = Array.from(files);
-      const items = await uploadFiles(fileArray);
-
-      if (mode === "autopilot") {
-        await runAutopilot(items);
-        return;
-      }
-
-      const hourList = parseHours(hours);
-      if (!hourList.length) {
-        setResult("Horário inválido. Use números de 0 a 23, ex: 9 ou 9,12,15");
-        return;
-      }
-
-      setLoadingStep("Agendando posts...");
-
-      const manualItems = items.map((item, i) => ({
-        media_urls: item.media_urls,
-        caption: captionTemplate.replace("{n}", String(i + 1)) || undefined,
-      }));
-
-      const bulkRes = await apiFetch("/api/posts/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account_ids: selectedAccountIds,
-          media_type: "REELS",
-          items: manualItems,
-          start_date: new Date(startDate).toISOString(),
-          posts_per_day: postsPerDay,
-          hours: hourList,
-        }),
-      });
-
-      const bulkData = await readJsonResponse(bulkRes);
-      if (!bulkRes.ok) {
-        throw new Error(String(bulkData.error ?? "Falha no agendamento"));
-      }
-
-      const created = Number(bulkData.created ?? 0);
-      const accountCount = Number(bulkData.accounts ?? selectedAccountIds.length);
-      const videoCountResult = Number(bulkData.videos ?? fileArray.length);
-
-      if (accountCount > 1) {
-        setResult(
-          `${created} posts agendados com sucesso! (${videoCountResult} vídeo(s) × ${accountCount} contas)`,
-        );
-      } else {
-        setResult(`${created} posts agendados com sucesso!`);
-      }
-    } catch (err) {
-      setResult(err instanceof Error ? err.message : "Erro desconhecido");
+      const { totalCreated, lastScheduleSummary } = await runAutopilot(items);
+      setResult(
+        partial
+          ? `${totalCreated} publicações agendadas agora. Continue enviando o restante depois. ${lastScheduleSummary}`
+          : `${totalCreated} publicações agendadas. ${lastScheduleSummary}`,
+      );
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "Erro desconhecido");
     } finally {
-      setLoading(false);
+      setScheduling(false);
       setLoadingStep("");
-      setProgress(0);
     }
   }
 
+  const publicationModes: Array<{
+    id: ScheduleMode;
+    badge?: string;
+    title: string;
+    emoji: string;
+    description: string;
+  }> = [
+    {
+      id: "auto",
+      badge: "Recomendado ⭐",
+      title: "Automático",
+      emoji: "🤖",
+      description:
+        "A IA escolhe quantos posts por dia, os melhores horários e a distribuição no calendário.",
+    },
+    {
+      id: "warmup",
+      badge: "Conta nova",
+      title: "Aquecimento",
+      emoji: "🛡️",
+      description: "Ideal para contas recém-criadas. Começa devagar e aumenta gradualmente.",
+    },
+    {
+      id: "today",
+      badge: "Urgente",
+      title: "Publicar Hoje",
+      emoji: "⚡",
+      description: "Todos os vídeos serão publicados ainda hoje.",
+    },
+    {
+      id: "custom",
+      title: "Personalizado",
+      emoji: "🎯",
+      description: "Você define exatamente como deseja publicar.",
+    },
+  ];
+
   return (
-    <>
-      {showPreview && (
-        <AutopilotPreview
-          entries={previewEntries}
-          accounts={previewAccounts}
-          scheduleSummary={previewScheduleSummary}
-          durationLabel={previewDurationLabel}
-          captionSource={previewCaptionSource}
-          totalPosts={previewTotalPosts}
-          loading={confirming}
-          onCaptionChange={handleCaptionChange}
-          onConfirm={handleConfirmPreview}
-          onCancel={closePreview}
-        />
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        handleSchedule(false);
+      }}
+      className="space-y-6"
+    >
+      <section className="ig-panel space-y-5 p-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Conta</p>
+          <p className="mt-1 text-sm text-ig-text">Instagram conectado</p>
+          <div className="mt-3 flex items-center gap-3 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
+            {selectedAccount?.profile_picture_url ? (
+              <img
+                src={selectedAccount.profile_picture_url}
+                alt=""
+                className="h-10 w-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-ig-elevated text-ig-muted">
+                <UserRound size={18} />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-semibold text-ig-text">
+                @{selectedAccount?.ig_username ?? "conta"}
+              </p>
+              {accounts.length > 1 && (
+                <div className="relative mt-1">
+                  <select
+                    value={selectedAccountId}
+                    onChange={(event) => setSelectedAccountId(event.target.value)}
+                    className="w-full appearance-none rounded-lg border border-ig-border bg-ig-elevated py-1.5 pl-2 pr-8 text-xs text-ig-text"
+                  >
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        @{account.ig_username}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={14}
+                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ig-muted"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Upload</p>
+          <p className="mt-1 text-sm text-ig-muted">
+            Envie todos os seus vídeos de uma vez. A plataforma envia, organiza, cria legendas e agenda automaticamente.
+          </p>
+          <div className="mt-3">
+            <SupremeUploadManager
+              accountId={selectedAccountId}
+              scheduleMode={scheduleMode}
+              customSchedule={
+                scheduleMode === "custom"
+                  ? { posts_per_day: customPostsPerDay, time_slots: customTimeSlots }
+                  : null
+              }
+              onBatchUpdate={setActiveBatch}
+              onUploadingChange={setIsUploading}
+              onSchedulePartial={() => handleSchedule(true)}
+            />
+          </div>
+
+          {totalCount > 0 && (
+            <div className="mt-4 rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm">
+              <p className="font-semibold text-ig-text">{completedCount} de {totalCount} vídeos enviados</p>
+              {durationPreview.days && <p className="mt-1 text-ig-muted">{durationPreview.days}</p>}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="ig-panel p-5">
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-ig-primary">
+          O que a IA vai fazer
+        </h2>
+        <ul className="space-y-2">
+          {AI_TASKS.map((task) => (
+            <li key={task} className="flex items-center gap-2 text-sm text-ig-text">
+              <Check size={16} className="text-ig-primary" />
+              {task}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="ig-panel space-y-3 p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ig-primary">
+          Modo de publicação
+        </h2>
+        <div className="space-y-3">
+          {publicationModes.map((mode) => {
+            const selected = scheduleMode === mode.id;
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setScheduleMode(mode.id)}
+                className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
+                  selected
+                    ? "border-ig-primary bg-ig-primary/10"
+                    : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 text-sm text-ig-primary">{selected ? "●" : "○"}</span>
+                  <div className="min-w-0 flex-1">
+                    {mode.badge && (
+                      <p className="text-xs font-medium text-ig-primary">{mode.badge}</p>
+                    )}
+                    <p className="mt-1 text-base font-semibold text-ig-text">
+                      {mode.emoji} {mode.title}
+                    </p>
+                    <p className="mt-1 text-sm text-ig-muted">{mode.description}</p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {scheduleMode === "custom" && (
+          <div className="space-y-4 rounded-2xl border border-ig-border bg-ig-secondary p-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-ig-text">Posts por dia</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={customPostsPerDay}
+                onChange={(event) => setCustomPostsPerDay(Number(event.target.value))}
+                className="ig-input w-full max-w-[120px] text-center text-lg font-semibold"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-ig-text">Horários</label>
+              <div className="flex flex-wrap gap-2">
+                {customTimeSlots.map((time) => (
+                  <button
+                    key={time}
+                    type="button"
+                    onClick={() =>
+                      customTimeSlots.length > 1 &&
+                      setCustomTimeSlots((current) => current.filter((item) => item !== time))
+                    }
+                    className="inline-flex items-center gap-1 rounded-full border border-ig-border bg-ig-elevated px-3 py-1.5 text-sm font-medium text-ig-text"
+                  >
+                    {time}
+                    {customTimeSlots.length > 1 && <X size={12} className="text-ig-muted" />}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  value={newTimeInput}
+                  onChange={(event) => setNewTimeInput(event.target.value)}
+                  placeholder="HH:mm"
+                  className="ig-input w-24"
+                />
+                <button
+                  type="button"
+                  onClick={addCustomTime}
+                  className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+                >
+                  <Plus size={14} />
+                  Adicionar horário
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {totalCount > 0 && (
+        <section className="ig-panel p-5">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-ig-primary">
+            Resumo
+          </h2>
+          <dl className="space-y-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-ig-muted">Conta</dt>
+              <dd className="font-medium text-ig-text">@{selectedAccount?.ig_username ?? "—"}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-ig-muted">Vídeos</dt>
+              <dd className="font-medium text-ig-text">
+                {completedCount}/{totalCount}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-ig-muted">Modo</dt>
+              <dd className="font-medium text-ig-text">{modeLabel(scheduleMode)}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-ig-muted">Previsão</dt>
+              <dd className="text-right font-medium text-ig-text">
+                {durationPreview.summary || "—"}
+              </dd>
+            </div>
+          </dl>
+        </section>
       )}
 
-      <OnboardingSteps playbookReady={playbookReady} currentStep={2} />
-
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-6 rounded-2xl border border-ig-border bg-ig-elevated p-6"
-      >
-        {mode === "autopilot" && (
-          <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-muted">
-            <div className="mb-1 flex items-center gap-2 font-semibold text-ig-muted">
-              <ShieldAlert size={16} />
-              Dica anti-ban (opcional)
-            </div>
-            <p>
-              Para contas novas, o modo <strong>Aquecimento</strong> distribui devagar (1→1→1→2→2
-              posts/dia). Se preferir velocidade, use <strong>Automático</strong> ou{" "}
-              <strong>Só hoje</strong> — você escolhe.
-            </p>
-          </div>
-        )}
-
-        {mode === "autopilot" && postingRisk?.warnings.length ? (
-          <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-muted">
-            {postingRisk.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
-            ))}
-          </div>
-        ) : null}
-
-        {mode === "autopilot" && (
-          <div className="text-center">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-3 py-1 text-xs text-ig-link">
-              <Sparkles size={14} />
-              Hands-off — você só envia os vídeos
-            </div>
-            <h2 className="text-xl font-bold text-ig-text">A IA faz o resto</h2>
-            <p className="mt-1 text-sm text-ig-muted">
-              Legendas, hashtags e horários estratégicos. Vídeo não é editado.
-            </p>
-          </div>
-        )}
-
-        {mode === "autopilot" && oneClickMode && (
-          <div className="flex items-center gap-3 rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-sm text-ig-text">
-            <Zap size={18} className="shrink-0 text-ig-text" />
-            <p>
-              <strong>Modo 1 clique ativo.</strong> Envie e a IA agenda tudo automaticamente — sem
-              prévia.
-            </p>
-          </div>
-        )}
-
-        {mode === "autopilot" && (
-          <div className="rounded-lg border border-ig-primary/20 bg-ig-primary/10 px-4 py-3 text-sm text-ig-link">
-            <p>
-              Envie até {MAX_VIDEOS_TOTAL} vídeos de uma vez
-              {batchCount > 1 && (
-                <> — processados em {batchCount} lotes automáticos de {API_BATCH_SIZE}</>
-              )}
-              . A IA usa seu{" "}
-              <a href="/dashboard/ai" className="font-medium underline">
-                playbook GPT
-              </a>{" "}
-              e distribui nos melhores horários.
-            </p>
-          </div>
-        )}
-
-        {showAdvanced && mode === "manual" && (
-          <button
-            type="button"
-            onClick={() => {
-              setMode("autopilot");
-              setShowAdvanced(false);
-            }}
-            className="text-sm text-ig-primary hover:underline"
-          >
-            ← Voltar ao modo automático
-          </button>
-        )}
-
-        <div>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <label className="block text-sm text-ig-text">
-              {accounts.length > 1 ? "Contas Instagram (agendamento simultâneo)" : "Conta Instagram"}
-            </label>
-            {accounts.length > 1 && (
-              <button
-                type="button"
-                onClick={toggleAllAccounts}
-                className="text-xs text-ig-primary hover:underline"
-              >
-                {allSelected ? "Desmarcar extras" : "Selecionar todas"}
-              </button>
-            )}
-          </div>
-
-          {accounts.length > 1 ? (
-            <div className="space-y-2 rounded-lg border border-ig-border bg-ig-elevated p-3">
-              {accounts.map((account) => {
-                const checked = selectedAccountIds.includes(account.id);
-                return (
-                  <label
-                    key={account.id}
-                    className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition ${
-                      checked
-                        ? "border-ig-primary/40 bg-ig-primary/10"
-                        : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleAccount(account.id)}
-                      className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
-                    />
-                    {account.profile_picture_url ? (
-                      <img
-                        src={account.profile_picture_url}
-                        alt={account.ig_username ?? "Instagram"}
-                        className="h-8 w-8 rounded-full border border-ig-border object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-ig-border bg-ig-secondary text-xs text-ig-link">
-                        IG
-                      </div>
-                    )}
-                    <span className="text-sm text-ig-text">@{account.ig_username}</span>
-                  </label>
-                );
-              })}
-            </div>
-          ) : (
-            <select
-              value={selectedAccountIds[0] ?? ""}
-              onChange={(e) => setSelectedAccountIds([e.target.value])}
-              className="w-full ig-input w-full"
-            >
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  @{a.ig_username}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {!selectedAccountIds.length && (
-            <p className="mt-2 text-xs text-ig-danger">Selecione pelo menos uma conta.</p>
-          )}
-        </div>
-
-        <div>
-          <label className="mb-2 block text-sm text-ig-text">Vídeo(s)</label>
-          <input
-            type="file"
-            accept="video/*"
-            multiple
-            onChange={(e) => setFiles(e.target.files)}
-            className="w-full rounded-lg border border-dashed border-ig-border bg-ig-elevated px-3 py-4 text-sm text-ig-text file:mr-3 file:rounded-md file:border-0 file:bg-ig-primary file:px-3 file:py-2 file:text-sm file:font-medium file:text-ig-text"
-          />
-          <p className="mt-2 text-xs text-ig-muted">
-            {mode === "autopilot"
-              ? "Suba seus vídeos prontos. A IA só define legenda, hashtags e horário — sem mexer no vídeo."
-              : "Para teste, escolha apenas 1 vídeo. Máximo 500MB por arquivo."}
-          </p>
-          {files && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-ig-text">
-                {files.length} arquivo(s) selecionado(s)
-                {selectedAccountIds.length > 1 && (
-                  <> · total de {totalPosts} post(s) em {selectedAccountIds.length} contas</>
-                )}
-              </p>
-              {scheduleEstimate && (
-                <p className="flex items-center gap-1.5 text-xs text-ig-link">
-                  <Calendar size={12} />
-                  Estimativa: {scheduleEstimate.label}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {mode === "autopilot" ? (
-          <div>
-            <label className="mb-2 block text-sm text-ig-text">Distribuição (IA decide)</label>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={() => setScheduleMode("warmup")}
-                className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
-                  scheduleMode === "warmup"
-                    ? "border-ig-primary/40 bg-ig-primary/10 text-ig-link"
-                    : "border-ig-border bg-ig-elevated text-ig-muted"
-                }`}
-              >
-                <strong className="flex items-center gap-1.5">
-                  <Flame size={14} />
-                  Aquecimento
-                </strong>
-                <span className="text-xs opacity-80">
-                  {describeWarmupPlan(DEFAULT_WARMUP_DAYS)} — ideal para contas novas
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setScheduleMode("auto")}
-                className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
-                  scheduleMode === "auto"
-                    ? "border-ig-primary/50 bg-ig-primary/15 text-ig-link"
-                    : "border-ig-border bg-ig-elevated text-ig-muted"
-                }`}
-              >
-                <strong className="block">Automático</strong>
-                <span className="text-xs opacity-80">
-                  Semanas/meses — IA distribui 1-3 posts/dia nos horários de pico
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setScheduleMode("today")}
-                className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
-                  scheduleMode === "today"
-                    ? "border-ig-primary/50 bg-ig-primary/15 text-ig-link"
-                    : "border-ig-border bg-ig-elevated text-ig-muted"
-                }`}
-              >
-                <strong className="block">Só hoje</strong>
-                <span className="text-xs opacity-80">Todos os vídeos ainda hoje</span>
-              </button>
-            </div>
-            {scheduleMode === "warmup" && hasWarmupAccounts && (
-              <p className="mt-2 text-xs text-ig-muted">
-                Cada conta segue sua própria rampa de aquecimento conforme o dia em que foi conectada.
-              </p>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm text-ig-text">Data de início</label>
-                <input
-                  type="datetime-local"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full ig-input w-full"
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm text-ig-text">Posts por dia</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={postsPerDay}
-                  onChange={(e) => setPostsPerDay(Number(e.target.value))}
-                  className="w-full ig-input w-full"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm text-ig-text">
-                Horários (hora cheia, ex: 9 ou 9,12,15)
-              </label>
-              <input
-                type="text"
-                value={hours}
-                onChange={(e) => setHours(e.target.value)}
-                className="w-full ig-input w-full"
-                placeholder="9"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm text-ig-text">
-                Legenda padrão (use {"{n}"} para número do post)
-              </label>
-              <textarea
-                value={captionTemplate}
-                onChange={(e) => setCaptionTemplate(e.target.value)}
-                rows={3}
-                className="w-full ig-input w-full"
-                placeholder="Post #{n} 🎬"
-              />
-            </div>
-          </>
-        )}
-
-        {mode === "autopilot" && (
-          <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-ig-border bg-ig-elevated px-4 py-3">
-            <input
-              type="checkbox"
-              checked={!oneClickMode}
-              onChange={(e) => setOneClickMode(!e.target.checked)}
-              disabled={videoCount > MAX_PREVIEW_VIDEOS}
-              className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
-            />
-            <div>
-              <p className="text-sm text-ig-text">Revisar prévia antes de agendar</p>
-              <p className="text-xs text-ig-muted">
-                {videoCount > MAX_PREVIEW_VIDEOS
-                  ? `Disponível até ${MAX_PREVIEW_VIDEOS} vídeos. Acima disso, usa modo 1 clique.`
-                  : "Desmarque para agendar direto em 1 clique (recomendado)."}
-              </p>
-            </div>
-          </label>
-        )}
-
-        {mode === "autopilot" && !showAdvanced && (
-          <button
-            type="button"
-            onClick={() => {
-              setMode("manual");
-              setShowAdvanced(true);
-            }}
-            className="flex w-full items-center justify-center gap-2 text-xs text-ig-muted hover:text-ig-text"
-          >
-            <Settings2 size={14} />
-            Modo avançado (configurar manualmente)
-          </button>
-        )}
-
-        {loading && progress > 0 && (
-          <div className="space-y-2">
-            <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
-              <div
-                className="h-full rounded-full bg-ig-primary transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="text-center text-xs text-ig-muted">{loadingStep}</p>
-          </div>
-        )}
-
+      {canSchedulePartial && (
         <button
-          type="submit"
-          disabled={loading || !selectedAccountIds.length}
-          className="ig-btn w-full py-3 disabled:opacity-50"
+          type="button"
+          disabled={scheduling || isUploading}
+          onClick={() => handleSchedule(true)}
+          className="ig-btn-secondary w-full py-3 text-sm font-semibold disabled:opacity-50"
         >
-          {loading
-            ? loadingStep || "Processando..."
-            : mode === "autopilot"
-              ? files?.length
-                ? oneClickMode || videoCount > MAX_PREVIEW_VIDEOS
-                  ? `Programar ${totalPosts} Reels — 1 clique`
-                  : `Gerar prévia de ${totalPosts} Reels`
-                : "Enviar vídeos — IA programa tudo"
-              : selectedAccountIds.length > 1 && files?.length
-                ? `Agendar ${totalPosts} posts (${files.length} vídeo(s) × ${selectedAccountIds.length} contas)`
-                : files?.length === 1
-                  ? "Agendar 1 post"
-                  : "Agendar em massa"}
+          Agendar {completedCount} vídeo(s) enviados agora
         </button>
+      )}
 
-        {result && (
-          <p
-            className={`text-sm ${result.includes("agendad") ? "text-ig-text" : "text-ig-danger"}`}
-          >
-            {result}
-          </p>
-        )}
-      </form>
-    </>
+      <button
+        type="submit"
+        disabled={scheduling || isUploading || !canScheduleAll}
+        className="ig-btn w-full py-4 text-base font-bold disabled:opacity-50"
+      >
+        {scheduling
+          ? loadingStep || "Processando..."
+          : canScheduleAll
+            ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
+            : "🚀 DEIXAR A IA PROGRAMAR TUDO"}
+      </button>
+
+      {!canScheduleAll && completedCount === 0 && totalCount > 0 && (
+        <p className="text-center text-sm text-ig-muted">
+          Continue o upload para agendar. Os vídeos enviados ficam salvos no lote.
+        </p>
+      )}
+
+      {(scheduling || completedSteps.length > 0) && (
+        <section className="ig-panel space-y-2 p-5">
+          {PROGRESS_STEPS.map((step) => {
+            const done = completedSteps.includes(step.id);
+            return (
+              <p key={step.id} className={`flex items-center gap-2 text-sm ${done ? "text-ig-text" : "text-ig-muted"}`}>
+                {done ? <Check size={16} className="text-ig-primary" /> : <span className="w-4" />}
+                {done ? "✓ " : ""}
+                {step.label(completedCount)}
+              </p>
+            );
+          })}
+        </section>
+      )}
+
+      {scheduling && progress > 0 && (
+        <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
+          <div
+            className="h-full rounded-full bg-ig-primary transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+
+      {result && (
+        <p className={`text-sm ${result.includes("agendad") ? "text-ig-text" : "text-ig-danger"}`}>
+          {result.includes("agendad") ? "✓ " : ""}
+          {result}
+        </p>
+      )}
+    </form>
   );
 }

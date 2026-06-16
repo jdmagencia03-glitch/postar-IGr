@@ -32,9 +32,17 @@ export interface ScheduledPost {
   permalink: string | null;
   error_message: string | null;
   published_at: string | null;
+  hidden_from_report?: boolean;
   created_at: string;
   instagram_accounts?: Pick<InstagramAccount, "ig_username" | "profile_picture_url">;
 }
+
+export type ScheduledPostWithAccountSecrets = ScheduledPost & {
+  instagram_accounts?: Pick<
+    InstagramAccount,
+    "ig_username" | "profile_picture_url" | "ig_user_id" | "page_access_token" | "auth_provider"
+  >;
+};
 
 export interface PublishLog {
   id: string;
@@ -58,4 +66,54 @@ export interface AiPlaybook {
   extra_knowledge: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type UploadBatchStatus = "uploading" | "ready" | "scheduling" | "scheduled" | "cancelled";
+export type UploadFileStatus = "pending" | "uploading" | "completed" | "failed";
+export type UploadSpeedMode = "economy" | "normal" | "turbo";
+
+export interface UploadBatchFile {
+  id: string;
+  batch_id: string;
+  filename: string;
+  file_size: number;
+  content_type: string;
+  storage_path: string;
+  public_url: string | null;
+  status: UploadFileStatus;
+  bytes_uploaded: number;
+  error_message: string | null;
+  file_hash?: string | null;
+  last_modified?: number | null;
+  retry_count?: number;
+  duration_seconds?: number | null;
+  removed?: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UploadBatch {
+  id: string;
+  owner_id: string;
+  account_id: string;
+  schedule_mode: "today" | "auto" | "warmup" | "custom";
+  custom_schedule: {
+    posts_per_day?: number;
+    time_slots?: string[];
+  } | null;
+  status: UploadBatchStatus;
+  total_files: number;
+  completed_files: number;
+  failed_files: number;
+  batch_number: number;
+  paused?: boolean;
+  upload_speed_mode?: UploadSpeedMode;
+  started_at?: string | null;
+  finished_at?: string | null;
+  auto_schedule_enabled?: boolean;
+  created_at: string;
+  updated_at: string;
+  upload_files?: UploadBatchFile[];
+  instagram_accounts?: Pick<InstagramAccount, "ig_username">;
 }

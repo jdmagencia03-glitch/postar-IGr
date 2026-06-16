@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUserId } from "@/lib/auth/session";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,7 @@ export default async function LoginPage({
     <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4">
       <div className="ig-card w-full p-8">
         <h1 className="ig-brand-script mb-6 text-center text-4xl">
-          <span className="ig-brand-gradient">InstaScheduler</span>
+          Postar <span className="ig-brand-gradient">IGr</span>
         </h1>
         <p className="mb-8 text-center text-sm text-ig-muted">
           Conecte sua conta Instagram Business ou Creator diretamente.
@@ -49,7 +50,7 @@ export default async function LoginPage({
 
         <a
           href={facebookHref}
-          className="mt-3 block w-full rounded-lg bg-[#1877F2] px-6 py-2.5 text-center text-sm font-semibold text-ig-text hover:opacity-90"
+          className="mt-3 block w-full rounded-lg bg-ig-facebook px-6 py-2.5 text-center text-sm font-semibold text-white hover:opacity-90"
         >
           Conectar via Facebook
         </a>

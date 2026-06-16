@@ -69,7 +69,7 @@ export default function PreviewPage() {
 
   return (
     <div>
-      <div className="border-b border-ig-primary/30 bg-ig-primary/10 px-4 py-2 text-center text-sm text-ig-link">
+      <div className="border-b border-ig-info-border bg-ig-info-bg px-4 py-2 text-center text-sm text-ig-info-text">
         Modo Preview — dados simulados para demonstração
       </div>
       <Navbar />
@@ -113,7 +113,7 @@ export default function PreviewPage() {
                 </div>
               </div>
               <p className="text-sm text-ig-text">→ 881 posts distribuídos em ~176 dias</p>
-              <button className="w-full rounded-lg bg-ig-primary px-4 py-3 font-medium text-ig-text">
+              <button className="ig-btn w-full px-4 py-3">
                 Agendar em massa
               </button>
             </div>

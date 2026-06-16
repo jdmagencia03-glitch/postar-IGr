@@ -5,7 +5,7 @@ import {
   getWarmupDayOffset,
 } from "@/lib/account-warmup";
 import { getOwnerAccountById } from "@/lib/accounts";
-import { buildSmartScheduleSlice, type ScheduleMode, type WarmupScheduleOptions } from "@/lib/smart-schedule";
+import { buildSmartScheduleSlice, type CustomScheduleOptions, type ScheduleMode, type WarmupScheduleOptions } from "@/lib/smart-schedule";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { InstagramAccount } from "@/lib/types";
 
@@ -48,6 +48,7 @@ export async function buildAutopilotPlan(params: {
   batch_offset?: number;
   total_count?: number;
   warmup?: WarmupScheduleOptions;
+  custom?: CustomScheduleOptions;
 }) {
   const niche = params.niche?.trim() || "fitness e lifestyle";
   const scheduleMode = params.schedule_mode ?? "auto";
@@ -63,6 +64,7 @@ export async function buildAutopilotPlan(params: {
     count: params.items.length,
     totalCount,
     warmup: params.warmup,
+    custom: params.custom,
   });
 
   const { captions, source } = await generateBulkCaptions({

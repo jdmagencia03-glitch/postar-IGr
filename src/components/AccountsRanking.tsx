@@ -125,7 +125,7 @@ export function AccountsRanking() {
     <section className="mb-8 rounded-2xl border border-ig-border bg-ig-elevated p-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-3 py-1 text-xs text-ig-link">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-ig-info-border bg-ig-info-bg px-3 py-1 text-xs font-medium text-ig-info-text">
             <Trophy size={14} />
             Dados reais da API do Instagram
           </div>
@@ -159,7 +159,7 @@ export function AccountsRanking() {
             onClick={() => setMetric(key)}
             className={`rounded-full px-4 py-2 text-sm transition ${
               metric === key
-                ? "bg-ig-primary text-ig-text"
+                ? "bg-ig-primary text-ig-on-primary"
                 : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
             }`}
           >
@@ -176,7 +176,7 @@ export function AccountsRanking() {
             onClick={() => setPeriod(key)}
             className={`rounded-full px-4 py-2 text-sm transition ${
               period === key
-                ? "bg-ig-primary text-ig-text"
+                ? "bg-ig-primary text-ig-on-primary"
                 : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
             }`}
           >

@@ -43,7 +43,7 @@ export function MetaOAuthAlert({ error, connected, facebookEnabled = true }: Pro
             <div className="mt-4 flex flex-wrap gap-2">
               <a
                 href="/api/auth/facebook?next=/dashboard/accounts&add_account=1"
-                className="inline-flex items-center gap-2 rounded-lg bg-[#1877F2] px-4 py-2 text-xs font-medium text-ig-text hover:opacity-90"
+                className="inline-flex items-center gap-2 rounded-lg bg-ig-facebook px-4 py-2 text-xs font-medium text-white hover:opacity-90"
               >
                 <Share2 size={14} />
                 Tentar via Facebook (automático)

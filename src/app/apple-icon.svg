@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none">
+  <rect width="180" height="180" rx="40" fill="#000000"/>
+  <path
+    d="M90 28a62 62 0 0 1 0 124"
+    stroke="#E0E0E0"
+    stroke-width="8"
+    stroke-linecap="round"
+    opacity="0.85"
+  />
+  <path
+    d="M90 152a62 62 0 0 1 0-124"
+    stroke="#FF8C00"
+    stroke-width="8"
+    stroke-linecap="round"
+    opacity="0.9"
+  />
+  <text
+    x="90"
+    y="112"
+    font-family="Arial Black, Arial, sans-serif"
+    font-weight="900"
+    font-size="76"
+    text-anchor="middle"
+    letter-spacing="-3"
+  >
+    <tspan fill="#E8E8E8">P</tspan>
+    <tspan fill="#FF8C00">G</tspan>
+  </text>
+</svg>

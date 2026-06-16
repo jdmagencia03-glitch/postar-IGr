@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Grand_Hotel } from "next/font/google";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
 
 const instagramBrand = Grand_Hotel({
@@ -9,8 +10,13 @@ const instagramBrand = Grand_Hotel({
 });
 
 export const metadata: Metadata = {
-  title: "InstaScheduler — Agende posts no Instagram",
-  description: "Agende Reels, Feed e Carrosséis via API oficial da Meta",
+  title: {
+    default: "PostariGr",
+    template: "%s · PostariGr",
+  },
+  description:
+    "Agende Reels e posts no Instagram com IA — legendas, hashtags e horários automáticos",
+  applicationName: "PostariGr",
 };
 
 export default function RootLayout({
@@ -19,8 +25,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR" className={`${instagramBrand.variable} h-full antialiased`}>
-      <body className="min-h-full font-sans">{children}</body>
+    <html
+      lang="pt-BR"
+      className={`${instagramBrand.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <body className="min-h-full font-sans">
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }

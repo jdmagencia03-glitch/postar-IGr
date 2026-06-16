@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { BulkUploadForm } from "@/components/BulkUploadForm";
+import { UploadGlobalBar } from "@/components/upload/UploadGlobalBar";
+import { UploadProvider } from "@/contexts/UploadContext";
 import { getOwnerAccounts } from "@/lib/accounts";
-import { getPlaybookForOwner, playbookHasContent } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { InstagramAccount } from "@/lib/types";
@@ -20,8 +21,6 @@ export default async function BulkPage({
   const params = await searchParams;
   const supabase = createAdminClient();
   const accounts = await getOwnerAccounts(supabase, ownerId);
-  const playbook = await getPlaybookForOwner(ownerId);
-  const playbookReady = playbookHasContent(playbook);
   const defaultAccountId =
     params.account && accounts.some((a) => a.id === params.account)
       ? params.account
@@ -42,35 +41,26 @@ export default async function BulkPage({
   }
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-ig-text">Programar conteúdo</h1>
-        <p className="mb-8 text-ig-muted">
-          Experiência hands-off: envie os vídeos prontos e a IA define legendas, hashtags e
-          distribuição em semanas ou meses.
-        </p>
-        {accounts.length > 1 && (
-          <p className="mb-8 text-sm text-ig-muted">
-            {accounts.length} contas conectadas.{" "}
-            <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
-              Gerenciar contas
-            </a>
-          </p>
-        )}
-        {accounts.length <= 1 && (
-          <p className="mb-8 text-sm text-ig-muted">
-            <a href="/dashboard/accounts" className="text-ig-primary hover:underline">
-              Adicionar outra conta Instagram
-            </a>
-          </p>
-        )}
-        <BulkUploadForm
-          accounts={accounts as InstagramAccount[]}
-          defaultAccountId={defaultAccountId}
-          playbookReady={playbookReady}
-        />
-      </main>
-    </div>
+    <UploadProvider>
+      <div>
+        <Navbar />
+        <main className="mx-auto max-w-3xl px-4 py-8 pb-24">
+          <header className="mb-8 text-center">
+            <h1 className="text-2xl font-bold text-ig-text sm:text-3xl">
+              🚀 Envie todo o seu conteúdo de uma vez
+            </h1>
+            <p className="mx-auto mt-3 max-w-2xl text-ig-muted">
+              A plataforma envia, organiza, cria legendas e agenda automaticamente seus vídeos para manter sua página ativa por semanas ou meses.
+            </p>
+          </header>
+
+          <BulkUploadForm
+            accounts={accounts as InstagramAccount[]}
+            defaultAccountId={defaultAccountId}
+          />
+        </main>
+        <UploadGlobalBar />
+      </div>
+    </UploadProvider>
   );
 }

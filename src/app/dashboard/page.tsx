@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { OnboardingSteps } from "@/components/OnboardingSteps";
-import { PostCard } from "@/components/PostCard";
+import { PostsManager } from "@/components/PostsManager";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getPlaybookForOwner, playbookHasContent } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -45,8 +45,8 @@ export default async function DashboardPage() {
     <div>
       <Navbar />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <section className="mb-10 rounded-2xl border border-ig-primary/20 bg-ig-elevated p-8 text-center">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-ig-primary/30 bg-ig-primary/10 px-4 py-1.5 text-sm text-ig-link">
+        <section className="ig-hero mb-10 p-8 text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-ig-info-border bg-ig-info-bg px-4 py-1.5 text-sm font-medium text-ig-info-text">
             <Sparkles size={16} />
             Hands-off
           </div>
@@ -60,21 +60,21 @@ export default async function DashboardPage() {
           <div className="flex flex-wrap justify-center gap-3">
             <a
               href={playbookReady ? "/dashboard/bulk" : "/dashboard/ai"}
-              className="rounded-lg bg-ig-primary px-6 py-3 font-medium text-ig-text hover:opacity-90"
+              className="ig-btn px-6 py-3"
             >
-              {playbookReady ? "Enviar vídeos agora" : "Começar — treinar IA"}
+              {playbookReady ? "Enviar vídeos agora" : "Começar — configurar estilo"}
             </a>
             {playbookReady ? (
               <a
                 href="/dashboard/ai"
-                className="rounded-lg border border-ig-border bg-ig-secondary px-6 py-3 text-ig-text hover:bg-ig-secondary"
+                className="ig-btn-secondary px-6 py-3"
               >
-                Ajustar IA
+                Ajustar estilo
               </a>
             ) : (
               <a
                 href="/dashboard/bulk"
-                className="rounded-lg border border-ig-border bg-ig-secondary px-6 py-3 text-ig-text hover:bg-ig-secondary"
+                className="ig-btn-secondary px-6 py-3"
               >
                 Pular e enviar vídeos
               </a>
@@ -104,7 +104,7 @@ export default async function DashboardPage() {
           ].map((s) => (
             <div
               key={s.label}
-              className="rounded-xl border border-ig-border bg-ig-secondary p-4"
+              className="ig-stat p-4"
             >
               <p className="text-sm text-ig-muted">{s.label}</p>
               <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
@@ -115,18 +115,14 @@ export default async function DashboardPage() {
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-ig-text">Próximos posts</h2>
           <a href="/dashboard/reports" className="text-sm text-ig-primary hover:underline">
-            Ver relatório →
+            Ver central de operações →
           </a>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {(posts as ScheduledPost[])?.map((post) => (
-            <PostCard key={post.id} post={post} />
-          ))}
-        </div>
+        <PostsManager posts={(posts as ScheduledPost[]) ?? []} enableBulk />
 
         {!posts?.length && (
-          <div className="rounded-xl border border-dashed border-ig-border p-12 text-center text-ig-muted">
+          <div className="rounded-xl border border-dashed border-ig-border bg-ig-elevated p-12 text-center text-ig-muted shadow-sm">
             Nenhum post agendado ainda.{" "}
             <a href="/dashboard/bulk" className="text-ig-primary hover:underline">
               Envie seus vídeos — a IA cuida do resto

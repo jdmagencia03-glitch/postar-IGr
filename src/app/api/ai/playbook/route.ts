@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { EMPTY_PLAYBOOK } from "@/lib/ai/playbook";
+import { EMPTY_PLAYBOOK, playbookHasContent } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -34,11 +34,12 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const playbook = { ...EMPTY_PLAYBOOK, ...(data ?? {}), owner_id: ownerId };
+
   return NextResponse.json({
-    ...EMPTY_PLAYBOOK,
-    ...(data ?? {}),
-    owner_id: ownerId,
-    has_openai_key: Boolean(process.env.OPENAI_API_KEY),
+    ...playbook,
+    configured: playbookHasContent(playbook),
+    ai_ready: true,
   });
 }
 
@@ -83,6 +84,7 @@ export async function PUT(request: NextRequest) {
 
   return NextResponse.json({
     ...data,
-    has_openai_key: Boolean(process.env.OPENAI_API_KEY),
+    configured: playbookHasContent(data),
+    ai_ready: true,
   });
 }

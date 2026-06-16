@@ -17,7 +17,12 @@ const HOURS_BY_POSTS_PER_DAY: Record<number, number[]> = {
   3: [9, 14, 20],
 };
 
-export type ScheduleMode = "today" | "auto" | "warmup";
+export type ScheduleMode = "today" | "auto" | "warmup" | "custom";
+
+export interface CustomScheduleOptions {
+  postsPerDay: number;
+  timeSlots: Array<{ hour: number; minute: number }>;
+}
 
 export interface WarmupScheduleOptions {
   warmupDays?: number;
@@ -34,6 +39,69 @@ function endOfPostingDay(base: Date) {
   const end = new Date(base);
   end.setHours(23, 30, 0, 0);
   return end;
+}
+
+export function parseTimeSlot(value: string): { hour: number; minute: number } | null {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+
+  const hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  return { hour, minute };
+}
+
+export function parseTimeSlots(values: string[]) {
+  const parsed = values
+    .map(parseTimeSlot)
+    .filter((slot): slot is { hour: number; minute: number } => Boolean(slot));
+
+  parsed.sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute));
+  return parsed;
+}
+
+export function generateCustomSchedule(
+  count: number,
+  options: CustomScheduleOptions,
+  now = new Date(),
+) {
+  const { postsPerDay, timeSlots } = options;
+  if (count <= 0 || !timeSlots.length || postsPerDay < 1) {
+    return { schedule: [] as Date[], postsPerDay };
+  }
+
+  const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
+  let startDate = atHour(now, 0, 0);
+
+  for (let probeDay = 0; probeDay < 366; probeDay++) {
+    const day = addDays(startDate, probeDay);
+    const hasFuture = timeSlots.some(
+      ({ hour, minute }) => atHour(day, hour, minute) >= earliest,
+    );
+    if (hasFuture) {
+      startDate = day;
+      break;
+    }
+  }
+
+  const schedule: Date[] = [];
+  let dayOffset = 0;
+  let slot = 0;
+
+  for (let i = 0; i < count; i++) {
+    const { hour, minute } = timeSlots[slot % timeSlots.length];
+    const day = addDays(startDate, dayOffset);
+    schedule.push(atHour(day, hour, minute));
+
+    slot++;
+    if (slot % postsPerDay === 0) {
+      dayOffset++;
+      slot = 0;
+    }
+  }
+
+  return { schedule, postsPerDay };
 }
 
 export function resolveAutoPostsPerDay(videoCount: number) {
@@ -111,6 +179,7 @@ export function buildSmartSchedule(
   count: number,
   now = new Date(),
   warmup?: WarmupScheduleOptions,
+  custom?: CustomScheduleOptions,
 ) {
   if (mode === "warmup") {
     const schedule = generateWarmupSchedule({
@@ -135,6 +204,14 @@ export function buildSmartSchedule(
     };
   }
 
+  if (mode === "custom") {
+    if (!custom) {
+      throw new Error("Configure posts por dia e horários no modo personalizado.");
+    }
+    const { schedule, postsPerDay } = generateCustomSchedule(count, custom, now);
+    return { schedule, postsPerDay, mode };
+  }
+
   const { schedule, postsPerDay } = generateSmartScheduleAuto(count, now);
   return { schedule, postsPerDay, mode };
 }
@@ -151,6 +228,7 @@ export function estimateScheduleDuration(
   count: number,
   mode: ScheduleMode = "auto",
   warmupDays = DEFAULT_WARMUP_DAYS,
+  custom?: CustomScheduleOptions,
 ): ScheduleDurationEstimate {
   if (count <= 0) {
     return { days: 0, months: 0, postsPerDay: 0, label: "", shortLabel: "" };
@@ -174,6 +252,19 @@ export function estimateScheduleDuration(
       postsPerDay: count,
       label: `${count} vídeo(s) publicados hoje`,
       shortLabel: "hoje",
+    };
+  }
+
+  if (mode === "custom") {
+    const postsPerDay = custom?.postsPerDay ?? 1;
+    const days = Math.ceil(count / postsPerDay);
+    const months = Math.round((days / 30) * 10) / 10;
+    return {
+      days,
+      months,
+      postsPerDay,
+      label: `${count} vídeo(s) em ~${days} dias (${postsPerDay} posts/dia)`,
+      shortLabel: `~${days} dias`,
     };
   }
 
@@ -210,8 +301,15 @@ export function buildSmartScheduleSlice(params: {
   totalCount: number;
   now?: Date;
   warmup?: WarmupScheduleOptions;
+  custom?: CustomScheduleOptions;
 }) {
-  const full = buildSmartSchedule(params.mode, params.totalCount, params.now, params.warmup);
+  const full = buildSmartSchedule(
+    params.mode,
+    params.totalCount,
+    params.now,
+    params.warmup,
+    params.custom,
+  );
   const schedule = full.schedule.slice(params.offset, params.offset + params.count);
 
   if (schedule.length < params.count) {
@@ -226,12 +324,16 @@ export function buildSmartScheduleSlice(params: {
   const duration =
     params.mode === "warmup"
       ? estimateScheduleDuration(params.totalCount, "warmup", params.warmup?.warmupDays)
-      : estimateScheduleDuration(params.totalCount, params.mode);
+      : params.mode === "custom"
+        ? estimateScheduleDuration(params.totalCount, "custom", DEFAULT_WARMUP_DAYS, params.custom)
+        : estimateScheduleDuration(params.totalCount, params.mode);
 
   const schedule_summary =
     params.mode === "warmup"
       ? `${describeWarmupPlan(params.warmup?.warmupDays)} · ${describeSmartSchedule(full.schedule, "auto")}`
-      : describeSmartSchedule(full.schedule, params.mode);
+      : params.mode === "custom"
+        ? `${full.postsPerDay} posts/dia · ${describeSmartSchedule(full.schedule, "auto")}`
+        : describeSmartSchedule(full.schedule, params.mode);
 
   return {
     schedule,
