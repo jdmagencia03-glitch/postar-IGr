@@ -5,8 +5,7 @@ export async function resolveImportAccount(ownerId: string, accountId?: string |
   const supabase = createAdminClient();
 
   if (accountId) {
-    const account = await getOwnerAccountById(supabase, ownerId, accountId);
-    if (account) return account;
+    return getOwnerAccountById(supabase, ownerId, accountId);
   }
 
   const accounts = await getOwnerAccounts(supabase, ownerId);

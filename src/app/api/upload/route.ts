@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  buildRandomStoragePath,
+  validateUploadMetadata,
+} from "@/lib/security/ownership";
 
 export async function POST(request: NextRequest) {
   const userId = await getSessionUserId();
@@ -19,11 +23,20 @@ export async function POST(request: NextRequest) {
   const urls: string[] = [];
 
   for (const file of files) {
-    const ext = file.name.split(".").pop() ?? "bin";
-    const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const validation = validateUploadMetadata({
+      filename: file.name,
+      size: file.size,
+      contentType: file.type,
+    });
+
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    const path = buildRandomStoragePath(userId, validation.ext);
 
     const { error } = await supabase.storage.from("media").upload(path, file, {
-      contentType: file.type,
+      contentType: file.type || "video/mp4",
       upsert: false,
     });
 

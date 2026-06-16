@@ -4,6 +4,7 @@ import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { z } from "zod";
 
 const autopilotSchema = z
@@ -64,6 +65,14 @@ export async function POST(request: NextRequest) {
 
   try {
     const validAccounts = await resolveAutopilotAccounts(supabase, ownerId, requestedAccountIds);
+
+    for (const item of parsed.data.items) {
+      const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
+      if (!mediaCheck.ok) {
+        return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+      }
+    }
+
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
     const usePerAccountSchedule = scheduleMode === "warmup";
 

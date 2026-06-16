@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAccountAccessToken } from "@/lib/accounts";
 import { deletePublishedMedia } from "@/lib/meta/instagram";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { canDeleteFromInstagram, getOwnerPostById } from "@/lib/posts";
@@ -36,14 +37,16 @@ export async function DELETE(
   }
 
   const account = post.instagram_accounts;
-  if (!account?.page_access_token) {
+  const accessToken = account ? getAccountAccessToken(account) : null;
+
+  if (!account || !accessToken) {
     return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
   }
 
   try {
     await deletePublishedMedia(
       post.media_id,
-      account.page_access_token,
+      accessToken,
       account.auth_provider === "facebook" ? "facebook" : "instagram",
     );
   } catch (error) {

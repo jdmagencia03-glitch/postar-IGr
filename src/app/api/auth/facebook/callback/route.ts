@@ -14,6 +14,12 @@ import {
   lookupSessionToken,
 } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { logSecurityEvent } from "@/lib/security/audit";
+import { getClientIp } from "@/lib/security/rate-limit";
+import {
+  encryptPageAccessToken,
+  encryptSessionAccessToken,
+} from "@/lib/security/tokens";
 import { randomUUID } from "crypto";
 
 function sanitizeNextPath(value: string | null | undefined) {
@@ -36,7 +42,7 @@ async function validateAndConsumeOAuthState(state: string, cookieState?: string)
     .eq("state", state)
     .maybeSingle();
 
-  const valid = Boolean((cookieState && cookieState === state) || data);
+  const valid = Boolean(cookieState && cookieState === state && data);
 
   if (data) {
     await supabase.from("oauth_states").delete().eq("state", state);
@@ -124,7 +130,7 @@ export async function GET(request: NextRequest) {
       {
         user_id: ownerId,
         session_token: sessionToken,
-        access_token: primary.page_access_token,
+        access_token: encryptSessionAccessToken(primary.page_access_token),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
@@ -138,7 +144,7 @@ export async function GET(request: NextRequest) {
           ig_user_id: account.ig_user_id,
           ig_username: account.ig_username,
           page_id: account.page_id,
-          page_access_token: account.page_access_token,
+          page_access_token: encryptPageAccessToken(account.page_access_token),
           profile_picture_url: account.profile_picture_url,
           auth_provider: "facebook",
           warmup_enabled: true,
@@ -162,6 +168,15 @@ export async function GET(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
     response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
     response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
+
+    await logSecurityEvent({
+      ownerId,
+      eventType: "login_success",
+      ipAddress: getClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      metadata: { provider: "facebook", connected },
+    });
+
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido";

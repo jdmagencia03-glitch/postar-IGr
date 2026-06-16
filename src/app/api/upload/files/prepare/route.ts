@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTusSignedEndpoint, TUS_CHUNK_SIZE } from "@/lib/upload/storage-url";
+import { logAccessDenied, logSecurityEvent } from "@/lib/security/audit";
+import {
+  assertOwnerStoragePath,
+  validateUploadMetadata,
+} from "@/lib/security/ownership";
 import { z } from "zod";
-
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
 const prepareSchema = z.object({
   batch_id: z.string().uuid(),
@@ -28,11 +31,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  if (parsed.data.size > MAX_FILE_SIZE) {
-    return NextResponse.json(
-      { error: `${parsed.data.name} é muito grande. Máximo: 500MB.` },
-      { status: 400 },
-    );
+  const validation = validateUploadMetadata({
+    filename: parsed.data.name,
+    size: parsed.data.size,
+    contentType: parsed.data.type,
+  });
+
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
   const supabase = createAdminClient();
@@ -50,6 +56,13 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!batch) {
+    await logAccessDenied({
+      ownerId,
+      resourceType: "upload_batch",
+      resourceId: parsed.data.batch_id,
+      request,
+      reason: "batch_not_owned",
+    });
     return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
   }
 
@@ -64,7 +77,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Arquivo não encontrado no lote" }, { status: 404 });
   }
 
-  const path = parsed.data.storage_path;
+  if (parsed.data.storage_path !== file.storage_path) {
+    await logAccessDenied({
+      ownerId,
+      resourceType: "upload_file",
+      resourceId: parsed.data.file_id,
+      request,
+      reason: "storage_path_mismatch",
+    });
+    return NextResponse.json({ error: "Caminho de upload inválido" }, { status: 403 });
+  }
+
+  const pathCheck = assertOwnerStoragePath(ownerId, file.storage_path);
+  if (!pathCheck.ok) {
+    return NextResponse.json({ error: pathCheck.error }, { status: 403 });
+  }
+
+  const path = pathCheck.path;
   const { data, error } = await supabase.storage.from("media").createSignedUploadUrl(path, {
     upsert: true,
   });
@@ -74,6 +103,16 @@ export async function POST(request: NextRequest) {
   }
 
   const { data: publicData } = supabase.storage.from("media").getPublicUrl(path);
+
+  await logSecurityEvent({
+    ownerId,
+    eventType: "upload_prepared",
+    resourceType: "upload_file",
+    resourceId: file.id,
+    ipAddress: request.headers.get("x-forwarded-for"),
+    userAgent: request.headers.get("user-agent"),
+    metadata: { batchId: batch.id, path },
+  });
 
   return NextResponse.json({
     tusEndpoint: getTusSignedEndpoint(supabaseUrl),

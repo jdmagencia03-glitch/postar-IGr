@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, USER_ID_HEADER, lookupSessionToken } from "@/lib/auth/session-core";
+import { applyCorsHeaders, applySecurityHeaders } from "@/lib/security/headers";
+import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
 const PROTECTED_PAGES = ["/dashboard"];
 const PROTECTED_APIS = [
@@ -19,6 +21,12 @@ function isProtectedPath(pathname: string) {
   );
 }
 
+function withSecurityHeaders(response: NextResponse, request: NextRequest) {
+  applySecurityHeaders(response);
+  applyCorsHeaders(response, request.headers.get("origin"));
+  return response;
+}
+
 async function resolveUserIdFromRequest(request: NextRequest): Promise<string | null> {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -27,7 +35,28 @@ async function resolveUserIdFromRequest(request: NextRequest): Promise<string | 
     return lookupSessionToken(token);
   }
 
-  if (/^\d+$/.test(token)) return token;
+  return null;
+}
+
+function enforceApiRateLimit(request: NextRequest, pathname: string) {
+  const ip = getClientIp(request);
+  const scope = pathname.startsWith("/api/upload") ? "upload" : "api";
+  const limit = pathname.startsWith("/api/upload") ? 120 : 180;
+  const result = checkRateLimit({
+    key: `${scope}:${ip}`,
+    limit,
+    windowMs: 60_000,
+  });
+
+  if (!result.allowed) {
+    return NextResponse.json(
+      { error: "Muitas requisições. Tente novamente em instantes." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) },
+      },
+    );
+  }
 
   return null;
 }
@@ -35,31 +64,48 @@ async function resolveUserIdFromRequest(request: NextRequest): Promise<string | 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (request.method === "OPTIONS" && pathname.startsWith("/api/")) {
+    return withSecurityHeaders(new NextResponse(null, { status: 204 }), request);
+  }
+
   if (!isProtectedPath(pathname)) {
-    return NextResponse.next();
+    return withSecurityHeaders(NextResponse.next(), request);
+  }
+
+  if (pathname.startsWith("/api/")) {
+    const rateLimited = enforceApiRateLimit(request, pathname);
+    if (rateLimited) {
+      return withSecurityHeaders(rateLimited, request);
+    }
   }
 
   const userId = await resolveUserIdFromRequest(request);
 
   if (!userId) {
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+      return withSecurityHeaders(
+        NextResponse.json({ error: "Não autenticado" }, { status: 401 }),
+        request,
+      );
     }
 
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    return withSecurityHeaders(NextResponse.redirect(loginUrl), request);
   }
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(USER_ID_HEADER, userId);
 
-  return NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
+  return withSecurityHeaders(
+    NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    }),
+    request,
+  );
 }
 
 export const config = {

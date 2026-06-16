@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { getOwnerAccountById, getOwnerAccounts } from "@/lib/accounts";
+import { getOwnerAccountById, getOwnerAccounts, getAccountAccessToken } from "@/lib/accounts";
 import { checkInstagramAccountHealth } from "@/lib/meta/instagram";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
     account = accounts[0] ?? null;
   }
 
-  if (!account?.page_access_token) {
+  const accessToken = account ? getAccountAccessToken(account) : null;
+
+  if (!account || !accessToken) {
     return NextResponse.json({
       account_status: "error",
       status_message: "Nenhuma conta Instagram conectada",
@@ -33,7 +35,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const health = await checkInstagramAccountHealth(account.page_access_token, {
+  const health = await checkInstagramAccountHealth(accessToken, {
     provider: account.auth_provider === "facebook" ? "facebook" : "instagram",
     igUserId: account.ig_user_id,
   });

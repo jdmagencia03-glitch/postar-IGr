@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { generateBulkSchedule } from "@/lib/utils";
 import { z } from "zod";
 
@@ -53,6 +54,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Conta não encontrada: ${accountId}` }, { status: 404 });
     }
     validAccounts.push(account);
+  }
+
+  for (const item of parsed.data.items) {
+    const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
+    if (!mediaCheck.ok) {
+      return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+    }
   }
 
   const schedule = generateBulkSchedule({

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { InstagramAccount } from "@/lib/types";
+import { decryptPageAccessToken } from "@/lib/security/tokens";
 
 export function ownerAccountsFilter(ownerId: string) {
   return `owner_id.eq.${ownerId},user_id.eq.${ownerId}`;
@@ -31,4 +32,8 @@ export async function getOwnerAccountById(
     .maybeSingle();
 
   return data as InstagramAccount | null;
+}
+
+export function getAccountAccessToken(account: Pick<InstagramAccount, "page_access_token">) {
+  return decryptPageAccessToken(account.page_access_token);
 }

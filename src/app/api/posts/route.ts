@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById, getOwnerAccounts } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { logSecurityEvent } from "@/lib/security/audit";
+import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { z } from "zod";
 
 const postSchema = z.object({
@@ -55,6 +57,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
   }
 
+  const mediaCheck = validateMediaUrlsForOwner(parsed.data.media_urls, userId);
+  if (!mediaCheck.ok) {
+    return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+  }
+
   const { data, error } = await supabase
     .from("scheduled_posts")
     .insert({
@@ -70,6 +77,14 @@ export async function POST(request: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  await logSecurityEvent({
+    ownerId: userId,
+    eventType: "post_scheduled",
+    resourceType: "scheduled_post",
+    resourceId: data.id,
+    metadata: { accountId: parsed.data.account_id },
+  });
 
   return NextResponse.json(data, { status: 201 });
 }

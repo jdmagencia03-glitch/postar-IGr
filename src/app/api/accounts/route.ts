@@ -4,7 +4,7 @@ import {
   DEFAULT_WARMUP_DAYS,
   getWarmupStatus,
 } from "@/lib/account-warmup";
-import { getOwnerAccounts, getOwnerAccountById } from "@/lib/accounts";
+import { getOwnerAccounts, getOwnerAccountById, ownerAccountsFilter } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -88,6 +88,7 @@ export async function PATCH(request: Request) {
     .from("instagram_accounts")
     .update(updates)
     .eq("id", parsed.data.id)
+    .or(ownerAccountsFilter(ownerId))
     .select("*")
     .single();
 
@@ -124,7 +125,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
   }
 
-  const { error } = await supabase.from("instagram_accounts").delete().eq("id", accountId);
+  const { error } = await supabase
+    .from("instagram_accounts")
+    .delete()
+    .eq("id", accountId)
+    .or(ownerAccountsFilter(ownerId));
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

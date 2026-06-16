@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
+import {
+  buildRandomStoragePath,
+  validateUploadMetadata,
+} from "@/lib/security/ownership";
 
 export async function POST(request: NextRequest) {
   const userId = await getSessionUserId();
@@ -21,15 +23,17 @@ export async function POST(request: NextRequest) {
   const uploads = [];
 
   for (const file of files) {
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: `${file.name} é muito grande. Máximo: 500MB.` },
-        { status: 400 },
-      );
+    const validation = validateUploadMetadata({
+      filename: file.name,
+      size: file.size,
+      contentType: file.type,
+    });
+
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const ext = file.name.split(".").pop() ?? "mp4";
-    const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const path = buildRandomStoragePath(userId, validation.ext);
     const { data, error } = await supabase.storage.from("media").createSignedUploadUrl(path);
 
     if (error || !data) {

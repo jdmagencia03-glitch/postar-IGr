@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { InstagramAccount } from "@/lib/types";
+import { getAccountAccessToken } from "@/lib/accounts";
 import {
   checkInstagramAccountHealth,
   getInstagramAccountStats,
@@ -113,8 +114,32 @@ async function fetchAccountRankingRow(
   account: InstagramAccount,
 ): Promise<AccountRankingRow> {
   const provider = account.auth_provider === "facebook" ? "facebook" : "instagram";
+  const accessToken = getAccountAccessToken(account);
 
-  const health = await checkInstagramAccountHealth(account.page_access_token, {
+  if (!accessToken) {
+    return {
+      account_id: account.id,
+      ig_username: account.ig_username,
+      profile_picture_url: account.profile_picture_url,
+      account_status: "error",
+      followers_count: 0,
+      metrics: {
+        today: { views: 0, likes: 0, followers_gained: 0, followers_lost: 0, net_followers: 0 },
+        last_7_days: {
+          views: 0,
+          likes: 0,
+          followers_gained: 0,
+          followers_lost: 0,
+          net_followers: 0,
+        },
+      },
+      insights_available: false,
+      insights_note: "Token indisponível",
+      rank_score: 0,
+    };
+  }
+
+  const health = await checkInstagramAccountHealth(accessToken, {
     provider,
     igUserId: account.ig_user_id,
   });
@@ -143,7 +168,7 @@ async function fetchAccountRankingRow(
   }
 
   try {
-    const stats = await getInstagramAccountStats(account.page_access_token, {
+    const stats = await getInstagramAccountStats(accessToken, {
       provider,
       igUserId: account.ig_user_id,
     });
@@ -154,7 +179,7 @@ async function fetchAccountRankingRow(
 
     const insights = await getInstagramAccountInsights({
       igUserId: account.ig_user_id,
-      token: account.page_access_token,
+      token: accessToken,
       provider,
       followersCount: stats.followers_count,
       followersDeltaToday: deltas.today,

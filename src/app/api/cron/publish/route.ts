@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publishPost } from "@/lib/meta/instagram";
+import { decryptPageAccessToken } from "@/lib/security/tokens";
+import { getCronSecret } from "@/lib/security/secrets";
 
 export const maxDuration = 300;
 
@@ -15,7 +17,7 @@ async function log(
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = getCronSecret();
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
@@ -53,13 +55,22 @@ export async function GET(request: NextRequest) {
       continue;
     }
 
+    const accessToken = decryptPageAccessToken(account.page_access_token);
+    if (!accessToken) {
+      await supabase
+        .from("scheduled_posts")
+        .update({ status: "failed", error_message: "Token da conta indisponível" })
+        .eq("id", post.id);
+      continue;
+    }
+
     await supabase.from("scheduled_posts").update({ status: "processing" }).eq("id", post.id);
     await log(supabase, post.id, "info", "Iniciando publicação");
 
     try {
       const result = await publishPost({
         igUserId: account.ig_user_id,
-        token: account.page_access_token,
+        token: accessToken,
         mediaType: post.media_type,
         mediaUrls: post.media_urls,
         caption: post.caption ?? undefined,

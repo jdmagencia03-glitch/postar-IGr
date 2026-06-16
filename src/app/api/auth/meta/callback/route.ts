@@ -14,6 +14,12 @@ import {
   lookupSessionToken,
 } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { logSecurityEvent } from "@/lib/security/audit";
+import { getClientIp } from "@/lib/security/rate-limit";
+import {
+  encryptPageAccessToken,
+  encryptSessionAccessToken,
+} from "@/lib/security/tokens";
 import { randomUUID } from "crypto";
 
 function sanitizeNextPath(value: string | null | undefined) {
@@ -36,7 +42,7 @@ async function validateAndConsumeOAuthState(state: string, cookieState?: string)
     .eq("state", state)
     .maybeSingle();
 
-  const valid = Boolean((cookieState && cookieState === state) || data);
+  const valid = Boolean(cookieState && cookieState === state && data);
 
   if (data) {
     await supabase.from("oauth_states").delete().eq("state", state);
@@ -100,6 +106,12 @@ export async function GET(request: NextRequest) {
   const fallbackNext = sanitizeNextPath(storedNext);
 
   if (oauthError && !code) {
+    await logSecurityEvent({
+      eventType: "login_failed",
+      ipAddress: getClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      metadata: { provider: "instagram", reason: oauthError },
+    });
     const response = redirectWithError(appUrl, fallbackNext, oauthError);
     response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
     response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
@@ -112,6 +124,12 @@ export async function GET(request: NextRequest) {
 
   const oauthState = await validateAndConsumeOAuthState(state, storedState);
   if (!oauthState.valid) {
+    await logSecurityEvent({
+      eventType: "login_failed",
+      ipAddress: getClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      metadata: { provider: "instagram", reason: "oauth_invalid" },
+    });
     return redirectWithError(appUrl, fallbackNext, "oauth_invalid");
   }
 
@@ -130,7 +148,7 @@ export async function GET(request: NextRequest) {
       {
         user_id: ownerId,
         session_token: sessionToken,
-        access_token: longToken,
+        access_token: encryptSessionAccessToken(longToken),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
@@ -143,7 +161,7 @@ export async function GET(request: NextRequest) {
         ig_user_id: profile.id,
         ig_username: profile.username,
         page_id: profile.id,
-        page_access_token: longToken,
+        page_access_token: encryptPageAccessToken(longToken),
         profile_picture_url: profile.profile_picture_url ?? null,
         auth_provider: "instagram",
         warmup_enabled: true,
@@ -163,6 +181,15 @@ export async function GET(request: NextRequest) {
     response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
     response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());
     response.cookies.set("meta_oauth_next", "", getSessionCookieDeleteOptions());
+
+    await logSecurityEvent({
+      ownerId,
+      eventType: "login_success",
+      ipAddress: getClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      metadata: { provider: "instagram", igUserId: profile.id },
+    });
+
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido";

@@ -1,19 +1,14 @@
 import { cookies, headers } from "next/headers";
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes } from "crypto";
+import { parseSignedSession } from "@/lib/auth/session-crypto";
 import {
   SESSION_COOKIE,
   USER_ID_HEADER,
   lookupSessionToken,
 } from "@/lib/auth/session-core";
+import { getSessionSecret } from "@/lib/security/secrets";
 
-function getSessionSecret() {
-  return (
-    process.env.SESSION_SECRET ||
-    process.env.CRON_SECRET ||
-    "insta-scheduler-session-secret"
-  );
-}
-
+export { parseSignedSession } from "@/lib/auth/session-crypto";
 export {
   SESSION_COOKIE,
   USER_ID_HEADER,
@@ -35,33 +30,6 @@ export function createSignedSession(userId: string) {
   return `${userId}.${signature}`;
 }
 
-export function parseSignedSession(value: string): string | null {
-  const lastDot = value.lastIndexOf(".");
-  if (lastDot <= 0) return null;
-
-  const userId = value.slice(0, lastDot);
-  const signature = value.slice(lastDot + 1);
-  if (!userId || !signature) return null;
-
-  const expected = createHmac("sha256", getSessionSecret())
-    .update(userId)
-    .digest("hex")
-    .slice(0, 24);
-
-  try {
-    if (
-      signature.length === expected.length &&
-      timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-    ) {
-      return userId;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
 export async function resolveSessionToken(token: string | undefined): Promise<string | null> {
   if (!token) return null;
 
@@ -70,12 +38,7 @@ export async function resolveSessionToken(token: string | undefined): Promise<st
     if (userId) return userId;
   }
 
-  const signedUserId = parseSignedSession(token);
-  if (signedUserId) return signedUserId;
-
-  if (/^\d+$/.test(token)) return token;
-
-  return null;
+  return parseSignedSession(token);
 }
 
 export async function getSessionUserId(): Promise<string | null> {
