@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
 
 type AccountStatus = "active" | "error" | "loading";
 
@@ -11,7 +11,7 @@ interface HealthResponse {
   username?: string | null;
 }
 
-export function AccountStatusBadge() {
+export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolean }) {
   const [status, setStatus] = useState<AccountStatus>("loading");
   const [message, setMessage] = useState("Verificando conta...");
   const [accountCount, setAccountCount] = useState(0);
@@ -100,6 +100,26 @@ export function AccountStatusBadge() {
   }
 
   const isActive = status === "active";
+
+  if (showAvatar) {
+    return (
+      <a
+        href="/dashboard/accounts"
+        title={message}
+        className={`hidden items-center gap-2 rounded-full border py-1 pl-1 pr-2.5 text-xs font-medium sm:flex ${
+          isActive
+            ? "border-ig-border bg-ig-elevated text-ig-text"
+            : "border-ig-danger/30 bg-ig-danger/10 text-ig-danger"
+        }`}
+      >
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ig-primary text-xs font-semibold text-ig-on-primary">
+          A
+        </span>
+        <span>{isActive ? "Ativo" : "Erro"}</span>
+        <ChevronDown size={14} className="text-ig-muted" />
+      </a>
+    );
+  }
 
   return (
     <a

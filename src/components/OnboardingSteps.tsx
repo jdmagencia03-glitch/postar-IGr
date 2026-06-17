@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, Check, Upload } from "lucide-react";
+import { Check, ChevronRight, Palette, Upload } from "lucide-react";
 
 interface Props {
   playbookReady: boolean;
@@ -13,72 +13,69 @@ export function OnboardingSteps({ playbookReady, hasScheduledPosts, currentStep 
   const step2Done = Boolean(hasScheduledPosts);
   const activeStep = currentStep ?? (step1Done ? 2 : 1);
 
-  return (
-    <div className="mb-8 ig-panel p-5">
-      <p className="mb-4 text-sm font-medium text-ig-text">Comece em 2 passos</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <a
-          href="/dashboard/ai"
-          className={`flex items-start gap-3 rounded-xl border px-4 py-3 transition ${
-            activeStep === 1
-              ? "border-ig-info-border bg-ig-info-bg"
-              : step1Done
-                ? "border-ig-border bg-ig-elevated"
-                : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
-          }`}
-        >
-          <div
-            className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-              step1Done ? "bg-ig-secondary text-ig-text" : "bg-ig-info-bg text-ig-info-text"
-            }`}
-          >
-            {step1Done ? <Check size={16} /> : <Brain size={16} />}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-ig-text">
-              1. Configurar estilo
-              {step1Done && <span className="ml-2 text-xs font-normal text-ig-text">Pronto</span>}
-            </p>
-            <p className="mt-1 text-xs text-ig-muted">
-              Defina tom, exemplos e objetivo da página. A IA usa isso em todos os vídeos.
-            </p>
-          </div>
-        </a>
+  const steps = [
+    {
+      href: "/dashboard/ai",
+      number: 1,
+      title: "Configurar estilo",
+      description: "Defina tom, exemplos e chaves da marca.",
+      done: step1Done,
+      active: activeStep === 1,
+      icon: Palette,
+    },
+    {
+      href: "/dashboard/bulk",
+      number: 2,
+      title: "Enviar vídeos",
+      description: "Arraste seus vídeos prontos e agende para Instagram e TikTok.",
+      done: step2Done,
+      active: activeStep === 2,
+      icon: Upload,
+    },
+  ] as const;
 
-        <a
-          href="/dashboard/bulk"
-          className={`flex items-start gap-3 rounded-xl border px-4 py-3 transition ${
-            activeStep === 2
-              ? "border-ig-info-border bg-ig-info-bg"
-              : step2Done
-                ? "border-ig-border bg-ig-elevated"
-                : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
-          }`}
-        >
-          <div
-            className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-              step2Done ? "bg-ig-secondary text-ig-text" : "bg-ig-info-bg text-ig-info-text"
-            }`}
-          >
-            {step2Done ? <Check size={16} /> : <Upload size={16} />}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-ig-text">
-              2. Enviar vídeos
-              {step2Done && <span className="ml-2 text-xs font-normal text-ig-text">Feito</span>}
-            </p>
-            <p className="mt-1 text-xs text-ig-muted">
-              Arraste seus vídeos prontos. A IA programa legendas e horários para Instagram e TikTok.
-            </p>
-          </div>
-        </a>
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-ig-text">Comece em 2 passos</h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {steps.map((step) => {
+          const Icon = step.icon;
+          return (
+            <a
+              key={step.href}
+              href={step.href}
+              className={`group flex items-center gap-4 rounded-2xl border px-4 py-4 transition ${
+                step.active
+                  ? "border-ig-info-border bg-ig-info-bg/60"
+                  : "border-ig-border bg-ig-elevated hover:border-ig-primary/30 hover:bg-ig-secondary/50"
+              }`}
+            >
+              <div
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
+                  step.done
+                    ? "bg-ig-success/15 text-ig-success"
+                    : step.active
+                      ? "bg-ig-primary text-ig-on-primary"
+                      : "bg-ig-info-bg text-ig-info-text"
+                }`}
+              >
+                {step.done ? <Check size={18} /> : step.number}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <Icon size={16} className="shrink-0 text-ig-primary" strokeWidth={1.75} />
+                  <p className="text-sm font-semibold text-ig-text">{step.title}</p>
+                </div>
+                <p className="mt-0.5 text-xs leading-relaxed text-ig-muted">{step.description}</p>
+              </div>
+              <ChevronRight
+                size={18}
+                className="shrink-0 text-ig-muted transition group-hover:translate-x-0.5 group-hover:text-ig-primary"
+              />
+            </a>
+          );
+        })}
       </div>
-      {!playbookReady && (
-        <p className="mt-3 text-xs text-ig-muted">
-          Dica: configure o estilo da página primeiro para legendas mais personalizadas. Sem isso,
-          usamos legendas automáticas.
-        </p>
-      )}
-    </div>
+    </section>
   );
 }

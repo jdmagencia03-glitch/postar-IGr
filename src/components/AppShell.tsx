@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
-  Brain,
   Calendar,
   LayoutGrid,
   List,
@@ -14,9 +14,11 @@ import {
   Music2,
   PenSquare,
   Search,
+  Sparkles,
   Upload,
   Users,
   X,
+  Brain,
 } from "lucide-react";
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 import { BrandLogo } from "@/components/BrandLogo";
@@ -37,6 +39,7 @@ const links = [
 ];
 
 function isActive(pathname: string, href: string, exact?: boolean) {
+  if (href === "/dashboard" && pathname === "/preview") return true;
   if (exact) return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -54,7 +57,7 @@ function SidebarNav({
         const active = isActive(pathname, link.href, link.exact);
         const Icon = link.icon;
         return (
-          <a
+          <Link
             key={link.href}
             href={link.href}
             onClick={onNavigate}
@@ -62,7 +65,7 @@ function SidebarNav({
           >
             <Icon size={20} strokeWidth={1.75} className="shrink-0" />
             <span className="truncate">{link.label}</span>
-          </a>
+          </Link>
         );
       })}
     </nav>
@@ -72,6 +75,7 @@ function SidebarNav({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isHome = pathname === "/dashboard" || pathname === "/preview";
 
   return (
     <div className="flex h-screen overflow-hidden bg-ig-bg">
@@ -79,34 +83,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button
           type="button"
           aria-label="Fechar menu"
-          className="fixed inset-0 z-40 bg-ig-overlay lg:hidden"
+          className="fixed inset-0 z-40 bg-ig-overlay md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       <aside
-        className={`ig-sidebar fixed inset-y-0 left-0 z-50 flex w-[260px] shrink-0 flex-col px-3 py-3 transition-transform lg:static lg:translate-x-0 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        className={`ig-sidebar fixed inset-y-0 left-0 z-50 flex w-[260px] shrink-0 flex-col px-3 py-3 transition-transform md:static md:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "max-md:-translate-x-full"
         }`}
       >
         <div className="mb-4 flex items-center justify-between px-2 pt-1">
-          <a href="/dashboard" aria-label={APP_NAME} onClick={() => setMobileOpen(false)}>
+          <Link href="/dashboard" aria-label={APP_NAME} onClick={() => setMobileOpen(false)}>
             <BrandLogo />
-          </a>
+          </Link>
           <button
             type="button"
             aria-label="Fechar menu"
             onClick={() => setMobileOpen(false)}
-            className="rounded-full p-2 text-ig-muted hover:bg-ig-nav-hover lg:hidden"
+            className="rounded-full p-2 text-ig-muted hover:bg-ig-nav-hover md:hidden"
           >
             <X size={20} />
           </button>
         </div>
 
-        <a href="/dashboard/bulk" className="ig-compose-btn mb-4" onClick={() => setMobileOpen(false)}>
+        <Link href="/dashboard/bulk" className="ig-compose-btn mb-4" onClick={() => setMobileOpen(false)}>
           <PenSquare size={20} strokeWidth={1.75} />
           Agendar posts
-        </a>
+        </Link>
 
         <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
 
@@ -124,14 +128,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             type="button"
             aria-label="Abrir menu"
             onClick={() => setMobileOpen(true)}
-            className="rounded-full p-2.5 text-ig-muted hover:bg-ig-nav-hover lg:hidden"
+            className="rounded-full p-2.5 text-ig-muted hover:bg-ig-nav-hover md:hidden"
           >
             <Menu size={20} />
           </button>
 
-          <a href="/dashboard" className="lg:hidden">
+          <Link href="/dashboard" className="md:hidden">
             <BrandLogo className="text-lg font-semibold text-ig-text" compact />
-          </a>
+          </Link>
 
           <div className="ig-search hidden min-w-0 flex-1 sm:flex">
             <Search size={18} className="shrink-0 text-ig-muted" strokeWidth={1.75} />
@@ -144,9 +148,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             />
           </div>
 
-          <div className="ml-auto flex items-center gap-1">
+          {isHome && (
+            <div className="hidden items-center gap-2 xl:flex">
+              <Link href="/dashboard/bulk" className="ig-btn gap-2 px-4 py-2 text-sm">
+                <Upload size={16} strokeWidth={1.75} />
+                Agendar posts
+              </Link>
+              <Link href="/dashboard/ai" className="ig-btn-secondary gap-2 px-4 py-2 text-sm">
+                <Sparkles size={16} strokeWidth={1.75} />
+                Ajustar IA
+              </Link>
+            </div>
+          )}
+
+          <div className="ml-auto flex items-center gap-1 sm:gap-2">
             <ThemeToggle />
-            <AccountStatusBadge />
+            <AccountStatusBadge showAvatar />
           </div>
         </header>
 

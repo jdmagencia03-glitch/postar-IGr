@@ -1,7 +1,8 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   ChevronDown,
   ChevronUp,
@@ -80,6 +81,7 @@ const QueueRow = memo(function QueueRow({
 });
 
 export const UploadGlobalBar = memo(function UploadGlobalBar() {
+  const pathname = usePathname();
   const session = useOptionalUploadSession();
   const [expanded, setExpanded] = useState(false);
 
@@ -96,6 +98,9 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
   }, [session]);
 
   if (!session || !view?.showGlobalBar || !session.batch) return null;
+
+  // Na home o upload aparece no card inline — evita barra duplicada.
+  if (pathname === "/dashboard") return null;
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
   const speedPresets =

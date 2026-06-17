@@ -138,6 +138,8 @@ a {
   font-size: 14px;
   font-weight: 500;
   color: var(--ig-text);
+  text-decoration: none;
+  cursor: pointer;
   transition: background-color 0.12s ease;
 }
 
@@ -157,13 +159,16 @@ a {
   justify-content: center;
   gap: 0.75rem;
   border-radius: 1rem;
+  border: 1px solid var(--ig-border);
   background: var(--ig-elevated);
   padding: 0.875rem 1.5rem;
   font-size: 14px;
   font-weight: 500;
   color: var(--ig-text);
-  box-shadow: var(--ig-shadow);
-  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--ig-shadow-sm);
+  transition: box-shadow 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .ig-compose-btn:hover {
@@ -242,6 +247,7 @@ a {
   border-radius: var(--ig-radius-lg);
   border: 1px solid var(--ig-border);
   background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow-sm);
 }
 
 .ig-callout {
@@ -254,7 +260,8 @@ a {
 .ig-hero {
   border-radius: var(--ig-radius-lg);
   border: 1px solid var(--ig-border);
-  background: var(--ig-elevated);
+  background: linear-gradient(135deg, var(--ig-elevated) 0%, var(--ig-info-bg) 100%);
+  box-shadow: var(--ig-shadow-sm);
 }
 
 .ig-input {
@@ -339,6 +346,7 @@ a {
   border-radius: var(--ig-radius-lg);
   border: 1px solid var(--ig-border);
   background: var(--ig-elevated);
+  box-shadow: var(--ig-shadow-sm);
 }
 
 /* Linhas tipo inbox */
