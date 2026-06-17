@@ -34,6 +34,7 @@ export class UploadEngine {
   private lastBytes = 0;
   private bytesUploaded = 0;
   private bytesTotal = 0;
+  private liveLoadedBytes = new Map<string, number>();
   private targetConcurrency = 1;
   private workerPromises: Promise<void>[] = [];
   private spawnWorker: (() => void) | null = null;
@@ -94,22 +95,48 @@ export class UploadEngine {
   }
 
   private updateSpeed(bytes: number) {
+    if (bytes < this.lastBytes) {
+      this.lastBytes = bytes;
+      this.lastSpeedAt = Date.now();
+    }
+
     this.bytesUploaded = bytes;
     const now = Date.now();
     const elapsed = (now - this.lastSpeedAt) / 1000;
     if (elapsed >= 1) {
       const delta = bytes - this.lastBytes;
-      const bps = delta / elapsed;
-      this.speedSamples.push(bps);
-      if (this.speedSamples.length > 5) this.speedSamples.shift();
+      if (delta > 0) {
+        const bps = delta / elapsed;
+        this.speedSamples.push(bps);
+        if (this.speedSamples.length > 5) this.speedSamples.shift();
+      }
       this.lastBytes = bytes;
       this.lastSpeedAt = now;
     }
   }
 
   private getSpeedBps() {
-    if (!this.speedSamples.length) return 0;
-    return this.speedSamples.reduce((sum, value) => sum + value, 0) / this.speedSamples.length;
+    const positive = this.speedSamples.filter((value) => value > 0);
+    if (!positive.length) return 0;
+    return positive.reduce((sum, value) => sum + value, 0) / positive.length;
+  }
+
+  private sumLiveBytes(batch: UploadBatch) {
+    let total = 0;
+    for (const record of batch.upload_files ?? []) {
+      if (record.removed) continue;
+      if (record.status === "completed") {
+        total += Number(record.file_size);
+        continue;
+      }
+      const live = this.liveLoadedBytes.get(record.id);
+      if (live != null) {
+        total += live;
+        continue;
+      }
+      total += Number(record.bytes_uploaded ?? 0);
+    }
+    return total;
   }
 
   private emitProgress(
@@ -167,6 +194,12 @@ export class UploadEngine {
       return sum + Number(record.file_size);
     }, 0);
 
+    this.speedSamples = [];
+    this.liveLoadedBytes.clear();
+    this.bytesUploaded = 0;
+    this.lastBytes = 0;
+    this.lastSpeedAt = Date.now();
+
     batch.upload_files?.forEach((record) => {
       if (record.status === "completed") {
         this.bytesUploaded += Number(record.file_size);
@@ -211,19 +244,15 @@ export class UploadEngine {
                 filename: record.filename,
               });
 
-              const completedBytes = (batch.upload_files ?? []).reduce((sum, item) => {
-                if (item.id === record.id) return sum + loaded;
-                if (item.status === "completed") return sum + Number(item.file_size);
-                return sum + Number(item.bytes_uploaded ?? 0);
-              }, 0);
-
-              this.updateSpeed(completedBytes);
+              this.liveLoadedBytes.set(record.id, loaded);
+              this.updateSpeed(this.sumLiveBytes(batch));
               this.callbacks.onFileProgress?.(record.id, loaded, total);
               this.emitProgress(batch, fileProgress);
             },
           });
 
           fileProgress.set(record.id, { percent: 100, filename: record.filename });
+          this.liveLoadedBytes.set(record.id, Number(record.file_size));
           finishedCount += 1;
           if (finishedCount % 10 === 0 || finishedCount === records.length) {
             this.callbacks.onBatchUpdate?.(batch);

@@ -269,19 +269,6 @@ export function SupremeUploadManager({
   }, [running, batch]);
 
   useEffect(() => {
-    if (!running && !batch) return;
-
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue =
-        "Seus vídeos ainda estão sendo enviados. Você pode sair, mas o upload será pausado. Ao voltar, poderá continuar de onde parou.";
-    };
-
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [running, batch]);
-
-  useEffect(() => {
     if (!running || !engineRef.current) return;
     engineRef.current.setConcurrency(speedPresets[speedMode].fileConcurrency);
   }, [running, speedMode, speedPresets]);

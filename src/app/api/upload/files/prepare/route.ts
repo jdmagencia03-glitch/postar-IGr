@@ -6,8 +6,10 @@ import { getTusSignedEndpoint, TUS_CHUNK_SIZE } from "@/lib/upload/storage-url";
 import { logAccessDenied, logSecurityEvent } from "@/lib/security/audit";
 import {
   assertOwnerStoragePath,
+  formatMaxUploadSize,
   validateUploadMetadata,
 } from "@/lib/security/ownership";
+import { formatBytes } from "@/lib/upload/validate";
 import { z } from "zod";
 
 const prepareSchema = z.object({
@@ -96,6 +98,17 @@ export async function POST(request: NextRequest) {
 
   const path = pathCheck.path;
 
+  const { data: bucketInfo } = await supabase.storage.getBucket("media");
+  const bucketLimit = bucketInfo?.file_size_limit ?? 0;
+  if (bucketLimit > 0 && parsed.data.size > bucketLimit) {
+    return NextResponse.json(
+      {
+        error: `Arquivo (${formatBytes(parsed.data.size)}) excede o limite do bucket media (${formatBytes(bucketLimit)}). Ajuste em Storage → media → Settings ou rode supabase/storage-pro.sql.`,
+      },
+      { status: 400 },
+    );
+  }
+
   await supabase
     .from("upload_files")
     .update({
@@ -112,8 +125,10 @@ export async function POST(request: NextRequest) {
   if (error || !data) {
     const raw = error?.message ?? "Falha ao preparar upload";
     const friendly =
-      /size|limit|50|413|payload too large/i.test(raw)
-        ? "Arquivo excede o limite do bucket Supabase. Execute supabase/storage-pro.sql no SQL Editor (limite recomendado: 500 MB)."
+      /413|payload too large|entity too large|maximum allowed size|file_size_limit|object exceeded/i.test(
+        raw,
+      )
+        ? `Arquivo excede o limite do bucket Supabase (${formatMaxUploadSize()}). Execute supabase/storage-pro.sql no SQL Editor. Detalhe: ${raw}`
         : raw;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }

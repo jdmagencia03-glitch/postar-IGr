@@ -1,5 +1,5 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
-import { BATCH_CREATE_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
+import { BATCH_CREATE_CHUNK_SIZE, MAX_UPLOAD_BYTES, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
 import { formatUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
@@ -174,6 +174,7 @@ export async function uploadBatchFile(params: {
             error_message: formatUploadErrorMessage(
               error instanceof Error ? error.message : "Erro no upload",
               file.size,
+              MAX_UPLOAD_BYTES,
             ),
           }),
         });

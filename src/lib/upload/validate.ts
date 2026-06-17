@@ -93,6 +93,7 @@ export function formatBytes(bytes: number) {
 }
 
 export function formatSpeed(bytesPerSecond: number) {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "—";
   return `${formatBytes(bytesPerSecond)}/s`;
 }
 

@@ -67,18 +67,6 @@ export function UploadBatchManager({
     onUploadingChange?.(uploading);
   }, [uploading, onUploadingChange]);
 
-  useEffect(() => {
-    if (!uploading) return;
-
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "Seu upload ainda está em andamento. Tem certeza que deseja sair?";
-    };
-
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [uploading]);
-
   async function runUploadQueue(
     files: File[],
     currentBatch: UploadBatch,
