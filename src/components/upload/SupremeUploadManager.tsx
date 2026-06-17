@@ -30,7 +30,6 @@ import {
   type InvalidFile,
 } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
-import { formatUploadErrorMessage } from "@/lib/upload/errors";
 
 type UploadLimits = {
   max_upload_mb: number;
@@ -74,9 +73,7 @@ const FileStatusRow = memo(function FileStatusRow({
       {file.status === "failed" && (
         <div className="mt-2 space-y-1">
           {file.error_message && (
-            <p className="text-xs text-ig-danger">
-              {formatUploadErrorMessage(file.error_message, Number(file.file_size))}
-            </p>
+            <p className="text-xs text-ig-danger">{file.error_message}</p>
           )}
           <button
             type="button"

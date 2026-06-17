@@ -124,6 +124,21 @@ export async function uploadBatchFile(params: {
         throw new Error("Resposta de upload inválida (TUS não configurado)");
       }
 
+      const shouldResume =
+        record.status !== "failed" && Number(record.bytes_uploaded ?? 0) > 0;
+
+      if (record.status === "failed") {
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "pending",
+            bytes_uploaded: 0,
+            error_message: null,
+          }),
+        }).catch(() => undefined);
+      }
+
       let lastDbSync = 0;
       const { promise } = uploadFileWithTus({
         file,
@@ -131,6 +146,7 @@ export async function uploadBatchFile(params: {
         batchId: batch.id,
         recordId: record.id,
         signal,
+        resumePrevious: shouldResume && attempt === 0,
         onProgress: (loaded, total) => {
           onProgress?.(loaded, total);
           if (loaded - lastDbSync >= UPLOAD_PROGRESS_DB_SYNC_BYTES || loaded === total) {

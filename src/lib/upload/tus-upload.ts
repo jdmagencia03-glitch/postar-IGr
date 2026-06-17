@@ -21,6 +21,8 @@ export function uploadFileWithTus(params: {
   recordId: string;
   onProgress?: (loaded: number, total: number) => void;
   signal?: AbortSignal;
+  /** Retoma chunk parcial salvo no navegador. Desligue após falha para reenviar do zero. */
+  resumePrevious?: boolean;
 }) {
   let uploadRef: tus.Upload | null = null;
   let abortedByUser = false;
@@ -42,8 +44,14 @@ export function uploadFileWithTus(params: {
         cacheControl: STORAGE_CACHE_CONTROL,
       },
       chunkSize: params.prepare.chunkSize || TUS_CHUNK_SIZE,
-      fingerprint: () =>
-        Promise.resolve(buildTusFingerprint(params.batchId, params.recordId, params.file)),
+      storeFingerprintForResuming: params.resumePrevious !== false,
+      fingerprint: () => {
+        const base = buildTusFingerprint(params.batchId, params.recordId, params.file);
+        if (params.resumePrevious === false) {
+          return Promise.resolve(`${base}:fresh:${Date.now()}`);
+        }
+        return Promise.resolve(base);
+      },
       onProgress: (bytesUploaded, bytesTotal) => {
         params.onProgress?.(bytesUploaded, bytesTotal);
       },
@@ -73,7 +81,7 @@ export function uploadFileWithTus(params: {
     upload
       .findPreviousUploads()
       .then((previousUploads) => {
-        if (previousUploads.length > 0) {
+        if (params.resumePrevious !== false && previousUploads.length > 0) {
           upload.resumeFromPreviousUpload(previousUploads[0]);
         }
         upload.start();
