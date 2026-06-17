@@ -11,8 +11,10 @@ import {
   fileStatusLabel,
   getCompletedUploadItems,
   refreshUploadBatch,
+  resetFailedUploadFile,
   setBatchPaused,
 } from "@/lib/upload/client";
+import { displayUploadErrorMessage } from "@/lib/upload/errors";
 import { UploadEngine, type UploadEngineProgress } from "@/lib/upload/engine";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import {
@@ -51,12 +53,20 @@ interface Props {
 const FileStatusRow = memo(function FileStatusRow({
   file,
   percent,
+  maxUploadBytes,
   onRetry,
 }: {
   file: UploadBatchFile;
   percent: number;
+  maxUploadBytes: number;
   onRetry: (file: UploadBatchFile) => void;
 }) {
+  const errorText = displayUploadErrorMessage(
+    file.error_message,
+    Number(file.file_size),
+    maxUploadBytes,
+  );
+
   return (
     <div className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -72,9 +82,7 @@ const FileStatusRow = memo(function FileStatusRow({
       )}
       {file.status === "failed" && (
         <div className="mt-2 space-y-1">
-          {file.error_message && (
-            <p className="text-xs text-ig-danger">{file.error_message}</p>
-          )}
+          {errorText && <p className="text-xs text-ig-danger">{errorText}</p>}
           <button
             type="button"
             onClick={() => onRetry(file)}
@@ -488,8 +496,25 @@ export function SupremeUploadManager({
     }
   }
 
-  function retryFile(record: UploadBatchFile) {
+  async function retryFile(record: UploadBatchFile) {
+    if (!batch) return;
+
     retryFileIdRef.current = record.id;
+    setMessage(`Preparando retry: ${record.filename}…`);
+
+    try {
+      const reset = await resetFailedUploadFile(batch, record.id);
+      syncBatch(reset);
+      setProgressMap((current) => {
+        const next = { ...current };
+        delete next[record.id];
+        return next;
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Erro ao resetar arquivo");
+      return;
+    }
+
     resumeInputRef.current?.click();
     setMessage(`Selecione novamente: ${record.filename}`);
   }
@@ -850,6 +875,7 @@ export function SupremeUploadManager({
                   key={file.id}
                   file={file}
                   percent={progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
+                  maxUploadBytes={maxUploadBytes}
                   onRetry={retryFile}
                 />
               ))}

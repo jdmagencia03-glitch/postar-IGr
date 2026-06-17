@@ -1,6 +1,6 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
-import { BATCH_CREATE_CHUNK_SIZE, MAX_UPLOAD_BYTES, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
-import { formatUploadErrorMessage } from "@/lib/upload/errors";
+import { BATCH_CREATE_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
+import { extractUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
 
@@ -88,7 +88,8 @@ export async function uploadBatchFile(params: {
   signal?: AbortSignal;
   onProgress?: (bytesUploaded: number, bytesTotal: number) => void;
 }) {
-  const { batch, record, file, onProgress, signal } = params;
+  const { batch, file, onProgress, signal } = params;
+  let record = params.record;
 
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
     if (signal?.aborted) {
@@ -128,15 +129,7 @@ export async function uploadBatchFile(params: {
         record.status !== "failed" && Number(record.bytes_uploaded ?? 0) > 0;
 
       if (record.status === "failed") {
-        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: "pending",
-            bytes_uploaded: 0,
-            error_message: null,
-          }),
-        }).catch(() => undefined);
+        record = { ...record, status: "pending", bytes_uploaded: 0, error_message: null };
       }
 
       let lastDbSync = 0;
@@ -182,16 +175,13 @@ export async function uploadBatchFile(params: {
     } catch (error) {
       if (signal?.aborted) throw error;
       if (attempt === RETRY_DELAYS.length - 1) {
+        const rawError = extractUploadErrorMessage(error);
         const failRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status: "failed",
-            error_message: formatUploadErrorMessage(
-              error instanceof Error ? error.message : "Erro no upload",
-              file.size,
-              MAX_UPLOAD_BYTES,
-            ),
+            error_message: rawError,
           }),
         });
         const failData = (await failRes.json()) as UploadFilePatchResult & { error?: unknown };
@@ -204,6 +194,26 @@ export async function uploadBatchFile(params: {
   }
 
   throw new Error("Falha no upload");
+}
+
+export async function resetFailedUploadFile(batch: UploadBatch, fileId: string) {
+  const res = await apiFetch(`/api/upload/batches/${batch.id}/files/${fileId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      status: "pending",
+      bytes_uploaded: 0,
+      error_message: null,
+      public_url: null,
+    }),
+  });
+
+  const data = (await res.json()) as UploadFilePatchResult & { error?: unknown };
+  if (!res.ok) {
+    throw new Error(String(data.error ?? "Falha ao resetar arquivo"));
+  }
+
+  return applyBatchFilePatch(batch, data);
 }
 
 export async function fetchActiveBatch() {
