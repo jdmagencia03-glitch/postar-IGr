@@ -75,14 +75,15 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .select("*, upload_files(*), instagram_accounts(ig_username)")
+    .select("*, instagram_accounts(ig_username)")
     .single();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ batch: data });
+  const refreshed = await getBatchForOwner(supabase, ownerId, id);
+  return NextResponse.json({ batch: refreshed ?? data });
 }
 
 export async function DELETE(

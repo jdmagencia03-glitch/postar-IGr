@@ -35,7 +35,11 @@ async function resolveUserIdFromRequest(request: NextRequest): Promise<string | 
   if (!token) return null;
 
   if (/^[a-f0-9]{64}$/i.test(token)) {
-    return lookupSessionToken(token);
+    try {
+      return await lookupSessionToken(token);
+    } catch {
+      return null;
+    }
   }
 
   return null;

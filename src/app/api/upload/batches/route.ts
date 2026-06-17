@@ -6,6 +6,7 @@ import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
   buildUploadFileRows,
   getActiveBatchForOwner,
+  getActiveBatchSummaryForOwner,
   insertUploadFiles,
 } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -54,14 +55,17 @@ const createSchema = z
     path: ["total_files"],
   });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const ownerId = await getSessionUserId();
   if (!ownerId) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
+  const summaryOnly = request.nextUrl.searchParams.get("summary") === "1";
   const supabase = createAdminClient();
-  const batch = await getActiveBatchForOwner(supabase, ownerId);
+  const batch = summaryOnly
+    ? await getActiveBatchSummaryForOwner(supabase, ownerId)
+    : await getActiveBatchForOwner(supabase, ownerId);
 
   return NextResponse.json({ batch });
 }

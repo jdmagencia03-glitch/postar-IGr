@@ -7,6 +7,21 @@ type TusLikeError = Error & {
   };
 };
 
+export function humanizeFetchError(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (
+      /failed to fetch|networkerror|network error|load failed|fetch failed|network request failed|err_internet_disconnected|aborted|timeout/i.test(
+        message,
+      )
+    ) {
+      return "Falha de conexão com o servidor. Verifique sua internet, aguarde alguns segundos e tente de novo.";
+    }
+    return message || "Erro de conexão ao contactar o servidor.";
+  }
+  return "Erro de conexão ao contactar o servidor.";
+}
+
 /** Extrai mensagem legível de erros TUS / fetch. */
 export function extractUploadErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -36,7 +51,7 @@ export function extractUploadErrorMessage(error: unknown): string {
     return responseMatch[1].replace(/,\s*request id.*$/i, "").trim();
   }
 
-  return message || "Erro desconhecido no upload";
+  return humanizeFetchError(error);
 }
 
 function isExplicitStorageSizeLimitError(message: string) {
@@ -83,7 +98,7 @@ export function formatUploadErrorMessage(
     return `Arquivo${sizeHint} excede o limite do Supabase Storage.${limitHint} Detalhe: ${trimmed}`;
   }
 
-  if (/network|failed to fetch|timeout|aborted|offline|connection/i.test(trimmed)) {
+  if (/network|failed to fetch|timeout|aborted|offline|connection|falha de conexão/i.test(trimmed)) {
     return "Falha de conexão — o sistema vai tentar de novo automaticamente. Se persistir, clique em Continuar upload.";
   }
 

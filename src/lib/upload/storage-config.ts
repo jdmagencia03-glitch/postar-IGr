@@ -16,7 +16,8 @@ export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 export const MAX_VIDEOS_PER_BATCH = readPositiveInt(process.env.MAX_VIDEOS_PER_BATCH, 10_000);
 
 /** Metadados por requisição ao criar lote (payload Vercel). */
-export const BATCH_CREATE_CHUNK_SIZE = readPositiveInt(process.env.UPLOAD_BATCH_CHUNK_SIZE, 800);
+/** Metadados por POST ao criar lote — valores altos estouram timeout na Vercel. */
+export const BATCH_CREATE_CHUNK_SIZE = readPositiveInt(process.env.UPLOAD_BATCH_CHUNK_SIZE, 200);
 
 /** Linhas inseridas por vez no Postgres ao registrar arquivos. */
 export const DB_INSERT_CHUNK_SIZE = readPositiveInt(process.env.UPLOAD_DB_CHUNK_SIZE, 500);

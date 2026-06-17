@@ -8,7 +8,7 @@ import {
 } from "@/contexts/UploadSessionProvider";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { fileStatusLabel, getCompletedUploadItems } from "@/lib/upload/client";
-import { displayUploadErrorMessage } from "@/lib/upload/errors";
+import { displayUploadErrorMessage, formatUploadErrorMessage } from "@/lib/upload/errors";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import { uploadSessionStore } from "@/lib/upload/session-store";
@@ -370,7 +370,7 @@ export function SupremeUploadManager({
         <p
           className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") ? "text-ig-danger" : "text-ig-text"}`}
         >
-          {session.message}
+          {formatUploadErrorMessage(session.message)}
         </p>
       )}
     </div>

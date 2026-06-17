@@ -79,7 +79,7 @@ export async function getBatchUploadFiles(supabase: SupabaseClient, batchId: str
   return files;
 }
 
-export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: string) {
+export async function getActiveBatchSummaryForOwner(supabase: SupabaseClient, ownerId: string) {
   const { data } = await supabase
     .from("upload_batches")
     .select("*, instagram_accounts(ig_username)")
@@ -91,8 +91,15 @@ export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: 
 
   if (!data) return null;
 
-  const upload_files = await getBatchUploadFiles(supabase, data.id);
-  return { ...(data as UploadBatch), upload_files };
+  return { ...(data as UploadBatch), upload_files: [] as UploadBatchFile[] };
+}
+
+export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: string) {
+  const summary = await getActiveBatchSummaryForOwner(supabase, ownerId);
+  if (!summary) return null;
+
+  const upload_files = await getBatchUploadFiles(supabase, summary.id);
+  return { ...summary, upload_files };
 }
 
 export async function getBatchForOwner(

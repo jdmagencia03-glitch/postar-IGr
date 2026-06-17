@@ -7,6 +7,21 @@
       "maxDuration": 120
     },
     "src/app/api/upload/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/upload/batches/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/upload/batches/[id]/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/upload/batches/[id]/files/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/upload/batches/[id]/files/[fileId]/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/upload/files/prepare/route.ts": {
       "maxDuration": 60
     }
   }

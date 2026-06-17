@@ -1,6 +1,6 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
 import { BATCH_CREATE_CHUNK_SIZE, TUS_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
-import { extractUploadErrorMessage } from "@/lib/upload/errors";
+import { extractUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
 
@@ -59,10 +59,15 @@ function serializeUploadFiles(files: Array<{ file: File; fingerprint: string }>)
 }
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const response = await fetch(input, {
-    ...init,
-    credentials: "include",
-  });
+  let response: Response;
+  try {
+    response = await fetch(input, {
+      ...init,
+      credentials: "include",
+    });
+  } catch (error) {
+    throw new Error(humanizeFetchError(error));
+  }
 
   if (response.status === 401) {
     window.location.href = "/login?next=/dashboard/bulk";
@@ -244,11 +249,17 @@ export async function resetAllFailedUploadFiles(batch: UploadBatch) {
   return next;
 }
 
-export async function fetchActiveBatch() {
-  const res = await apiFetch("/api/upload/batches", { cache: "no-store" });
+export async function fetchActiveBatch(options?: { summary?: boolean }) {
+  const url = options?.summary ? "/api/upload/batches?summary=1" : "/api/upload/batches";
+  const res = await apiFetch(url, { cache: "no-store" });
   const data = await res.json();
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao carregar lote"));
   return (data.batch as UploadBatch | null) ?? null;
+}
+
+export async function ensureBatchWithFiles(batch: UploadBatch) {
+  if (batch.upload_files && batch.upload_files.length > 0) return batch;
+  return refreshUploadBatch(batch.id);
 }
 
 export async function createUploadBatch(params: {

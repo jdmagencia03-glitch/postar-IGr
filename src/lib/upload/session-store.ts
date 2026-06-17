@@ -5,6 +5,7 @@ import {
   buildFileMapFromRecords,
   cancelUploadBatch,
   createUploadBatch,
+  ensureBatchWithFiles,
   fetchActiveBatch,
   matchFileToRecord,
   refreshUploadBatch,
@@ -12,6 +13,7 @@ import {
   resetFailedUploadFile,
   setBatchPaused,
 } from "@/lib/upload/client";
+import { formatUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
 import {
   clearManifestBatch,
   getManifestForBatch,
@@ -163,6 +165,13 @@ class UploadSessionStore {
     });
   };
 
+  private setUserMessage(error: unknown, fallback: string) {
+    this.message =
+      error instanceof Error
+        ? formatUploadErrorMessage(humanizeFetchError(error))
+        : formatUploadErrorMessage(fallback);
+  }
+
   async initialize() {
     if (this.initialized) return;
     this.initialized = true;
@@ -176,7 +185,7 @@ class UploadSessionStore {
     }
 
     try {
-      const active = await fetchActiveBatch();
+      const active = await fetchActiveBatch({ summary: true });
       this.batch = active;
       if (active?.upload_speed_mode) this.speedMode = active.upload_speed_mode;
       if (active?.paused) this.paused = true;
@@ -192,7 +201,7 @@ class UploadSessionStore {
         this.progressMap = initialProgress;
       }
     } catch (error) {
-      this.message = error instanceof Error ? error.message : "Erro ao carregar lote";
+      this.setUserMessage(error, "Erro ao carregar lote");
     } finally {
       this.initialLoading = false;
       this.emit();
@@ -259,6 +268,12 @@ class UploadSessionStore {
     fileMap: Map<string, File>,
     onlyFileIds?: string[],
   ) {
+    const batchWithFiles = await ensureBatchWithFiles(currentBatch);
+    if (batchWithFiles !== currentBatch) {
+      this.syncBatch(batchWithFiles);
+      currentBatch = batchWithFiles;
+    }
+
     this.engine?.stop();
     const engine = new UploadEngine(this.speedPresets[this.speedMode].fileConcurrency, {
       onProgress: this.scheduleProgressUpdate,
@@ -287,7 +302,7 @@ class UploadSessionStore {
         this.emit();
       },
       onError: (errorMessage) => {
-        this.message = errorMessage;
+        this.message = formatUploadErrorMessage(errorMessage);
         this.emit();
       },
     });
@@ -383,6 +398,9 @@ class UploadSessionStore {
             };
           }),
         );
+      } else if (currentBatch) {
+        currentBatch = await ensureBatchWithFiles(currentBatch);
+        this.syncBatch(currentBatch);
       }
 
       const fileMap = new Map<string, File>();
@@ -395,7 +413,7 @@ class UploadSessionStore {
 
       await this.startEngine(currentBatch, fileMap);
     } catch (error) {
-      this.message = error instanceof Error ? error.message : "Erro ao iniciar upload";
+      this.setUserMessage(error, "Erro ao iniciar upload");
       this.running = false;
       this.emit();
     }
