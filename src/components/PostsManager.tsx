@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ScheduledPostCard } from "@/components/ScheduledPostCard";
 import { fromDateTimeLocalInAppTz } from "@/lib/timezone";
@@ -9,6 +9,8 @@ import type { ScheduledPost } from "@/lib/types";
 
 interface Props {
   posts: ScheduledPost[];
+  /** Posts usados em “Selecionar todos” e ações em lote. Se omitido, usa `posts`. */
+  bulkScopePosts?: ScheduledPost[];
   enableBulk?: boolean;
   showPublishedMeta?: boolean;
   rich?: boolean;
@@ -29,7 +31,13 @@ function fromDateTimeLocalValue(value: string) {
   return fromDateTimeLocalInAppTz(value);
 }
 
-export function PostsManager({ posts, enableBulk = false, showPublishedMeta = false, rich = false }: Props) {
+export function PostsManager({
+  posts,
+  bulkScopePosts,
+  enableBulk = false,
+  showPublishedMeta = false,
+  rich = false,
+}: Props) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkDialog, setBulkDialog] = useState<BulkDialog>(null);
@@ -38,19 +46,28 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
   const [scheduleDraft, setScheduleDraft] = useState("");
   const [captionDraft, setCaptionDraft] = useState("");
 
+  const bulkPosts = bulkScopePosts ?? posts;
+
+  const selectableIds = useMemo(() => bulkPosts.map((post) => post.id), [bulkPosts]);
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const next = current.filter((id) => selectableIds.includes(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectableIds]);
+
   const selectionMode = enableBulk && selectedIds.length > 0;
 
-  const selectedPosts = useMemo(
-    () => posts.filter((post) => selectedIds.includes(post.id)),
-    [posts, selectedIds],
-  );
-
-  const allPostIds = useMemo(() => posts.map((post) => post.id), [posts]);
   const allSelected =
-    allPostIds.length > 0 && allPostIds.every((id) => selectedIds.includes(id));
+    selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
 
   function toggleSelectAll() {
-    setSelectedIds(allSelected ? [] : allPostIds);
+    setSelectedIds((current) => {
+      const everySelected =
+        selectableIds.length > 0 && selectableIds.every((id) => current.includes(id));
+      return everySelected ? [] : [...selectableIds];
+    });
   }
 
   function toggleSelect(postId: string, selected: boolean) {
@@ -61,10 +78,10 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
 
   const editablePostIds = useMemo(
     () =>
-      posts
+      bulkPosts
         .filter((post) => post.status === "pending" || post.status === "failed")
         .map((post) => post.id),
-    [posts],
+    [bulkPosts],
   );
 
   async function formatCaptions() {
@@ -154,13 +171,15 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
                 onClick={toggleSelectAll}
                 className="rounded-lg border border-ig-border bg-ig-elevated px-3 py-1.5 text-xs font-medium text-ig-text hover:bg-ig-secondary"
               >
-                {allSelected ? "Desmarcar todos" : "Selecionar todos"}
+                {allSelected ? "Desmarcar todos" : `Selecionar todos (${selectableIds.length})`}
               </button>
             </div>
             <p className="text-xs text-ig-muted">
               {selectedIds.length
-                ? `${selectedIds.length} selecionado(s)`
-                : "Marque os cards abaixo para agir em lote"}
+                ? `${selectedIds.length} de ${selectableIds.length} selecionado(s)`
+                : bulkScopePosts && bulkScopePosts.length > posts.length
+                  ? `${posts.length} visíveis · ${selectableIds.length} no total — marque ou use Selecionar todos`
+                  : "Marque os cards abaixo para agir em lote"}
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -248,7 +267,7 @@ export function PostsManager({ posts, enableBulk = false, showPublishedMeta = fa
           <div className="relative w-full max-w-md rounded-2xl border border-ig-border bg-ig-elevated p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-ig-text">Excluir posts selecionados?</h3>
             <p className="mt-2 text-sm text-ig-muted">
-              {selectedPosts.length} post(s) serão removidos da fila. Posts publicados serão ignorados.
+              {selectedIds.length} post(s) serão removidos da fila. Posts publicados serão ignorados.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" className="rounded-lg border border-ig-border px-4 py-2 text-sm" onClick={() => setBulkDialog(null)}>

@@ -113,9 +113,9 @@ export default async function DashboardPage({
       </div>
 
       <div className="ig-panel overflow-hidden">
-        <PostsManager posts={posts} enableBulk />
+        <PostsManager posts={posts} bulkScopePosts={allPosts} enableBulk />
 
-        {!posts.length && (
+        {!allPosts.length && (
           <div className="border-t border-ig-border px-6 py-12 text-center text-ig-muted">
             Nenhum post agendado ainda.{" "}
             <a href="/dashboard/bulk" className="text-ig-primary hover:underline">
