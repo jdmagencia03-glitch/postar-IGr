@@ -54,6 +54,21 @@ export async function POST(
   }
 
   await refreshBatchCounters(supabase, id);
+
+  const batchAfterMark = await getBatchForOwner(supabase, ownerId, id);
+  const remainingToSchedule =
+    batchAfterMark?.upload_files?.filter(
+      (file) => file.status === "completed" && file.public_url && !file.removed,
+    ).length ?? 0;
+
+  await supabase
+    .from("upload_batches")
+    .update({
+      status: remainingToSchedule > 0 ? "ready" : "scheduled",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
   const updatedBatch = await getBatchForOwner(supabase, ownerId, id);
 
   return NextResponse.json({ batch: updatedBatch, marked: fileIds.length });

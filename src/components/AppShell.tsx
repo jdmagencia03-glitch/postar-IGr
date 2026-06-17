@@ -10,6 +10,7 @@ import {
   List,
   LogOut,
   Menu,
+  MessageSquare,
   Music2,
   PenSquare,
   Search,
@@ -20,11 +21,13 @@ import {
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 import { BrandLogo } from "@/components/BrandLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { UploadMainPadding } from "@/components/upload/UploadMainPadding";
 import { APP_NAME } from "@/lib/brand";
 
 const links = [
   { href: "/dashboard", label: "Início", icon: LayoutGrid, exact: true },
   { href: "/dashboard/bulk", label: "Agendar posts", icon: Upload },
+  { href: "/dashboard/comment-dm", label: "Automação DM", icon: MessageSquare },
   { href: "/dashboard/tiktok", label: "TikTok", icon: Music2 },
   { href: "/dashboard/ai", label: "Assistente de conteúdo", icon: Brain },
   { href: "/dashboard/accounts", label: "Contas", icon: Users },
@@ -147,7 +150,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-4 pb-8 pt-2 lg:px-6">{children}</main>
+        <main className="flex-1 overflow-y-auto px-4 pb-8 pt-2 lg:px-6">
+          <UploadMainPadding>{children}</UploadMainPadding>
+        </main>
       </div>
     </div>
   );

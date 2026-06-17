@@ -1,7 +1,11 @@
 -- Otimizações de storage para Supabase Pro
 -- Execute no SQL Editor após ativar o plano Pro
+--
+-- IMPORTANTE: além deste SQL, suba o limite GLOBAL no Dashboard:
+-- Storage → Settings → Global file size limit → 500 MB (524288000 bytes)
+-- O global tem precedência sobre o bucket; sem isso, arquivos > 50 MB retornam 413.
 
--- 500 MB por arquivo (ajuste conforme necessidade; Pro suporta até 500 GB)
+-- 500 MB por arquivo no bucket (ajuste conforme necessidade; Pro suporta até 500 GB)
 update storage.buckets
 set
   file_size_limit = 524288000,

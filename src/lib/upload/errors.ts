@@ -73,6 +73,10 @@ export function formatUploadErrorMessage(
     return `Arquivo (${formatBytes(fileSize)}) excede o limite (${formatBytes(maxBytes)}).`;
   }
 
+  if (withinKnownLimit && isExplicitStorageSizeLimitError(trimmed)) {
+    return `Arquivo (${formatBytes(fileSize!)}) foi rejeitado pelo Supabase (${trimmed}). O bucket aceita até ${formatBytes(maxBytes!)}, mas o limite global do projeto provavelmente ainda está em 50 MB. No Supabase: Storage → Settings → Global file size limit → 500 MB. Depois clique em Tentar novamente.`;
+  }
+
   if (isExplicitStorageSizeLimitError(trimmed) && !withinKnownLimit) {
     const sizeHint = fileSize ? ` (${formatBytes(fileSize)})` : "";
     const limitHint = hasKnownLimit ? ` Limite do bucket: ${formatBytes(maxBytes)}.` : "";
@@ -80,7 +84,7 @@ export function formatUploadErrorMessage(
   }
 
   if (/network|failed to fetch|timeout|aborted|offline/i.test(trimmed)) {
-    return "Falha de conexão durante o envio. Use Continuar upload para retomar.";
+    return "Falha de conexão durante o envio. Clique em Escolher vídeos para retomar.";
   }
 
   if (/unauthorized|403|401|signature|token|jwt|expired/i.test(trimmed)) {

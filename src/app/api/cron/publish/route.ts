@@ -16,12 +16,14 @@ import { decryptPageAccessToken } from "@/lib/security/tokens";
 import { getCronSecret } from "@/lib/security/secrets";
 import { logSecurityEvent } from "@/lib/security/audit";
 import { cleanupPublishedMedia } from "@/lib/storage/cleanup";
+import { pickPostsForCronRun } from "@/lib/publish/queue";
 import type { TikTokAccount } from "@/lib/types";
 
 export const maxDuration = 300;
 
 const STALE_PROCESSING_MS = 15 * 60_000;
 const POSTS_PER_RUN = 10;
+const POSTS_FETCH_LIMIT = 50;
 
 type PublishResult = {
   containerId?: string;
@@ -50,15 +52,16 @@ export async function GET(request: NextRequest) {
     .lte("scheduled_at", now)
     .is("media_id", null)
     .order("scheduled_at", { ascending: true })
-    .limit(POSTS_PER_RUN);
+    .limit(POSTS_FETCH_LIMIT);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const postsToProcess = pickPostsForCronRun(posts ?? [], POSTS_PER_RUN);
   const results: Array<{ id: string; status: string; error?: string; skipped?: boolean }> = [];
 
-  for (const post of posts ?? []) {
+  for (const post of postsToProcess) {
     const platform = post.platform ?? "instagram";
 
     if (post.media_id) {

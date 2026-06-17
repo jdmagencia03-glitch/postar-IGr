@@ -101,7 +101,28 @@ export function resolveCustomScheduleOptions(options: CustomScheduleOptions): Cu
     parseTimeSlot(DEFAULT_CUSTOM_END_TIME);
 
   if (!start || !end) {
-    return { postsPerDay, timeSlots: providedSlots, startTime, endTime };
+    if (providedSlots.length >= postsPerDay) {
+      return {
+        postsPerDay,
+        timeSlots: providedSlots.slice(0, postsPerDay),
+        startTime,
+        endTime,
+      };
+    }
+
+    const fallbackStart = providedSlots[0] ?? parseTimeSlot(DEFAULT_CUSTOM_START_TIME);
+    const fallbackEnd =
+      providedSlots[providedSlots.length - 1] ?? parseTimeSlot(DEFAULT_CUSTOM_END_TIME);
+    if (!fallbackStart || !fallbackEnd) {
+      return { postsPerDay, timeSlots: providedSlots, startTime, endTime };
+    }
+
+    return {
+      postsPerDay,
+      timeSlots: buildEvenTimeSlotsBetween(fallbackStart, fallbackEnd, postsPerDay),
+      startTime: startTime ?? formatTimeSlot(fallbackStart.hour, fallbackStart.minute),
+      endTime: endTime ?? formatTimeSlot(fallbackEnd.hour, fallbackEnd.minute),
+    };
   }
 
   return {
@@ -188,8 +209,9 @@ export function generateCustomSchedule(
   for (let index = 0; index < count; index++) {
     const dayIndex = Math.floor(index / postsPerDay);
     const slotInDay = index % postsPerDay;
-    const { hour, minute } = timeSlots[slotInDay % timeSlots.length];
-    schedule.push(atHourOnDayOffsetInAppTz(now, anchorDay + dayIndex, hour, minute));
+    const slot = timeSlots[slotInDay];
+    if (!slot) break;
+    schedule.push(atHourOnDayOffsetInAppTz(now, anchorDay + dayIndex, slot.hour, slot.minute));
   }
 
   return { schedule, postsPerDay };

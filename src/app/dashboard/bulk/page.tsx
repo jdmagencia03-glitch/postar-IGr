@@ -1,7 +1,5 @@
 import { redirect } from "next/navigation";
 import { BulkUploadForm } from "@/components/BulkUploadForm";
-import { UploadGlobalBar } from "@/components/upload/UploadGlobalBar";
-import { UploadProvider } from "@/contexts/UploadContext";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -47,8 +45,7 @@ export default async function BulkPage({
   }
 
   return (
-    <UploadProvider>
-      <div className="mx-auto max-w-3xl pb-24">
+    <div className="mx-auto max-w-3xl pb-8">
         <header className="ig-page-header">
           <h1>{platform === "tiktok" ? "Agendar no TikTok" : "Agendar posts"}</h1>
           <p>
@@ -65,7 +62,5 @@ export default async function BulkPage({
           defaultAccountId={defaultAccountId}
         />
       </div>
-      <UploadGlobalBar />
-    </UploadProvider>
   );
 }

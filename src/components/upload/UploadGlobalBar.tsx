@@ -1,33 +1,203 @@
 "use client";
 
-import { memo } from "react";
-import { useOptionalUploadContext, useUploadProgress } from "@/contexts/UploadContext";
+import { memo, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Loader2,
+  Pause,
+  Play,
+  Upload,
+} from "lucide-react";
+import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
+import { deriveUploadSessionView } from "@/lib/upload/session-derived";
+import { uploadSessionStore } from "@/lib/upload/session-store";
+import { fileStatusLabel } from "@/lib/upload/client";
+import { displayUploadErrorMessage } from "@/lib/upload/errors";
+import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
+import { getSpeedPresets } from "@/lib/upload/storage-config";
+import type { UploadBatchFile } from "@/lib/types";
 
-export const UploadGlobalBar = memo(function UploadGlobalBar() {
-  const context = useOptionalUploadContext();
-  const progress = useUploadProgress();
+function statusBadge(label: string) {
+  switch (label) {
+    case "enviando":
+      return "bg-ig-primary/15 text-ig-primary";
+    case "concluído":
+      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+    case "erro":
+      return "bg-ig-danger/15 text-ig-danger";
+    default:
+      return "bg-ig-secondary text-ig-muted";
+  }
+}
 
-  if (!context?.isActive || !progress) return null;
+function statusText(label: string) {
+  switch (label) {
+    case "enviando":
+      return "Enviando";
+    case "concluído":
+      return "Concluído";
+    case "erro":
+      return "Com erro";
+    default:
+      return "Aguardando";
+  }
+}
 
-  const { batchNumber } = context;
+const QueueRow = memo(function QueueRow({
+  file,
+  percent,
+  maxUploadBytes,
+}: {
+  file: UploadBatchFile;
+  percent: number;
+  maxUploadBytes: number;
+}) {
+  const errorText = displayUploadErrorMessage(
+    file.error_message,
+    Number(file.file_size),
+    maxUploadBytes,
+  );
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-ig-border bg-ig-elevated/95 px-4 py-3 backdrop-blur">
-      <div className="mx-auto max-w-6xl">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-ig-text">
-            Upload em andamento{batchNumber ? ` · Lote #${batchNumber}` : ""}
-          </p>
-          <p className="text-xs text-ig-muted">
-            {progress.completed}/{progress.total} vídeos · {progress.overallPercent}%
-          </p>
-          <div className="mt-2 h-1.5 max-w-md overflow-hidden rounded-full bg-ig-secondary">
+    <div className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-ig-text">{file.filename}</span>
+        <span className="shrink-0 text-ig-muted">{fileStatusLabel(file.status)}</span>
+      </div>
+      {file.status === "uploading" && (
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-ig-elevated">
+          <div className="h-full bg-ig-primary" style={{ width: `${percent || 5}%` }} />
+        </div>
+      )}
+      {file.status === "failed" && errorText && (
+        <p className="mt-1 text-ig-danger">{errorText}</p>
+      )}
+    </div>
+  );
+});
+
+export const UploadGlobalBar = memo(function UploadGlobalBar() {
+  const session = useOptionalUploadSession();
+  const [expanded, setExpanded] = useState(false);
+
+  const view = useMemo(() => {
+    if (!session) return null;
+    return deriveUploadSessionView({
+      batch: session.batch,
+      progress: session.progress,
+      progressMap: session.progressMap,
+      running: session.running,
+      paused: session.paused,
+      resuming: session.resuming,
+    });
+  }, [session]);
+
+  if (!session || !view?.showGlobalBar || !session.batch) return null;
+
+  const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
+  const speedPresets = getSpeedPresets(session.uploadLimits?.concurrency);
+  const username = session.batch.instagram_accounts?.ig_username ?? "conta";
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-3 sm:p-4">
+      <div className="pointer-events-auto w-full max-w-2xl rounded-2xl border border-ig-border bg-ig-elevated/95 shadow-lg backdrop-blur-md">
+        <div className="px-4 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-ig-text">
+                  Upload em andamento · Lote #{session.batch.batch_number}
+                </p>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusBadge(view.statusLabel)}`}
+                >
+                  {statusText(view.statusLabel)}
+                </span>
+              </div>
+              <p className="mt-1 truncate text-xs text-ig-muted">
+                {view.currentUploadName
+                  ? `Enviando: ${view.currentUploadName}`
+                  : `@${username} · ${speedPresets[session.speedMode].label}`}
+              </p>
+              <p className="mt-1 text-xs text-ig-muted">
+                {view.completedCount} enviados · {view.remainingCount} faltando · {view.overallPercent}%
+                {view.failedCount > 0 ? ` · ${view.failedCount} erro(s)` : ""}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1.5">
+              {session.running && (
+                <button
+                  type="button"
+                  className="rounded-lg border border-ig-border px-2.5 py-1.5 text-xs text-ig-text hover:bg-ig-secondary"
+                  onClick={() => void uploadSessionStore.togglePause()}
+                >
+                  <Pause size={14} />
+                </button>
+              )}
+              {view.canContinue && !session.running && (
+                <button
+                  type="button"
+                  className="rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
+                  onClick={() => uploadSessionStore.openChooseVideos()}
+                >
+                  <Play size={14} />
+                </button>
+              )}
+              <Link
+                href="/dashboard/bulk"
+                className="inline-flex items-center gap-1 rounded-lg border border-ig-border px-2.5 py-1.5 text-xs text-ig-text hover:bg-ig-secondary"
+              >
+                <ExternalLink size={12} />
+                Ver upload
+              </Link>
+              <button
+                type="button"
+                aria-expanded={expanded}
+                className="rounded-lg border border-ig-border px-2.5 py-1.5 text-xs text-ig-muted hover:bg-ig-secondary"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ig-secondary">
             <div
               className="h-full rounded-full bg-ig-primary transition-none"
-              style={{ width: `${progress.overallPercent}%` }}
+              style={{ width: `${view.overallPercent}%` }}
             />
           </div>
+
+          {session.progress && session.running && (
+            <p className="mt-2 text-[11px] text-ig-muted">
+              {formatSpeed(session.progress.speedBps)} · restam {formatEta(session.progress.etaSeconds)} ·{" "}
+              {formatBytes(session.progress.bytesUploaded)} / {formatBytes(session.progress.bytesTotal)}
+            </p>
+          )}
         </div>
+
+        {expanded && (
+          <div className="max-h-56 overflow-y-auto border-t border-ig-border px-4 py-3">
+            <p className="mb-2 text-xs font-medium text-ig-text">Fila de upload</p>
+            <div className="space-y-1.5">
+              {view.listFiles.slice(0, 30).map((file) => (
+                <QueueRow
+                  key={file.id}
+                  file={file}
+                  percent={session.progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
+                  maxUploadBytes={maxUploadBytes}
+                />
+              ))}
+              {view.listFiles.length > 30 && (
+                <p className="text-[11px] text-ig-muted">… e mais {view.listFiles.length - 30} vídeo(s)</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

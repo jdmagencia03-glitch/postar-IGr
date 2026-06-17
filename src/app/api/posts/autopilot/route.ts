@@ -6,6 +6,7 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { z } from "zod";
 
 const autopilotSchema = z
@@ -106,23 +107,37 @@ export async function POST(request: NextRequest) {
       }));
     });
 
-    const { data, error } = await supabase.from("scheduled_posts").insert(rows).select();
+    const { accepted, skipped } = await filterDuplicateScheduleRows(supabase, rows);
+
+    if (!accepted.length) {
+      return NextResponse.json(
+        {
+          error:
+            "Todos os vídeos já estão na fila de publicação. Evite clicar em agendar duas vezes.",
+          skipped,
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data, error } = await supabase.from("scheduled_posts").insert(accepted).select();
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const scheduleDates = rows.map((row) => new Date(row.scheduled_at));
+    const scheduleDates = accepted.map((row) => new Date(row.scheduled_at));
 
     return NextResponse.json(
       {
         created: data?.length ?? 0,
+        skipped: skipped.length,
         accounts: validAccounts.length,
         videos: parsed.data.items.length,
         schedule_mode: scheduleMode,
         caption_source: "preview",
         schedule_summary: describeSmartSchedule(scheduleDates, scheduleMode === "today" ? "today" : "auto"),
-        schedule: rows.map((row) => row.scheduled_at),
+        schedule: accepted.map((row) => row.scheduled_at),
         posts: data,
       },
       { status: 201 },

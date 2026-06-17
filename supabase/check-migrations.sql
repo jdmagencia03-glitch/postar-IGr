@@ -201,6 +201,20 @@ with checks as (
       where table_schema = 'public'
         and table_name = 'scheduled_posts'
         and column_name = 'media_cleaned_at'
+    )),
+    ('comment-dm-automation.sql', 'tabela comment_dm_automations', exists(
+      select 1 from information_schema.tables
+      where table_schema = 'public' and table_name = 'comment_dm_automations'
+    )),
+    ('comment-dm-automation.sql', 'tabela comment_dm_events', exists(
+      select 1 from information_schema.tables
+      where table_schema = 'public' and table_name = 'comment_dm_events'
+    )),
+    ('comment-dm-automation.sql', 'unique comment_dm_events.comment_id', exists(
+      select 1 from pg_indexes
+      where schemaname = 'public'
+        and tablename = 'comment_dm_events'
+        and indexdef ilike '%unique%comment_id%'
     ))
   ) as t(script_file, check_name, ok)
 ),

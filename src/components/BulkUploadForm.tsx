@@ -514,6 +514,11 @@ export function BulkUploadForm({
   async function handleSchedule(partial = false) {
     if (!activeBatch || !selectedAccountId) return;
 
+    if (activeBatch.status === "scheduled" && !partial) {
+      setResult("Este lote já foi agendado. Inicie um novo upload para programar mais vídeos.");
+      return;
+    }
+
     const items = getCompletedUploadItems(activeBatch);
     if (!items.length) {
       setResult("Envie pelo menos um vídeo antes de agendar.");
@@ -554,7 +559,7 @@ export function BulkUploadForm({
         await markBatchFilesScheduled(
           activeBatch.id,
           items.flatMap((item) => item.media_urls),
-        ).catch(() => undefined);
+        );
       }
 
       const successMessage = partial

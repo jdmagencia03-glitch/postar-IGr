@@ -14,6 +14,7 @@ const PROTECTED_APIS = [
   "/api/ai",
   "/api/tiktok",
   "/api/health",
+  "/api/comment-dm",
 ];
 
 function isProtectedPath(pathname: string) {
@@ -122,5 +123,6 @@ export const config = {
     "/api/ai/:path*",
     "/api/tiktok/:path*",
     "/api/health/:path*",
+    "/api/comment-dm/:path*",
   ],
 };

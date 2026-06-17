@@ -1,44 +1,18 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Pause, Play, Upload, X } from "lucide-react";
-import { useOptionalUploadContext } from "@/contexts/UploadContext";
+import { memo, useEffect, useMemo } from "react";
+import { Loader2, Pause, Play, Upload } from "lucide-react";
 import {
-  buildFileMapFromRecords,
-  cancelUploadBatch,
-  createUploadBatch,
-  fetchActiveBatch,
-  fileStatusLabel,
-  getCompletedUploadItems,
-  refreshUploadBatch,
-  resetFailedUploadFile,
-  setBatchPaused,
-} from "@/lib/upload/client";
+  useUploadSession,
+  useUploadSessionStore,
+} from "@/contexts/UploadSessionProvider";
+import { deriveUploadSessionView } from "@/lib/upload/session-derived";
+import { fileStatusLabel, getCompletedUploadItems } from "@/lib/upload/client";
 import { displayUploadErrorMessage } from "@/lib/upload/errors";
-import { UploadEngine, type UploadEngineProgress } from "@/lib/upload/engine";
+import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
-import {
-  clearManifestBatch,
-  getManifestForBatch,
-  matchFilesToManifest,
-  saveManifestEntries,
-} from "@/lib/upload/manifest-store";
-import {
-  formatBytes,
-  formatEta,
-  formatSpeed,
-  validateFiles,
-  type DuplicateFile,
-  type InvalidFile,
-} from "@/lib/upload/validate";
+import { uploadSessionStore } from "@/lib/upload/session-store";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
-
-type UploadLimits = {
-  max_upload_mb: number;
-  bucket_limit_mb: number | null;
-  bucket_limit_label: string | null;
-  concurrency: { economy: number; normal: number; turbo: number };
-};
 
 interface Props {
   accountId: string;
@@ -105,469 +79,42 @@ export function SupremeUploadManager({
   onUploadingChange,
   onSchedulePartial,
 }: Props) {
-  const uploadContext = useOptionalUploadContext();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const resumeInputRef = useRef<HTMLInputElement>(null);
-  const engineRef = useRef<UploadEngine | null>(null);
-  const cancelledBatchIdsRef = useRef<Set<string>>(new Set());
-  const retryFileIdRef = useRef<string | null>(null);
-  const onBatchUpdateRef = useRef(onBatchUpdate);
-  const onUploadingChangeRef = useRef(onUploadingChange);
-  const uploadContextRef = useRef(uploadContext);
-  const progressFrameRef = useRef<number | null>(null);
-  const pendingProgressRef = useRef<UploadEngineProgress | null>(null);
+  const store = useUploadSessionStore();
+  const session = useUploadSession();
 
   useEffect(() => {
-    onBatchUpdateRef.current = onBatchUpdate;
-    onUploadingChangeRef.current = onUploadingChange;
-    uploadContextRef.current = uploadContext;
-  });
-
-  const [batch, setBatch] = useState<UploadBatch | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [speedMode, setSpeedMode] = useState<UploadSpeedMode>("turbo");
-  const [progress, setProgress] = useState<UploadEngineProgress | null>(null);
-  const [progressMap, setProgressMap] = useState<Record<string, number>>({});
-  const [message, setMessage] = useState<string | null>(null);
-  const [resuming, setResuming] = useState(false);
-  const [validationPreview, setValidationPreview] = useState<{
-    validCount: number;
-    invalid: InvalidFile[];
-    duplicates: DuplicateFile[];
-    pendingFiles: File[];
-  } | null>(null);
-  const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null);
-  const [limitsLoading, setLimitsLoading] = useState(true);
-
-  const maxUploadBytes = (uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
-  const speedPresets = getSpeedPresets(uploadLimits?.concurrency);
-  const maxUploadLabel =
-    uploadLimits?.max_upload_mb && uploadLimits.max_upload_mb >= 1024
-      ? `${uploadLimits.max_upload_mb / 1024}GB`
-      : `${uploadLimits?.max_upload_mb ?? 500}MB`;
+    store.configureSession({ accountId, platform, scheduleMode, customSchedule });
+  }, [store, accountId, platform, scheduleMode, customSchedule]);
 
   useEffect(() => {
-    let cancelled = false;
+    return store.registerBatchListener(onBatchUpdate ?? null);
+  }, [store, onBatchUpdate]);
 
-    fetch("/api/upload/limits", { credentials: "include" })
-      .then(async (res) => {
-        const data = (await res.json()) as UploadLimits;
-        if (!cancelled && res.ok && data.max_upload_mb) setUploadLimits(data);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLimitsLoading(false);
-      });
+  useEffect(() => {
+    onUploadingChange?.(session.running);
+  }, [session.running, onUploadingChange]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const syncBatch = useCallback((next: UploadBatch | null) => {
-    setBatch((prev) => {
-      if (next === null) return null;
-      if (!prev || prev.id !== next.id) return next;
-
-      const prevFiles = prev.upload_files ?? [];
-      const nextFiles = next.upload_files ?? [];
-      const filesEqual =
-        prevFiles.length === nextFiles.length &&
-        prevFiles.every((file) => {
-          const updated = nextFiles.find((item) => item.id === file.id);
-          return (
-            updated &&
-            updated.status === file.status &&
-            updated.bytes_uploaded === file.bytes_uploaded &&
-            updated.public_url === file.public_url
-          );
-        });
-
-      if (
-        filesEqual &&
-        prev.status === next.status &&
-        prev.completed_files === next.completed_files &&
-        prev.failed_files === next.failed_files &&
-        prev.total_files === next.total_files &&
-        prev.paused === next.paused
-      ) {
-        return prev;
-      }
-
-      return next;
-    });
-    onBatchUpdateRef.current?.(next);
-    uploadContextRef.current?.setBatchNumber(next?.batch_number ?? null);
-  }, []);
-
-  const flushProgress = useCallback(() => {
-    progressFrameRef.current = null;
-    const pending = pendingProgressRef.current;
-    if (!pending) return;
-    setProgress(pending);
-    uploadContextRef.current?.setProgress(pending);
-  }, []);
-
-  const scheduleProgressUpdate = useCallback(
-    (next: UploadEngineProgress) => {
-      pendingProgressRef.current = next;
-      if (progressFrameRef.current !== null) return;
-      progressFrameRef.current = requestAnimationFrame(flushProgress);
-    },
-    [flushProgress],
+  const view = useMemo(
+    () =>
+      deriveUploadSessionView({
+        batch: session.batch,
+        progress: session.progress,
+        progressMap: session.progressMap,
+        running: session.running,
+        paused: session.paused,
+      }),
+    [session.batch, session.progress, session.progressMap, session.running, session.paused],
   );
 
-  useEffect(() => {
-    let cancelled = false;
+  const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
+  const speedPresets = getSpeedPresets(session.uploadLimits?.concurrency);
+  const maxUploadLabel =
+    session.uploadLimits?.max_upload_mb && session.uploadLimits.max_upload_mb >= 1024
+      ? `${session.uploadLimits.max_upload_mb / 1024}GB`
+      : `${session.uploadLimits?.max_upload_mb ?? 500}MB`;
+  const username = session.batch?.instagram_accounts?.ig_username;
 
-    async function loadInitialBatch() {
-      setInitialLoading(true);
-      try {
-        const active = await fetchActiveBatch();
-        if (cancelled) return;
-
-        syncBatch(active);
-        if (active?.upload_speed_mode) setSpeedMode(active.upload_speed_mode);
-        if (active?.paused) setPaused(true);
-
-        const hasPending = (active?.upload_files ?? []).some(
-          (file) => !file.removed && file.status !== "completed",
-        );
-        if (active && active.status !== "ready" && hasPending) {
-          setPaused(true);
-        }
-
-        if (active?.upload_files?.length) {
-          const initialProgress: Record<string, number> = {};
-          for (const file of active.upload_files) {
-            const uploaded = Number(file.bytes_uploaded ?? 0);
-            const total = Number(file.file_size);
-            if (uploaded > 0 && total > 0 && file.status !== "completed") {
-              initialProgress[file.id] = Math.round((uploaded / total) * 100);
-            }
-          }
-          setProgressMap(initialProgress);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setMessage(error instanceof Error ? error.message : "Erro ao carregar lote");
-        }
-      } finally {
-        if (!cancelled) setInitialLoading(false);
-      }
-    }
-
-    loadInitialBatch();
-    return () => {
-      cancelled = true;
-      if (progressFrameRef.current !== null) {
-        cancelAnimationFrame(progressFrameRef.current);
-      }
-    };
-  }, [accountId, syncBatch]);
-
-  useEffect(() => {
-    onUploadingChangeRef.current?.(running);
-    uploadContextRef.current?.setIsActive(running || Boolean(batch && batch.status !== "ready"));
-  }, [running, batch]);
-
-  useEffect(() => {
-    if (!running || !engineRef.current) return;
-    engineRef.current.setConcurrency(speedPresets[speedMode].fileConcurrency);
-  }, [running, speedMode, speedPresets]);
-
-  async function startEngine(currentBatch: UploadBatch, fileMap: Map<string, File>, onlyFileIds?: string[]) {
-    engineRef.current?.stop();
-    const engine = new UploadEngine(speedPresets[speedMode].fileConcurrency, {
-      onProgress: scheduleProgressUpdate,
-      onBatchUpdate: (next) => {
-        if (cancelledBatchIdsRef.current.has(next.id)) return;
-        syncBatch(next);
-      },
-      onFileProgress: (fileId, loaded, total) => {
-        const percent = Math.round((loaded / total) * 100);
-        setProgressMap((current) => {
-          if (current[fileId] === percent) return current;
-          return { ...current, [fileId]: percent };
-        });
-      },
-      onComplete: async (latest) => {
-        if (cancelledBatchIdsRef.current.has(latest.id)) return;
-
-        const refreshed = await refreshUploadBatch(latest.id);
-        if (cancelledBatchIdsRef.current.has(latest.id) || refreshed.status === "cancelled") return;
-
-        syncBatch(refreshed);
-        setRunning(false);
-        setPaused(false);
-        uploadContextRef.current?.setIsActive(false);
-        if (refreshed.status === "ready") {
-          setMessage("Upload concluído com sucesso. A IA pode agendar suas publicações.");
-        }
-      },
-      onError: (errorMessage) => setMessage(errorMessage),
-    });
-
-    engineRef.current = engine;
-    setRunning(true);
-    setPaused(false);
-    uploadContextRef.current?.setIsActive(true);
-
-    await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
-    setRunning(false);
-  }
-
-  async function handleValidatedUpload(files: File[], skipDuplicates = true) {
-    if (!accountId) return;
-
-    const existingHashes = new Set(
-      (batch?.upload_files ?? []).map((file) => file.file_hash).filter(Boolean) as string[],
-    );
-    const validation = validateFiles(files, existingHashes, maxUploadBytes);
-
-    const toUpload = skipDuplicates ? validation.valid : [...validation.valid, ...validation.duplicates.map((d) => ({ file: d.file, fingerprint: d.fingerprint }))];
-
-    if (!toUpload.length) {
-      setValidationPreview({
-        validCount: 0,
-        invalid: validation.invalid,
-        duplicates: validation.duplicates,
-        pendingFiles: [],
-      });
-      return;
-    }
-
-    setValidationPreview(null);
-    setMessage(null);
-
-    try {
-      let currentBatch = batch;
-
-      if (!currentBatch) {
-        currentBatch = await createUploadBatch({
-          accountId,
-          platform,
-          scheduleMode,
-          customSchedule,
-          uploadSpeedMode: speedMode,
-          files: toUpload,
-        });
-        syncBatch(currentBatch);
-
-        await saveManifestEntries(
-          toUpload.map(({ file, fingerprint }) => {
-            const record = currentBatch!.upload_files!.find(
-              (item) => item.file_hash === fingerprint || item.filename === file.name,
-            )!;
-            return {
-              fileId: record.id,
-              batchId: currentBatch!.id,
-              name: file.name,
-              size: file.size,
-              lastModified: file.lastModified,
-              fingerprint,
-            };
-          }),
-        );
-      }
-
-      const fileMap = new Map<string, File>();
-      for (const { file, fingerprint } of toUpload) {
-        const record = currentBatch.upload_files?.find(
-          (item) => item.file_hash === fingerprint || item.filename === file.name,
-        );
-        if (record) fileMap.set(record.id, file);
-      }
-
-      await startEngine(currentBatch, fileMap);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao iniciar upload");
-      setRunning(false);
-    }
-  }
-
-  function handleFileSelection(selected: FileList | null) {
-    if (!selected?.length) return;
-    const files = Array.from(selected);
-    const validation = validateFiles(files, new Set(), maxUploadBytes);
-    setValidationPreview({
-      validCount: validation.valid.length,
-      invalid: validation.invalid,
-      duplicates: validation.duplicates,
-      pendingFiles: validation.valid.map((item) => item.file),
-    });
-  }
-
-  async function handleResume(selected: FileList | null) {
-    if (!selected?.length || !batch) return;
-
-    setResuming(true);
-    setMessage("Reconhecendo arquivos selecionados...");
-
-    try {
-      const files = Array.from(selected).filter((file) => file.type.startsWith("video/") || /\.(mp4|mov|webm)$/i.test(file.name));
-      if (!files.length) {
-        setMessage("Nenhum vídeo encontrado na seleção.");
-        return;
-      }
-
-      const manifest = await getManifestForBatch(batch.id);
-      const fromManifest = matchFilesToManifest(files, manifest);
-      const fromRecords = buildFileMapFromRecords(files, batch.upload_files ?? []);
-      const fileMap = new Map([...fromManifest, ...fromRecords]);
-
-      const pendingRecords = (batch.upload_files ?? []).filter(
-        (record) => !record.removed && record.status !== "completed",
-      );
-      const matchedPending = pendingRecords.filter((record) => fileMap.has(record.id)).length;
-      const alreadyDone = (batch.upload_files ?? []).filter((record) => record.status === "completed").length;
-
-      if (matchedPending === 0) {
-        setMessage(
-          `Nenhum vídeo pendente foi reconhecido. Selecione a mesma pasta/arquivos do lote (${alreadyDone} já enviados).`,
-        );
-        return;
-      }
-
-      setPaused(false);
-      await setBatchPaused(batch.id, false);
-
-      setMessage(
-        `${fileMap.size} arquivo(s) reconhecido(s) · ${alreadyDone} já enviados · retomando ${matchedPending} pendente(s). Os concluídos não serão reenviados.`,
-      );
-
-      const onlyFileId = retryFileIdRef.current;
-      retryFileIdRef.current = null;
-
-      if (onlyFileId && fileMap.has(onlyFileId)) {
-        await startEngine(batch, fileMap, [onlyFileId]);
-        return;
-      }
-
-      await startEngine(batch, fileMap);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao retomar upload");
-      setRunning(false);
-    } finally {
-      setResuming(false);
-    }
-  }
-
-  async function togglePause() {
-    if (!batch) return;
-
-    if (running && !paused) {
-      engineRef.current?.pause();
-      setPaused(true);
-      setRunning(false);
-      await setBatchPaused(batch.id, true);
-      setMessage("Upload pausado. Seu progresso foi salvo.");
-      return;
-    }
-
-    setPaused(false);
-    await setBatchPaused(batch.id, false);
-    resumeInputRef.current?.click();
-  }
-
-  async function handleCancelBatch() {
-    if (!batch) return;
-    if (!window.confirm("Cancelar este lote? Os vídeos já enviados serão descartados deste lote.")) {
-      return;
-    }
-
-    cancelledBatchIdsRef.current.add(batch.id);
-    engineRef.current?.stop();
-    try {
-      await cancelUploadBatch(batch.id);
-      await clearManifestBatch(batch.id);
-      syncBatch(null);
-      setProgress(null);
-      setProgressMap({});
-      setRunning(false);
-      setPaused(false);
-      uploadContextRef.current?.setIsActive(false);
-      uploadContextRef.current?.setProgress(null);
-      setMessage("Lote cancelado.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao cancelar lote");
-    }
-  }
-
-  async function retryFile(record: UploadBatchFile) {
-    if (!batch) return;
-
-    retryFileIdRef.current = record.id;
-    setMessage(`Preparando retry: ${record.filename}…`);
-
-    try {
-      const reset = await resetFailedUploadFile(batch, record.id);
-      syncBatch(reset);
-      setProgressMap((current) => {
-        const next = { ...current };
-        delete next[record.id];
-        return next;
-      });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao resetar arquivo");
-      return;
-    }
-
-    resumeInputRef.current?.click();
-    setMessage(`Selecione novamente: ${record.filename}`);
-  }
-
-  const files = batch?.upload_files?.filter((file) => !file.removed) ?? [];
-  const completedCount = progress?.completed ?? batch?.completed_files ?? 0;
-  const totalCount = progress?.total ?? batch?.total_files ?? files.length;
-  const failedCount = progress?.failed ?? batch?.failed_files ?? 0;
-  const pendingCount = files.filter((file) => file.status !== "completed").length;
-  const canContinue = Boolean(batch && batch.status !== "ready" && !running && pendingCount > 0);
-
-  function openContinueUpload() {
-    setMessage(
-      `Selecione a mesma pasta com os ${totalCount} vídeos. Os ${completedCount} já enviados não serão reenviados.`,
-    );
-    resumeInputRef.current?.click();
-  }
-  const username = batch?.instagram_accounts?.ig_username;
-  const overallPercent = progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
-
-  const visibleFiles = files
-    .slice()
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .filter(
-      (file) =>
-        file.status === "uploading" ||
-        file.status === "failed" ||
-        file.status === "pending" ||
-        (progressMap[file.id] ?? 0) > 0,
-    );
-  const completedOnlyFiles = files
-    .filter((file) => file.status === "completed")
-    .sort((a, b) => a.sort_order - b.sort_order);
-  const listFiles = useMemo(() => {
-    const sorted = [...files].sort((a, b) => a.sort_order - b.sort_order);
-    const inProgress = sorted.filter(
-      (file) =>
-        file.status === "uploading" ||
-        file.status === "failed" ||
-        file.status === "pending",
-    );
-    const recentCompleted = sorted.filter((file) => file.status === "completed").slice(-8);
-
-    if (batch?.status !== "ready") {
-      const seen = new Set(inProgress.map((file) => file.id));
-      return [...inProgress, ...recentCompleted.filter((file) => !seen.has(file.id))];
-    }
-
-    if (visibleFiles.length > 0) return visibleFiles;
-    return completedOnlyFiles.slice(-20);
-  }, [batch?.status, completedOnlyFiles, files, visibleFiles]);
-
-  if (initialLoading) {
+  if (session.initialLoading) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-6 text-sm text-ig-muted">
         <Loader2 size={16} className="animate-spin" />
@@ -578,54 +125,56 @@ export function SupremeUploadManager({
 
   return (
     <div className="space-y-5">
-      {uploadLimits?.bucket_limit_mb != null && uploadLimits.bucket_limit_mb <= 50 && (
+      {session.uploadLimits?.bucket_limit_mb != null && session.uploadLimits.bucket_limit_mb <= 50 && (
         <div className="rounded-xl border border-ig-danger/30 bg-ig-danger/10 px-4 py-3 text-sm text-ig-danger">
           O bucket Supabase ainda limita arquivos a{" "}
-          <strong>{uploadLimits.bucket_limit_label ?? "50 MB"}</strong>. Execute{" "}
-          <code className="rounded bg-ig-elevated px-1 text-xs">supabase/storage-pro.sql</code> no SQL
-          Editor para liberar até 500 MB por vídeo.
+          <strong>{session.uploadLimits.bucket_limit_label ?? "50 MB"}</strong>.
         </div>
       )}
 
-      {canContinue && (
-        <div className="rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-semibold text-ig-text">Upload pendente</p>
-              <p className="mt-1 text-sm text-ig-muted">
-                {completedCount} de {totalCount} vídeos enviados
-                {failedCount > 0 ? ` · ${failedCount} falha(s)` : ""}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
-              disabled={resuming}
-              onClick={openContinueUpload}
-            >
-              {resuming ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              Continuar upload
-            </button>
+      <p className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
+        Você pode navegar pelo site (Dashboard, Relatórios, Contas…) enquanto o upload continua.
+        Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
+      </p>
+
+      {view.canContinue && (
+        <div className="space-y-3 rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
+          <div>
+            <p className="font-semibold text-ig-text">
+              {view.uploadPaused ? "Upload pausado" : "Falta enviar alguns vídeos"}
+            </p>
+            <p className="mt-1 text-sm text-ig-muted">
+              {view.completedCount} de {view.totalCount} já enviados
+              {view.failedCount > 0 ? ` · ${view.failedCount} com erro` : ""}
+            </p>
           </div>
+          <button
+            type="button"
+            className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
+            disabled={session.resuming}
+            onClick={() => uploadSessionStore.openChooseVideos()}
+          >
+            {session.resuming ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+            Escolher vídeos
+          </button>
         </div>
       )}
 
-      {!batch && !validationPreview && (
+      {!session.batch && !session.validationPreview && (
         <div className="space-y-3">
           <div
             className="rounded-2xl border-2 border-dashed border-ig-border bg-ig-secondary px-4 py-12 text-center"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault();
-              handleFileSelection(event.dataTransfer.files);
+              uploadSessionStore.handleFileSelection(event.dataTransfer.files);
             }}
           >
             <p className="text-3xl">🚀</p>
             <p className="mt-3 text-lg font-semibold text-ig-text">Arraste seus vídeos aqui</p>
-            <p className="mt-2 text-sm text-ig-muted">ou</p>
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => uploadSessionStore.openFilePicker()}
               className="ig-btn-secondary mt-3 inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold"
             >
               <Upload size={16} />
@@ -633,97 +182,45 @@ export function SupremeUploadManager({
             </button>
             <p className="mt-4 text-xs text-ig-muted">MP4, MOV, WEBM · até {maxUploadLabel} por vídeo</p>
           </div>
-
-          <p className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
-            Upload em chunks de 6MB com retomada byte-a-byte. Se a internet cair ou você sair da página,
-            use <strong className="text-ig-text">Continuar upload</strong> e selecione a mesma pasta — nada
-            recomeça do zero.
-          </p>
-
-          <div>
-            <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
-            <div className="flex flex-wrap gap-2">
-              {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setSpeedMode(mode)}
-                  className={`rounded-full px-4 py-2 text-sm ${
-                    speedMode === mode
-                      ? "bg-ig-primary text-ig-on-primary"
-                      : "border border-ig-border bg-ig-secondary text-ig-text"
-                  }`}
-                >
-                  {speedPresets[mode].label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1 text-xs text-ig-muted">
-              {speedPresets[speedMode].description}
-              {running ? " · pode trocar durante o envio" : ""}
-            </p>
-          </div>
+          <SpeedModePicker
+            speedMode={session.speedMode}
+            speedPresets={speedPresets}
+            running={session.running}
+            onChange={(mode) => uploadSessionStore.setSpeedMode(mode)}
+          />
         </div>
       )}
 
-      {batch && batch.status !== "ready" && !validationPreview && (
-        <div>
-          <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
-          <div className="flex flex-wrap gap-2">
-            {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setSpeedMode(mode)}
-                className={`rounded-full px-4 py-2 text-sm ${
-                  speedMode === mode
-                    ? "bg-ig-primary text-ig-on-primary"
-                    : "border border-ig-border bg-ig-secondary text-ig-text"
-                }`}
-              >
-                {speedPresets[mode].label}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1 text-xs text-ig-muted">
-            {speedPresets[speedMode].description}
-            {running ? " · pode trocar durante o envio" : ""}
-          </p>
-        </div>
+      {session.batch && session.batch.status !== "ready" && !session.validationPreview && (
+        <SpeedModePicker
+          speedMode={session.speedMode}
+          speedPresets={speedPresets}
+          running={session.running}
+          onChange={(mode) => uploadSessionStore.setSpeedMode(mode)}
+        />
       )}
 
-      {validationPreview && (
+      {session.validationPreview && (
         <div className="rounded-2xl border border-ig-border bg-ig-elevated p-5">
           <p className="text-lg font-semibold text-ig-text">
-            {validationPreview.validCount + validationPreview.duplicates.length} arquivos selecionados
+            {session.validationPreview.validCount + session.validationPreview.duplicates.length} arquivos
+            selecionados
           </p>
-          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-            <p className="text-ig-text">{validationPreview.validCount} válidos</p>
-            <p className="text-ig-muted">{validationPreview.duplicates.length} duplicados</p>
-            <p className="text-ig-danger">{validationPreview.invalid.length} inválidos</p>
-          </div>
-          {validationPreview.invalid.length > 0 && (
-            <ul className="mt-3 max-h-24 space-y-1 overflow-y-auto text-xs text-ig-danger">
-              {validationPreview.invalid.slice(0, 8).map((item) => (
-                <li key={`${item.file.name}-${item.file.size}`}>
-                  {item.file.name}: {item.reason}
-                </li>
-              ))}
-            </ul>
-          )}
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               className="ig-btn px-4 py-2 text-sm"
-              disabled={!validationPreview.validCount}
-              onClick={() => handleValidatedUpload(validationPreview.pendingFiles, true)}
+              disabled={!session.validationPreview.validCount}
+              onClick={() =>
+                void uploadSessionStore.handleValidatedUpload(session.validationPreview!.pendingFiles, true)
+              }
             >
-              Enviar apenas válidos ({validationPreview.validCount})
+              Enviar apenas válidos ({session.validationPreview.validCount})
             </button>
             <button
               type="button"
               className="ig-btn-secondary px-4 py-2 text-sm"
-              onClick={() => setValidationPreview(null)}
+              onClick={() => uploadSessionStore.setValidationPreview(null)}
             >
               Cancelar
             </button>
@@ -731,152 +228,88 @@ export function SupremeUploadManager({
         </div>
       )}
 
-      {batch && (
+      {session.batch && (
         <>
           <div className="rounded-2xl border border-ig-info-border bg-ig-info-bg p-5">
-            {batch.status === "ready" ? (
+            <p className="text-lg font-semibold text-ig-text">
+              {session.batch.status === "ready"
+                ? "Upload concluído"
+                : session.running
+                  ? "Enviando vídeos"
+                  : view.uploadPaused
+                    ? "Upload pausado"
+                    : view.uploadInterrupted
+                      ? "Upload incompleto"
+                      : "Upload em andamento"}
+            </p>
+            <p className="mt-1 text-sm text-ig-muted">
+              {view.completedCount} de {view.totalCount} vídeos · Lote #{session.batch.batch_number} · @
+              {username}
+            </p>
+            {session.batch.status !== "ready" && (
               <>
-                <p className="text-lg font-semibold text-ig-text">Upload concluído com sucesso</p>
-                <p className="mt-1 text-sm text-ig-muted">
-                  {completedCount} vídeos enviados · Lote #{batch.batch_number} · @{username}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-lg font-semibold text-ig-text">
-                  {paused ? "Upload pausado" : "Upload em andamento"}
-                </p>
-                <p className="mt-1 text-sm text-ig-muted">
-                  {completedCount} de {totalCount} vídeos enviados
-                  {failedCount > 0 && ` · ${failedCount} falha(s)`}
-                </p>
-                <p className="mt-1 text-xs text-ig-muted">
-                  Nenhum vídeo enviado será perdido. Lote #{batch.batch_number} · @{username}
-                </p>
-                {paused && !running && (
-                  <p className="mt-2 rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-xs text-ig-muted">
-                    Para continuar, clique em <strong className="text-ig-text">Continuar</strong> e selecione a{" "}
-                    <strong className="text-ig-text">mesma pasta</strong> com os {totalCount} vídeos. Os{" "}
-                    {completedCount} já enviados não serão reenviados.
-                  </p>
-                )}
-              </>
-            )}
-
-            {batch.status !== "ready" && (
-              <div className="mt-4">
-                <div className="mb-2 flex items-center justify-between text-sm">
-                  <span className="text-ig-muted">Progresso geral</span>
-                  <span className="font-semibold text-ig-text">{overallPercent}%</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-ig-secondary">
                   <div
-                    className="h-full rounded-full bg-ig-primary transition-none"
-                    style={{ width: `${overallPercent}%` }}
+                    className="h-full rounded-full bg-ig-primary"
+                    style={{ width: `${view.overallPercent}%` }}
                   />
                 </div>
-                {progress && (
+                {session.progress && (
                   <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                     <p className="text-ig-muted">
-                      Velocidade: <span className="text-ig-text">{formatSpeed(progress.speedBps)}</span>
+                      Velocidade: <span className="text-ig-text">{formatSpeed(session.progress.speedBps)}</span>
                     </p>
                     <p className="text-ig-muted">
-                      Tempo restante: <span className="text-ig-text">{formatEta(progress.etaSeconds)}</span>
-                    </p>
-                    <p className="text-ig-muted">
-                      Enviados: <span className="text-ig-text">{formatBytes(progress.bytesUploaded)}</span>
-                    </p>
-                    <p className="text-ig-muted">
-                      Total: <span className="text-ig-text">{formatBytes(progress.bytesTotal)}</span>
+                      Restante: <span className="text-ig-text">{formatEta(session.progress.etaSeconds)}</span>
                     </p>
                   </div>
                 )}
-              </div>
+              </>
             )}
-
             <div className="mt-4 flex flex-wrap gap-2">
-              {canContinue && (
+              {session.running && (
                 <button
                   type="button"
-                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={resuming}
-                  onClick={openContinueUpload}
+                  className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+                  onClick={() => void uploadSessionStore.togglePause()}
                 >
-                  {resuming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                  Continuar upload
-                </button>
-              )}
-              {running && (
-                <button type="button" className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" onClick={togglePause}>
                   <Pause size={14} /> Pausar
                 </button>
               )}
-              {paused && running === false && canContinue && (
+              {view.uploadPaused && !session.running && (
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={resuming}
-                  onClick={openContinueUpload}
+                  onClick={() => uploadSessionStore.openChooseVideos()}
                 >
-                  {resuming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                  {resuming ? "Preparando..." : "Continuar upload"}
+                  <Play size={14} /> Retomar envio
                 </button>
               )}
-              {completedCount > 0 && onSchedulePartial && batch.status !== "ready" && (
+              {view.completedCount > 0 && onSchedulePartial && session.batch.status !== "ready" && (
                 <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
                   Agendar vídeos enviados
                 </button>
               )}
-              <button type="button" className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted" onClick={handleCancelBatch}>
+              <button
+                type="button"
+                className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted"
+                onClick={() => void uploadSessionStore.cancelBatch()}
+              >
                 Cancelar lote
               </button>
             </div>
           </div>
 
-          {(running || Boolean(progress?.activeFiles.length)) && (
-            <div className="min-h-[120px] rounded-xl border border-ig-border bg-ig-elevated p-4">
-              <p className="mb-2 text-sm font-medium text-ig-text">Enviando agora</p>
-              <div className="space-y-2">
-                {(progress?.activeFiles ?? []).map((file) => (
-                  <div key={file.id}>
-                    <div className="flex justify-between text-xs">
-                      <span className="truncate text-ig-text">{file.filename}</span>
-                      <span className="text-ig-muted">{file.percent}%</span>
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-ig-secondary">
-                      <div className="h-full rounded-full bg-ig-primary" style={{ width: `${file.percent}%` }} />
-                    </div>
-                  </div>
-                ))}
-                {!progress?.activeFiles.length && running && (
-                  <p className="text-xs text-ig-muted">Preparando próximo envio...</p>
-                )}
-              </div>
-              {progress && (
-                <p className="mt-2 text-xs text-ig-muted">
-                  {progress.waiting} aguardando · {progress.completed} concluídos
-                </p>
-              )}
-            </div>
-          )}
-
           <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
-            <p className="mb-3 text-sm font-medium text-ig-text">
-              Status por vídeo
-              {completedOnlyFiles.length > 0 && visibleFiles.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-ig-muted">
-                  · {completedOnlyFiles.length} enviados
-                </span>
-              )}
-            </p>
+            <p className="mb-3 text-sm font-medium text-ig-text">Status por vídeo</p>
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
-              {listFiles.map((file) => (
+              {view.listFiles.map((file) => (
                 <FileStatusRow
                   key={file.id}
                   file={file}
-                  percent={progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
+                  percent={session.progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
                   maxUploadBytes={maxUploadBytes}
-                  onRetry={retryFile}
+                  onRetry={(record) => uploadSessionStore.retryFile(record)}
                 />
               ))}
             </div>
@@ -884,34 +317,58 @@ export function SupremeUploadManager({
         </>
       )}
 
-      <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { handleFileSelection(e.target.files); e.target.value = ""; }} />
-      <input
-        ref={resumeInputRef}
-        type="file"
-        accept="video/*"
-        multiple
-        className="hidden"
-        {...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)}
-        onChange={(e) => {
-          handleResume(e.target.files);
-          e.target.value = "";
-        }}
-      />
-
-      {(running || resuming) && (
+      {(session.running || session.resuming) && (
         <div className="flex items-center gap-2 text-sm text-ig-primary">
           <Loader2 size={16} className="animate-spin" />
-          {resuming
-            ? "Reconhecendo arquivos e retomando upload..."
-            : `Enviando em paralelo (${speedPresets[speedMode].label})...`}
+          {session.resuming ? "Reconhecendo arquivos..." : `Enviando (${speedPresets[session.speedMode].label})…`}
         </div>
       )}
 
-      {message && (
-        <p className={`text-sm ${message.includes("Erro") || message.includes("Falha") ? "text-ig-danger" : "text-ig-text"}`}>
-          {message}
+      {session.message && (
+        <p
+          className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") ? "text-ig-danger" : "text-ig-text"}`}
+        >
+          {session.message}
         </p>
       )}
+    </div>
+  );
+}
+
+function SpeedModePicker({
+  speedMode,
+  speedPresets,
+  running,
+  onChange,
+}: {
+  speedMode: UploadSpeedMode;
+  speedPresets: ReturnType<typeof getSpeedPresets>;
+  running: boolean;
+  onChange: (mode: UploadSpeedMode) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onChange(mode)}
+            className={`rounded-full px-4 py-2 text-sm ${
+              speedMode === mode
+                ? "bg-ig-primary text-ig-on-primary"
+                : "border border-ig-border bg-ig-secondary text-ig-text"
+            }`}
+          >
+            {speedPresets[mode].label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-xs text-ig-muted">
+        {speedPresets[speedMode].description}
+        {running ? " · pode trocar durante o envio" : ""}
+      </p>
     </div>
   );
 }

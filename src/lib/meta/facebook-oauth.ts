@@ -18,8 +18,11 @@ function getRedirectUri() {
 const FACEBOOK_SCOPES = [
   "instagram_business_basic",
   "instagram_business_content_publish",
+  "instagram_business_manage_comments",
   "pages_show_list",
   "pages_read_engagement",
+  "pages_messaging",
+  "pages_manage_metadata",
   "business_management",
 ].join(",");
 
