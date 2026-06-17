@@ -29,30 +29,43 @@ export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 32 * 1024 * 1024;
 /** Cache CDN — paths são imutáveis (uuid por arquivo). */
 export const STORAGE_CACHE_CONTROL = "31536000";
 
+/** Navegadores limitam ~6 conexões HTTP simultâneas por domínio. */
+export const BROWSER_UPLOAD_CONCURRENCY_CAP = 6;
+
 export const UPLOAD_FILE_CONCURRENCY = {
-  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 4),
-  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 12),
-  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 24),
+  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 2),
+  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 4),
+  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 6),
 } as const;
 
 export type UploadConcurrencyConfig = typeof UPLOAD_FILE_CONCURRENCY;
 
+export function clampUploadConcurrency(requested: number) {
+  return Math.min(Math.max(1, requested), BROWSER_UPLOAD_CONCURRENCY_CAP);
+}
+
 export function getSpeedPresets(concurrency: UploadConcurrencyConfig = UPLOAD_FILE_CONCURRENCY) {
+  const capNote =
+    Math.max(concurrency.economy, concurrency.normal, concurrency.turbo) >
+    BROWSER_UPLOAD_CONCURRENCY_CAP
+      ? ` (máx. ${BROWSER_UPLOAD_CONCURRENCY_CAP} — limite do navegador)`
+      : "";
+
   return {
     economy: {
       label: "Econômico",
-      fileConcurrency: concurrency.economy,
-      description: `${concurrency.economy} vídeos simultâneos`,
+      fileConcurrency: clampUploadConcurrency(concurrency.economy),
+      description: `${clampUploadConcurrency(concurrency.economy)} vídeos simultâneos${capNote}`,
     },
     normal: {
       label: "Normal",
-      fileConcurrency: concurrency.normal,
-      description: `${concurrency.normal} vídeos simultâneos`,
+      fileConcurrency: clampUploadConcurrency(concurrency.normal),
+      description: `${clampUploadConcurrency(concurrency.normal)} vídeos simultâneos${capNote}`,
     },
     turbo: {
       label: "Turbo",
-      fileConcurrency: concurrency.turbo,
-      description: `${concurrency.turbo} vídeos simultâneos`,
+      fileConcurrency: clampUploadConcurrency(concurrency.turbo),
+      description: `${clampUploadConcurrency(concurrency.turbo)} vídeos simultâneos${capNote}`,
     },
   } as const;
 }

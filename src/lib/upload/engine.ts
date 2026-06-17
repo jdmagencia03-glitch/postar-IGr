@@ -1,7 +1,7 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import { uploadBatchFile } from "@/lib/upload/client";
 
-const RETRY_DELAYS = [3000, 10000, 30000];
+const RETRY_DELAYS = [5000, 15000, 45000, 90000];
 
 export interface UploadEngineProgress {
   completed: number;
@@ -187,12 +187,10 @@ export class UploadEngine {
       .filter((record) => !record.removed)
       .filter((record) => !onlyFileIds || onlyFileIds.includes(record.id))
       .filter((record) => record.status !== "completed")
+      .filter((record) => fileMap.has(record.id))
       .sort((a, b) => a.sort_order - b.sort_order);
 
-    this.bytesTotal = records.reduce((sum, record) => {
-      if (record.status === "completed") return sum;
-      return sum + Number(record.file_size);
-    }, 0);
+    this.bytesTotal = records.reduce((sum, record) => sum + Number(record.file_size), 0);
 
     this.speedSamples = [];
     this.liveLoadedBytes.clear();
@@ -219,6 +217,7 @@ export class UploadEngine {
       if (!file) return;
 
       fileProgress.set(record.id, { percent: 0, filename: record.filename });
+      let currentRecord = record;
 
       for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
         if (this.stopped) return;
@@ -230,31 +229,49 @@ export class UploadEngine {
         }
 
         const controller = new AbortController();
-        this.abortControllers.set(record.id, controller);
+        this.abortControllers.set(currentRecord.id, controller);
 
         try {
           batch = await uploadBatchFile({
             batch,
-            record,
+            record: currentRecord,
             file,
             signal: controller.signal,
             onProgress: (loaded, total) => {
-              fileProgress.set(record.id, {
+              fileProgress.set(currentRecord.id, {
                 percent: Math.round((loaded / total) * 100),
-                filename: record.filename,
+                filename: currentRecord.filename,
               });
 
-              this.liveLoadedBytes.set(record.id, loaded);
+              this.liveLoadedBytes.set(currentRecord.id, loaded);
               this.updateSpeed(this.sumLiveBytes(batch));
-              this.callbacks.onFileProgress?.(record.id, loaded, total);
+              this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
               this.emitProgress(batch, fileProgress);
             },
           });
 
-          fileProgress.set(record.id, { percent: 100, filename: record.filename });
-          this.liveLoadedBytes.set(record.id, Number(record.file_size));
+          const updatedRecord = batch.upload_files?.find((item) => item.id === currentRecord.id);
+
+          if (!updatedRecord || updatedRecord.status === "failed") {
+            if (updatedRecord) currentRecord = updatedRecord;
+            if (attempt < RETRY_DELAYS.length) continue;
+            this.callbacks.onBatchUpdate?.(batch);
+            this.emitProgress(batch, fileProgress);
+            this.callbacks.onError?.(
+              updatedRecord?.error_message ?? `Falha ao enviar ${currentRecord.filename}`,
+            );
+            return;
+          }
+
+          if (updatedRecord.status !== "completed") {
+            if (attempt < RETRY_DELAYS.length) continue;
+            return;
+          }
+
+          fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
+          this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
           finishedCount += 1;
-          if (finishedCount % 10 === 0 || finishedCount === records.length) {
+          if (finishedCount % 5 === 0 || finishedCount === records.length) {
             this.callbacks.onBatchUpdate?.(batch);
           }
           this.emitProgress(batch, fileProgress);
@@ -263,11 +280,11 @@ export class UploadEngine {
           if (controller.signal.aborted && this.paused) return;
           if (attempt === RETRY_DELAYS.length) {
             this.callbacks.onError?.(
-              error instanceof Error ? error.message : `Falha ao enviar ${record.filename}`,
+              error instanceof Error ? error.message : `Falha ao enviar ${currentRecord.filename}`,
             );
           }
         } finally {
-          this.abortControllers.delete(record.id);
+          this.abortControllers.delete(currentRecord.id);
         }
       }
     };

@@ -8,6 +8,7 @@ import {
   fetchActiveBatch,
   matchFileToRecord,
   refreshUploadBatch,
+  resetAllFailedUploadFiles,
   resetFailedUploadFile,
   setBatchPaused,
 } from "@/lib/upload/client";
@@ -48,7 +49,7 @@ class UploadSessionStore {
   running = false;
   paused = false;
   resuming = false;
-  speedMode: UploadSpeedMode = "turbo";
+  speedMode: UploadSpeedMode = "normal";
   progress: UploadEngineProgress | null = null;
   progressMap: Record<string, number> = {};
   message: string | null = null;
@@ -59,6 +60,8 @@ class UploadSessionStore {
   private progressFrame: number | null = null;
   private pendingProgress: UploadEngineProgress | null = null;
   private initialized = false;
+  private autoRetryPass = 0;
+  private static readonly MAX_AUTO_RETRY_PASSES = 10;
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -186,6 +189,48 @@ class UploadSessionStore {
     this.emit();
   }
 
+  private async tryAutoRetryAfterRun(batchId: string, fileMap: Map<string, File>) {
+    if (
+      this.paused ||
+      this.cancelledBatchIds.has(batchId) ||
+      this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES ||
+      fileMap.size === 0
+    ) {
+      return;
+    }
+
+    const refreshed = await refreshUploadBatch(batchId);
+    if (refreshed.status === "ready" || refreshed.status === "cancelled") {
+      this.autoRetryPass = 0;
+      return;
+    }
+
+    const failed =
+      refreshed.upload_files?.filter((file) => !file.removed && file.status === "failed") ?? [];
+    const pendingInMap =
+      refreshed.upload_files?.filter(
+        (file) =>
+          !file.removed &&
+          file.status !== "completed" &&
+          file.status !== "failed" &&
+          fileMap.has(file.id),
+      ) ?? [];
+
+    if (!failed.length && !pendingInMap.length) {
+      this.autoRetryPass = 0;
+      return;
+    }
+
+    this.autoRetryPass += 1;
+    let batch = failed.length ? await resetAllFailedUploadFiles(refreshed) : refreshed;
+
+    const retryCount = failed.length || pendingInMap.length;
+    this.message = `Retentando ${retryCount} vídeo(s) automaticamente (tentativa ${this.autoRetryPass})…`;
+    this.syncBatch(batch);
+    await new Promise((resolve) => setTimeout(resolve, 2000 * this.autoRetryPass));
+    await this.startEngine(batch, fileMap);
+  }
+
   setValidationPreview(preview: ValidationPreview | null) {
     this.validationPreview = preview;
     this.emit();
@@ -217,9 +262,8 @@ class UploadSessionStore {
         const refreshed = await refreshUploadBatch(latest.id);
         if (this.cancelledBatchIds.has(latest.id) || refreshed.status === "cancelled") return;
         this.syncBatch(refreshed);
-        this.running = false;
-        this.paused = false;
         if (refreshed.status === "ready") {
+          this.autoRetryPass = 0;
           this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
         }
         this.emit();
@@ -238,6 +282,7 @@ class UploadSessionStore {
 
     try {
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
+      await this.tryAutoRetryAfterRun(currentBatch.id, fileMap);
     } finally {
       this.running = false;
       this.emit();
@@ -506,8 +551,10 @@ class UploadSessionStore {
         this.emit();
         try {
           await setBatchPaused(this.batch.id, false);
-          const refreshed = await refreshUploadBatch(this.batch.id);
+          let refreshed = await refreshUploadBatch(this.batch.id);
+          refreshed = await resetAllFailedUploadFiles(refreshed);
           this.batch = refreshed;
+          this.autoRetryPass = 0;
           await this.startEngine(refreshed, this.lastFileMap);
         } catch (error) {
           this.message = error instanceof Error ? error.message : "Erro ao retomar upload";

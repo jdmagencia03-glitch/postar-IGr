@@ -4,7 +4,7 @@ import { extractUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
 
-const RETRY_DELAYS = [0, 3000, 10000, 30000];
+const RETRY_DELAYS = [0, 3000, 10000, 30000, 60000, 90000];
 
 export interface UploadFilePatchResult {
   file: UploadBatchFile;
@@ -232,6 +232,16 @@ export async function resetFailedUploadFile(batch: UploadBatch, fileId: string) 
   }
 
   return applyBatchFilePatch(batch, data);
+}
+
+export async function resetAllFailedUploadFiles(batch: UploadBatch) {
+  let next = batch;
+  const failed =
+    next.upload_files?.filter((file) => !file.removed && file.status === "failed") ?? [];
+  for (const file of failed) {
+    next = await resetFailedUploadFile(next, file.id);
+  }
+  return next;
 }
 
 export async function fetchActiveBatch() {

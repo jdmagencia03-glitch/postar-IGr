@@ -83,8 +83,8 @@ export function formatUploadErrorMessage(
     return `Arquivo${sizeHint} excede o limite do Supabase Storage.${limitHint} Detalhe: ${trimmed}`;
   }
 
-  if (/network|failed to fetch|timeout|aborted|offline/i.test(trimmed)) {
-    return "Falha de conexão durante o envio. Clique em Escolher vídeos para retomar.";
+  if (/network|failed to fetch|timeout|aborted|offline|connection/i.test(trimmed)) {
+    return "Falha de conexão — o sistema vai tentar de novo automaticamente. Se persistir, clique em Continuar upload.";
   }
 
   if (/unauthorized|403|401|signature|token|jwt|expired/i.test(trimmed)) {
