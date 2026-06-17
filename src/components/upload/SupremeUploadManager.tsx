@@ -88,6 +88,7 @@ export function SupremeUploadManager({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const engineRef = useRef<UploadEngine | null>(null);
+  const cancelledBatchIdsRef = useRef<Set<string>>(new Set());
   const retryFileIdRef = useRef<string | null>(null);
   const onBatchUpdateRef = useRef(onBatchUpdate);
   const onUploadingChangeRef = useRef(onUploadingChange);
@@ -233,7 +234,10 @@ export function SupremeUploadManager({
     engineRef.current?.stop();
     const engine = new UploadEngine(speedMode, {
       onProgress: scheduleProgressUpdate,
-      onBatchUpdate: syncBatch,
+      onBatchUpdate: (next) => {
+        if (cancelledBatchIdsRef.current.has(next.id)) return;
+        syncBatch(next);
+      },
       onFileProgress: (fileId, loaded, total) => {
         const percent = Math.round((loaded / total) * 100);
         setProgressMap((current) => {
@@ -242,7 +246,11 @@ export function SupremeUploadManager({
         });
       },
       onComplete: async (latest) => {
+        if (cancelledBatchIdsRef.current.has(latest.id)) return;
+
         const refreshed = await refreshUploadBatch(latest.id);
+        if (cancelledBatchIdsRef.current.has(latest.id) || refreshed.status === "cancelled") return;
+
         syncBatch(refreshed);
         setRunning(false);
         setPaused(false);
@@ -422,6 +430,7 @@ export function SupremeUploadManager({
       return;
     }
 
+    cancelledBatchIdsRef.current.add(batch.id);
     engineRef.current?.stop();
     try {
       await cancelUploadBatch(batch.id);

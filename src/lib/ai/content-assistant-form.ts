@@ -65,6 +65,7 @@ export interface ContentAssistantForm {
   pageName: string;
   selectedAccountId: string;
   niche: NicheOption;
+  customNiche: string;
   primaryGoal: GoalOption;
   tones: ToneOption[];
   emojiLevel: EmojiOption;
@@ -87,6 +88,14 @@ interface StoredMeta {
   profileImported: boolean;
   profileSummary: string;
   selectedAccountId?: string;
+  customNiche?: string;
+}
+
+export function resolveFormNiche(form: Pick<ContentAssistantForm, "niche" | "customNiche">) {
+  if (form.niche === "Outro") {
+    return form.customNiche.trim() || "Outro";
+  }
+  return form.niche;
 }
 
 const META_PREFIX = "__meta_v2__:";
@@ -95,6 +104,7 @@ export const DEFAULT_CONTENT_FORM: ContentAssistantForm = {
   pageName: "",
   selectedAccountId: "",
   niche: "Fitness",
+  customNiche: "",
   primaryGoal: "Ganhar seguidores",
   tones: ["Direto", "Motivacional"],
   emojiLevel: "Médio",
@@ -145,6 +155,7 @@ function encodeMeta(form: ContentAssistantForm, extra?: Partial<StoredMeta>): st
     profileImported: form.profileImported,
     profileSummary: form.profileSummary,
     selectedAccountId: form.selectedAccountId || undefined,
+    customNiche: form.customNiche.trim() || undefined,
     ...extra,
   };
   return `${META_PREFIX}${JSON.stringify(meta)}`;
@@ -182,13 +193,14 @@ export function playbookToContentForm(playbook: Partial<AiPlaybook> | null): Con
   if (!playbook) return { ...DEFAULT_CONTENT_FORM, examples: [...DEFAULT_CONTENT_FORM.examples] };
 
   const meta = decodeMeta(playbook.extra_knowledge);
-  const legacyNiche = NICHE_OPTIONS.find((n) =>
-    (playbook.niche ?? "").toLowerCase().includes(n.toLowerCase()),
-  );
+  const savedNiche = playbook.niche?.trim() ?? "";
+  const exactNiche = NICHE_OPTIONS.find((n) => n.toLowerCase() === savedNiche.toLowerCase());
+  const customNiche = meta?.customNiche?.trim() || (exactNiche ? "" : savedNiche);
 
   return {
     pageName: playbook.brand_name?.trim() || "",
-    niche: (legacyNiche as NicheOption) || "Fitness",
+    niche: exactNiche ?? (customNiche ? "Outro" : "Fitness"),
+    customNiche,
     primaryGoal:
       (GOAL_OPTIONS.find((g) => (playbook.cta_style ?? playbook.target_audience ?? "").includes(g)) as GoalOption) ||
       "Ganhar seguidores",
@@ -210,6 +222,7 @@ export function playbookToContentForm(playbook: Partial<AiPlaybook> | null): Con
 }
 
 export function contentFormToPlaybook(form: ContentAssistantForm) {
+  const niche = resolveFormNiche(form);
   const toneVoice = [
     `Tom: ${form.tones.join(", ")}.`,
     `Emojis: ${form.emojiLevel}.`,
@@ -231,11 +244,11 @@ export function contentFormToPlaybook(form: ContentAssistantForm) {
 
   return {
     brand_name: form.pageName.trim(),
-    niche: form.niche,
-    target_audience: `Página de ${form.niche}. Objetivo: ${form.primaryGoal}.`,
+    niche,
+    target_audience: `Página de ${niche}. Objetivo: ${form.primaryGoal}.`,
     tone_voice: toneVoice,
     viral_hooks: form.profileSummary.trim() || null,
-    hashtag_strategy: `Hashtags automáticas para nicho ${form.niche}: mix de alcance, nicho e marca.`,
+    hashtag_strategy: `Hashtags automáticas para nicho ${niche}: mix de alcance, nicho e marca.`,
     cta_style: ctaStyle,
     example_captions: joinExamples(form.examples),
     avoid_rules: avoidRules || "Evitar linguagem robótica e repetição.",
@@ -254,8 +267,8 @@ export function applyProfileImport(
     themes: string[];
   },
 ): ContentAssistantForm {
-  const nicheFromThemes = snapshot.themes[0] as NicheOption | undefined;
-  const nicheMatch = NICHE_OPTIONS.find((n) => nicheFromThemes?.includes(n)) ?? form.niche;
+  const nicheFromThemes = snapshot.themes[0]?.trim();
+  const nicheMatch = NICHE_OPTIONS.find((n) => nicheFromThemes?.toLowerCase() === n.toLowerCase());
 
   const examples = [...form.examples] as ContentAssistantForm["examples"];
   snapshot.captions.slice(0, 5).forEach((caption, i) => {
@@ -275,7 +288,8 @@ export function applyProfileImport(
   return {
     ...form,
     pageName: snapshot.username ? `@${snapshot.username}` : snapshot.name || form.pageName,
-    niche: (NICHE_OPTIONS.includes(nicheMatch as NicheOption) ? nicheMatch : form.niche) as NicheOption,
+    niche: nicheMatch ?? (nicheFromThemes ? "Outro" : form.niche),
+    customNiche: nicheMatch ? "" : nicheFromThemes || form.customNiche,
     examples,
     profileImported: true,
     profileSummary: summary,
@@ -283,6 +297,7 @@ export function applyProfileImport(
 }
 
 export function buildPreviewCaption(form: ContentAssistantForm, seed = 0) {
+  const niche = resolveFormNiche(form);
   const hooks = [
     "POV: você finalmente encontrou um conteúdo que cabe na sua rotina 💪",
     "Isso aqui muda o jogo se você quer evoluir de verdade.",
@@ -291,7 +306,7 @@ export function buildPreviewCaption(form: ContentAssistantForm, seed = 0) {
   const bodies = [
     "O problema não é falta de tempo.\n\nÉ falta de estratégia.",
     "Conteúdo direto, sem enrolação, feito pra quem quer resultado.",
-    `Página focada em ${form.niche.toLowerCase()} com linguagem ${form.tones.join(", ").toLowerCase()}.`,
+    `Página focada em ${niche.toLowerCase()} com linguagem ${form.tones.join(", ").toLowerCase()}.`,
   ];
   const ctas: Record<CtaPriorityOption, string> = {
     Comentários: "Comenta aqui o que você achou — quero saber sua opinião.",
@@ -304,7 +319,7 @@ export function buildPreviewCaption(form: ContentAssistantForm, seed = 0) {
   const emoji = form.emojiLevel === "Poucos" ? "" : form.emojiLevel === "Muitos" ? " 🔥💪✨" : " 💪";
   const hook = hooks[seed % hooks.length] + emoji;
   const body = bodies[seed % bodies.length];
-  const tags = `#${form.niche.toLowerCase().replace(/\s+/g, "")} #reels #fyp`;
+  const tags = `#${niche.toLowerCase().replace(/\s+/g, "")} #reels #fyp`;
 
   if (form.captionLength === "Curta") {
     return `${hook}\n\n${ctas[form.ctaPriority]}\n\n${tags}`;

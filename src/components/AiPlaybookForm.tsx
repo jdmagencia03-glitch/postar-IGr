@@ -310,6 +310,11 @@ export function AiPlaybookForm() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (form.niche === "Outro" && !form.customNiche.trim()) {
+      setMessage("Descreva seu nicho ao selecionar Outro.");
+      return;
+    }
+
     setSaving(true);
     setMessage(null);
 
@@ -340,6 +345,7 @@ export function AiPlaybookForm() {
     setForm((current) => ({
       ...current,
       ...template,
+      customNiche: template.niche === "Outro" ? current.customNiche : "",
       examples: (template.examples ?? current.examples) as ContentAssistantForm["examples"],
       tones: (template.tones ?? current.tones) as ContentAssistantForm["tones"],
     }));
@@ -558,7 +564,15 @@ export function AiPlaybookForm() {
           <label className="mb-1 block text-sm font-medium text-ig-text">Nicho</label>
           <select
             value={form.niche}
-            onChange={(e) => updateField("niche", e.target.value as NicheOption)}
+            onChange={(e) => {
+              const niche = e.target.value as NicheOption;
+              setForm((current) => ({
+                ...current,
+                niche,
+                customNiche: niche === "Outro" ? current.customNiche : "",
+              }));
+              setSaved(false);
+            }}
             className="ig-input w-full"
           >
             {NICHE_OPTIONS.map((niche) => (
@@ -567,6 +581,19 @@ export function AiPlaybookForm() {
               </option>
             ))}
           </select>
+          {form.niche === "Outro" && (
+            <div className="mt-2">
+              <label className="mb-1 block text-xs font-medium text-ig-muted">Qual é o seu nicho?</label>
+              <input
+                type="text"
+                value={form.customNiche}
+                onChange={(e) => updateField("customNiche", e.target.value)}
+                placeholder="Ex: Astrologia, Games, Direito, Imóveis..."
+                maxLength={120}
+                className="ig-input w-full"
+              />
+            </div>
+          )}
         </div>
 
         <div>

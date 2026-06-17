@@ -34,10 +34,10 @@ export async function getBatchForOwner(
 }
 
 export async function refreshBatchCounters(supabase: SupabaseClient, batchId: string) {
-  const { data: files } = await supabase
-    .from("upload_files")
-    .select("status")
-    .eq("batch_id", batchId);
+  const [{ data: batchRow }, { data: files }] = await Promise.all([
+    supabase.from("upload_batches").select("status").eq("id", batchId).single(),
+    supabase.from("upload_files").select("status").eq("batch_id", batchId),
+  ]);
 
   const rows = files ?? [];
   const completed = rows.filter((file) => file.status === "completed").length;
@@ -50,19 +50,24 @@ export async function refreshBatchCounters(supabase: SupabaseClient, batchId: st
   if (!hasPending && allDone && completed > 0) status = "ready";
   if (!hasPending && allDone && completed === 0) status = "uploading";
 
+  const currentStatus = batchRow?.status as UploadBatchStatus | undefined;
+  const preserveStatus =
+    currentStatus === "cancelled" || currentStatus === "scheduled" || currentStatus === "scheduling";
+  const nextStatus = preserveStatus ? currentStatus! : status;
+
   await supabase
     .from("upload_batches")
     .update({
       total_files: total,
       completed_files: completed,
       failed_files: failed,
-      status,
-      finished_at: status === "ready" ? new Date().toISOString() : null,
+      status: nextStatus,
+      finished_at: nextStatus === "ready" ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", batchId);
 
-  return { total, completed, failed, status };
+  return { total, completed, failed, status: nextStatus };
 }
 
 export async function updateUploadFileStatus(

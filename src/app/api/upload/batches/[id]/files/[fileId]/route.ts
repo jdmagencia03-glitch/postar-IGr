@@ -36,6 +36,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
   }
 
+  if (batch.status === "cancelled") {
+    return NextResponse.json({ error: "Lote cancelado" }, { status: 409 });
+  }
+
   const file = batch.upload_files?.find((item) => item.id === fileId);
   if (!file) {
     return NextResponse.json({ error: "Arquivo não encontrado" }, { status: 404 });
