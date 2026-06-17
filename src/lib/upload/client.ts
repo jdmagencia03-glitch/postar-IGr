@@ -1,5 +1,5 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
-import { BATCH_CREATE_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
+import { BATCH_CREATE_CHUNK_SIZE, TUS_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
 import { extractUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
@@ -125,11 +125,29 @@ export async function uploadBatchFile(params: {
         throw new Error("Resposta de upload inválida (TUS não configurado)");
       }
 
-      const shouldResume =
-        record.status !== "failed" && Number(record.bytes_uploaded ?? 0) > 0;
+      const uploadedBytes = Number(record.bytes_uploaded ?? 0);
+      const partialLooksBroken =
+        file.size > TUS_CHUNK_SIZE &&
+        uploadedBytes > 0 &&
+        uploadedBytes <= TUS_CHUNK_SIZE;
 
-      if (record.status === "failed") {
+      let shouldResume =
+        record.status !== "failed" &&
+        uploadedBytes > 0 &&
+        !partialLooksBroken;
+
+      if (record.status === "failed" || partialLooksBroken) {
         record = { ...record, status: "pending", bytes_uploaded: 0, error_message: null };
+        shouldResume = false;
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "pending",
+            bytes_uploaded: 0,
+            error_message: null,
+          }),
+        }).catch(() => undefined);
       }
 
       let lastDbSync = 0;

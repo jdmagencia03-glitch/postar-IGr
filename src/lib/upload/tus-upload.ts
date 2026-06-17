@@ -27,15 +27,20 @@ export function uploadFileWithTus(params: {
   let uploadRef: tus.Upload | null = null;
   let abortedByUser = false;
 
+  const chunkSize = params.prepare.chunkSize || TUS_CHUNK_SIZE;
+  // Supabase: só enviar dados no POST inicial se couber em 1 chunk (≤6MB).
+  // Arquivos maiores precisam de PATCH sequencial — senão trava ~11% (1º chunk).
+  const uploadDataDuringCreation = params.file.size <= chunkSize;
+
   const promise = new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(params.file, {
       endpoint: params.prepare.tusEndpoint,
-      retryDelays: [0, 3000, 10000, 30000],
+      retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
         "x-signature": params.prepare.signature,
         "x-upsert": "true",
       },
-      uploadDataDuringCreation: true,
+      uploadDataDuringCreation,
       removeFingerprintOnSuccess: true,
       metadata: {
         bucketName: "media",
@@ -43,7 +48,7 @@ export function uploadFileWithTus(params: {
         contentType: params.prepare.contentType,
         cacheControl: STORAGE_CACHE_CONTROL,
       },
-      chunkSize: params.prepare.chunkSize || TUS_CHUNK_SIZE,
+      chunkSize,
       storeFingerprintForResuming: params.resumePrevious !== false,
       fingerprint: () => {
         const base = buildTusFingerprint(params.batchId, params.recordId, params.file);
@@ -54,6 +59,12 @@ export function uploadFileWithTus(params: {
       },
       onProgress: (bytesUploaded, bytesTotal) => {
         params.onProgress?.(bytesUploaded, bytesTotal);
+      },
+      onShouldRetry(error) {
+        const status = (error as { originalResponse?: { getStatus?: () => number } }).originalResponse
+          ?.getStatus?.();
+        if (status === 403 || status === 404) return false;
+        return true;
       },
       onError: (error) => {
         if (abortedByUser) {
