@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Navbar } from "@/components/Navbar";
 import { OperationsCenter } from "@/components/operations/OperationsCenter";
 import {
   computeOperationsSnapshot,
@@ -82,10 +81,12 @@ export default async function ReportsPage({
   );
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <OperationsCenter
+    <>
+      <header className="ig-page-header">
+        <h1>Central de operações</h1>
+        <p>Monitore publicações, falhas e fila de posts.</p>
+      </header>
+      <OperationsCenter
           accounts={accountRefs.map((account) => ({
             id: account.id,
             platform: account.platform,
@@ -99,7 +100,6 @@ export default async function ReportsPage({
           statusFilter={filter}
           periodFilter={period}
         />
-      </main>
-    </div>
+    </>
   );
 }

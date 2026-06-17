@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Navbar } from "@/components/Navbar";
 import { AiPlaybookForm } from "@/components/AiPlaybookForm";
 import { getSessionUserId } from "@/lib/meta/oauth";
 
@@ -10,11 +9,12 @@ export default async function AiPlaybookPage() {
   if (!ownerId) redirect("/login?next=/dashboard/ai");
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-3xl px-4 py-8">
-        <AiPlaybookForm />
-      </main>
+    <div className="mx-auto max-w-3xl">
+      <header className="ig-page-header">
+        <h1>Assistente de conteúdo</h1>
+        <p>Defina nicho, tom e exemplos para a IA escrever como a sua página.</p>
+      </header>
+      <AiPlaybookForm />
     </div>
   );
 }

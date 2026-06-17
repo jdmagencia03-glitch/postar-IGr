@@ -32,17 +32,12 @@ export default async function LoginPage({
   const tiktokHref = `/api/auth/tiktok?next=${encodeURIComponent(nextPath)}`;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-4">
-      <div className="ig-card w-full p-8">
-        <h1 className="mb-3 text-center">
-          <BrandLogo className="ig-brand-script text-4xl leading-none text-ig-text" />
+    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
+      <div className="w-full rounded-2xl border border-ig-border bg-ig-elevated p-8 shadow-sm">
+        <h1 className="mb-2 text-center">
+          <BrandLogo />
         </h1>
-        <p className="mb-8 text-center text-sm font-semibold text-ig-primary">{APP_TAGLINE}</p>
-        <p className="mb-8 text-center text-sm text-ig-muted">
-          Conecte Instagram Business/Creator diretamente ou sua conta TikTok.
-          Instagram direto funciona para contas Business ou Creator; use Facebook
-          apenas se sua conta estiver vinculada a uma Página do Facebook.
-        </p>
+        <p className="mb-8 text-center text-sm text-ig-muted">{APP_TAGLINE}</p>
 
         {params.error && (
           <div className="ig-alert-danger mb-6 p-4 text-sm">

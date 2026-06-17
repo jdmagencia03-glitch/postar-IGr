@@ -14,7 +14,6 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
-import { Navbar } from "@/components/Navbar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
@@ -92,16 +91,12 @@ export default async function CalendarPage({
   });
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-ig-text">Calendário</h1>
-            <p className="text-ig-muted">
-              {format(viewMonth, "MMMM yyyy", { locale: ptBR })} · Instagram e TikTok
-            </p>
-          </div>
+    <>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <header className="ig-page-header mb-0">
+          <h1>Calendário</h1>
+          <p>{format(viewMonth, "MMMM yyyy", { locale: ptBR })} · Instagram e TikTok</p>
+        </header>
           <div className="flex items-center gap-2">
             <a
               href={buildMonthHref("/dashboard/calendar", prevMonth, filterParams)}
@@ -202,7 +197,6 @@ export default async function CalendarPage({
             );
           })}
         </div>
-      </main>
-    </div>
+    </>
   );
 }

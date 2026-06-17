@@ -1,15 +1,24 @@
 type BrandLogoProps = {
   className?: string;
   accentClassName?: string;
+  compact?: boolean;
 };
 
 export function BrandLogo({
-  className = "ig-brand-script text-2xl leading-none text-ig-text sm:text-3xl",
-  accentClassName = "ig-brand-gradient",
+  className,
+  accentClassName = "text-ig-primary",
+  compact = false,
 }: BrandLogoProps) {
+  const base =
+    className ??
+    (compact
+      ? "text-base font-semibold tracking-tight text-ig-text"
+      : "text-[22px] font-normal tracking-tight text-ig-muted");
+
   return (
-    <span className={className}>
-      JDM <span className={accentClassName}>Hub</span>
+    <span className={base}>
+      <span className="font-medium text-ig-text">JDM</span>{" "}
+      <span className={accentClassName}>Hub</span>
     </span>
   );
 }

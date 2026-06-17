@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
-import { Navbar } from "@/components/Navbar";
 import { formatDateTime } from "@/lib/utils";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
@@ -58,25 +57,22 @@ export default async function LogsPage({
   };
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-4xl px-4 py-8">
-        <h1 className="mb-2 text-2xl font-bold text-ig-text">Logs de publicação</h1>
-        <p className="mb-4 text-ig-muted">Histórico de tentativas e resultados — Instagram e TikTok.</p>
+    <div className="mx-auto max-w-4xl">
+      <header className="ig-page-header">
+        <h1>Logs de publicação</h1>
+        <p>Histórico de tentativas e resultados — Instagram e TikTok.</p>
+      </header>
 
-        <AccountFilterBar
+      <AccountFilterBar
           accounts={accountRefs}
           selectedAccountId={selectedAccountId}
           selectedPlatform={platformFilter}
           basePath="/dashboard/logs"
         />
 
-        <div className="space-y-3">
+        <div className="ig-panel divide-y divide-ig-border overflow-hidden">
           {logs?.map((log) => (
-            <div
-              key={log.id}
-              className="rounded-xl border border-ig-border bg-ig-secondary p-4"
-            >
+            <div key={log.id} className="px-4 py-3">
               <div className="mb-1 flex items-center justify-between">
                 <span
                   className={`text-xs font-medium uppercase ${levelColors[log.level as keyof typeof levelColors]}`}
@@ -92,10 +88,9 @@ export default async function LogsPage({
           ))}
 
           {!logs?.length && (
-            <p className="text-center text-ig-muted">Nenhum log ainda.</p>
+            <p className="px-4 py-12 text-center text-ig-muted">Nenhum log ainda.</p>
           )}
         </div>
-      </main>
     </div>
   );
 }

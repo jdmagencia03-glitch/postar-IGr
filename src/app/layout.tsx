@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
-import { Grand_Hotel } from "next/font/google";
+import { Roboto } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
-const instagramBrand = Grand_Hotel({
-  variable: "--font-instagram-brand",
+const roboto = Roboto({
+  variable: "--font-app",
   subsets: ["latin"],
-  weight: "400",
+  weight: ["400", "500", "700"],
 });
 
 export const metadata: Metadata = {
@@ -26,11 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="pt-BR"
-      className={`${instagramBrand.variable} dark h-full antialiased`}
-      suppressHydrationWarning
-    >
+    <html lang="pt-BR" className={`${roboto.variable} h-full antialiased`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

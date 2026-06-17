@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
-import { Music2, Upload, Calendar, Users } from "lucide-react";
-import { Navbar } from "@/components/Navbar";
+import { Upload, Calendar, Users } from "lucide-react";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
 import { PostsManager } from "@/components/PostsManager";
 import { TikTokAccountsSection } from "@/components/TikTokAccountsSection";
@@ -51,20 +50,11 @@ export default async function TikTokDashboardPage({
   };
 
   return (
-    <div>
-      <Navbar />
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <header className="mb-8">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-ig-border bg-ig-secondary px-3 py-1 text-xs font-medium text-ig-text">
-            <Music2 size={14} />
-            TikTok
-          </div>
-          <h1 className="text-2xl font-bold text-ig-text sm:text-3xl">Dashboard TikTok</h1>
-          <p className="mt-2 max-w-2xl text-ig-muted">
-            Conecte contas TikTok, envie vídeos em massa e deixe a IA agendar publicações
-            automaticamente.
-          </p>
-        </header>
+    <>
+      <header className="ig-page-header">
+        <h1>TikTok</h1>
+        <p>Conecte contas, envie vídeos em massa e deixe a IA agendar publicações.</p>
+      </header>
 
         <OAuthAlert
           error={params.error}
@@ -160,7 +150,6 @@ export default async function TikTokDashboardPage({
           <h2 className="mb-4 text-lg font-semibold text-ig-text">Contas TikTok</h2>
           <TikTokAccountsSection connectHref="/api/auth/tiktok?next=/dashboard/tiktok&add_account=1" />
         </section>
-      </main>
-    </div>
+    </>
   );
 }
