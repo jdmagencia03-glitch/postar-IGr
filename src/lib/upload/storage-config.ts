@@ -4,10 +4,10 @@ function readPositiveInt(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** Tamanho máximo por vídeo validado pelo app (padrão 1 GB). */
+/** Tamanho máximo por vídeo validado pelo app (padrão 500 MB). */
 export const MAX_UPLOAD_MB = readPositiveInt(
   process.env.SUPABASE_MAX_UPLOAD_MB ?? process.env.NEXT_PUBLIC_SUPABASE_MAX_UPLOAD_MB,
-  1024,
+  500,
 );
 
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
@@ -24,15 +24,15 @@ export const DB_INSERT_CHUNK_SIZE = readPositiveInt(process.env.UPLOAD_DB_CHUNK_
 /** Supabase TUS exige mínimo de 6MB por chunk (não aumentar). */
 export const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
 
-export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 8 * 1024 * 1024;
+export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 32 * 1024 * 1024;
 
 /** Cache CDN — paths são imutáveis (uuid por arquivo). */
 export const STORAGE_CACHE_CONTROL = "31536000";
 
 export const UPLOAD_FILE_CONCURRENCY = {
-  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 3),
-  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 8),
-  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 12),
+  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 4),
+  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 12),
+  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 24),
 } as const;
 
 export type UploadConcurrencyConfig = typeof UPLOAD_FILE_CONCURRENCY;

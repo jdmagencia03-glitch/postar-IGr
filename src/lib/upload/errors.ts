@@ -5,7 +5,7 @@ export function formatUploadErrorMessage(message: string, fileSize?: number) {
 
   if (/size|limit|413|payload too large|entity too large|maximum|too big|exceeds/i.test(lower)) {
     const sizeHint = fileSize ? ` (${formatBytes(fileSize)})` : "";
-    return `Arquivo${sizeHint} excede o limite do Supabase Storage. Rode supabase/storage-pro.sql no SQL Editor para liberar até 1 GB por vídeo.`;
+    return `Arquivo${sizeHint} excede o limite do Supabase Storage. Rode supabase/storage-pro.sql no SQL Editor para liberar até 500 MB por vídeo.`;
   }
 
   if (/network|failed to fetch|timeout|aborted|offline/i.test(lower)) {

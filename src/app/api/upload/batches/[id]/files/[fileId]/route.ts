@@ -1,6 +1,6 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
-import { getBatchForOwner, updateUploadFileStatus } from "@/lib/upload/batches";
+import { updateUploadFileStatus, verifyBatchFileAccess } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -11,6 +11,10 @@ const patchSchema = z.object({
   bytes_uploaded: z.number().int().min(0).optional(),
   error_message: z.string().max(2000).optional().nullable(),
 });
+
+function isProgressOnlyUpdate(body: z.infer<typeof patchSchema>) {
+  return body.status === "uploading" && body.bytes_uploaded !== undefined && !body.public_url;
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -30,33 +34,29 @@ export async function PATCH(
   }
 
   const supabase = createAdminClient();
-  const batch = await getBatchForOwner(supabase, ownerId, id);
+  const access = await verifyBatchFileAccess(supabase, ownerId, id, fileId);
 
-  if (!batch) {
-    return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
-  }
-
-  if (batch.status === "cancelled") {
-    return NextResponse.json({ error: "Lote cancelado" }, { status: 409 });
-  }
-
-  const file = batch.upload_files?.find((item) => item.id === fileId);
-  if (!file) {
+  if (!access) {
     return NextResponse.json({ error: "Arquivo não encontrado" }, { status: 404 });
   }
 
+  if (access.batch.status === "cancelled") {
+    return NextResponse.json({ error: "Lote cancelado" }, { status: 409 });
+  }
+
   try {
-    const counters = await updateUploadFileStatus(supabase, {
+    const progressOnly = isProgressOnlyUpdate(parsed.data);
+    const { file, counters } = await updateUploadFileStatus(supabase, {
       batchId: id,
       fileId,
       status: parsed.data.status,
       publicUrl: parsed.data.public_url,
       bytesUploaded: parsed.data.bytes_uploaded,
       errorMessage: parsed.data.error_message,
+      refreshCounters: !progressOnly,
     });
 
-    const updatedBatch = await getBatchForOwner(supabase, ownerId, id);
-    return NextResponse.json({ batch: updatedBatch, counters });
+    return NextResponse.json({ file, counters: counters ?? null });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Falha ao atualizar arquivo" },

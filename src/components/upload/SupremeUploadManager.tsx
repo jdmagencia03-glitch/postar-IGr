@@ -122,7 +122,7 @@ export function SupremeUploadManager({
   const [initialLoading, setInitialLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [speedMode, setSpeedMode] = useState<UploadSpeedMode>("normal");
+  const [speedMode, setSpeedMode] = useState<UploadSpeedMode>("turbo");
   const [progress, setProgress] = useState<UploadEngineProgress | null>(null);
   const [progressMap, setProgressMap] = useState<Record<string, number>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -136,12 +136,12 @@ export function SupremeUploadManager({
   const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null);
   const [limitsLoading, setLimitsLoading] = useState(true);
 
-  const maxUploadBytes = (uploadLimits?.max_upload_mb ?? 1024) * 1024 * 1024;
+  const maxUploadBytes = (uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
   const speedPresets = getSpeedPresets(uploadLimits?.concurrency);
   const maxUploadLabel =
     uploadLimits?.max_upload_mb && uploadLimits.max_upload_mb >= 1024
       ? `${uploadLimits.max_upload_mb / 1024}GB`
-      : `${uploadLimits?.max_upload_mb ?? 1024}MB`;
+      : `${uploadLimits?.max_upload_mb ?? 500}MB`;
 
   useEffect(() => {
     let cancelled = false;
@@ -281,9 +281,14 @@ export function SupremeUploadManager({
     return () => window.removeEventListener("beforeunload", handler);
   }, [running, batch]);
 
+  useEffect(() => {
+    if (!running || !engineRef.current) return;
+    engineRef.current.setConcurrency(speedPresets[speedMode].fileConcurrency);
+  }, [running, speedMode, speedPresets]);
+
   async function startEngine(currentBatch: UploadBatch, fileMap: Map<string, File>, onlyFileIds?: string[]) {
     engineRef.current?.stop();
-    const engine = new UploadEngine(speedMode, {
+    const engine = new UploadEngine(speedPresets[speedMode].fileConcurrency, {
       onProgress: scheduleProgressUpdate,
       onBatchUpdate: (next) => {
         if (cancelledBatchIdsRef.current.has(next.id)) return;
@@ -324,11 +329,6 @@ export function SupremeUploadManager({
 
   async function handleValidatedUpload(files: File[], skipDuplicates = true) {
     if (!accountId) return;
-
-    if (limitsLoading) {
-      setMessage("Aguarde, carregando limites de upload...");
-      return;
-    }
 
     const existingHashes = new Set(
       (batch?.upload_files ?? []).map((file) => file.file_hash).filter(Boolean) as string[],
@@ -558,7 +558,7 @@ export function SupremeUploadManager({
     return completedOnlyFiles.slice(-20);
   }, [batch?.status, completedOnlyFiles, files, visibleFiles]);
 
-  if (initialLoading || limitsLoading) {
+  if (initialLoading) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-6 text-sm text-ig-muted">
         <Loader2 size={16} className="animate-spin" />
@@ -574,7 +574,7 @@ export function SupremeUploadManager({
           O bucket Supabase ainda limita arquivos a{" "}
           <strong>{uploadLimits.bucket_limit_label ?? "50 MB"}</strong>. Execute{" "}
           <code className="rounded bg-ig-elevated px-1 text-xs">supabase/storage-pro.sql</code> no SQL
-          Editor para liberar até 1 GB por vídeo.
+          Editor para liberar até 500 MB por vídeo.
         </div>
       )}
 
@@ -649,7 +649,10 @@ export function SupremeUploadManager({
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-xs text-ig-muted">{speedPresets[speedMode].description}</p>
+            <p className="mt-1 text-xs text-ig-muted">
+              {speedPresets[speedMode].description}
+              {running ? " · pode trocar durante o envio" : ""}
+            </p>
           </div>
         </div>
       )}
@@ -663,8 +666,7 @@ export function SupremeUploadManager({
                 key={mode}
                 type="button"
                 onClick={() => setSpeedMode(mode)}
-                disabled={running}
-                className={`rounded-full px-4 py-2 text-sm disabled:opacity-50 ${
+                className={`rounded-full px-4 py-2 text-sm ${
                   speedMode === mode
                     ? "bg-ig-primary text-ig-on-primary"
                     : "border border-ig-border bg-ig-secondary text-ig-text"
@@ -674,7 +676,10 @@ export function SupremeUploadManager({
               </button>
             ))}
           </div>
-          <p className="mt-1 text-xs text-ig-muted">{speedPresets[speedMode].description}</p>
+          <p className="mt-1 text-xs text-ig-muted">
+            {speedPresets[speedMode].description}
+            {running ? " · pode trocar durante o envio" : ""}
+          </p>
         </div>
       )}
 

@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
       tiktok_account_id: platform === "tiktok" ? parsed.data.tiktok_account_id! : null,
       schedule_mode: parsed.data.schedule_mode,
       custom_schedule: parsed.data.custom_schedule ?? null,
-      upload_speed_mode: parsed.data.upload_speed_mode ?? "normal",
+      upload_speed_mode: parsed.data.upload_speed_mode ?? "turbo",
       status: "uploading",
       started_at: new Date().toISOString(),
       total_files: totalFiles,

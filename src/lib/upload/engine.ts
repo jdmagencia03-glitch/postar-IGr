@@ -1,8 +1,5 @@
-import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
-import { getSpeedPresets } from "@/lib/upload/storage-config";
+import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import { uploadBatchFile } from "@/lib/upload/client";
-
-export const SPEED_PRESETS = getSpeedPresets();
 
 const RETRY_DELAYS = [3000, 10000, 30000];
 
@@ -37,11 +34,31 @@ export class UploadEngine {
   private lastBytes = 0;
   private bytesUploaded = 0;
   private bytesTotal = 0;
+  private targetConcurrency = 1;
+  private workerPromises: Promise<void>[] = [];
+  private spawnWorker: (() => void) | null = null;
 
   constructor(
-    private speedMode: UploadSpeedMode = "normal",
+    private fileConcurrency: number,
     private callbacks: UploadEngineCallbacks = {},
   ) {}
+
+  setConcurrency(concurrency: number) {
+    const next = Math.max(1, concurrency);
+    const previous = this.targetConcurrency;
+    this.targetConcurrency = next;
+    this.fileConcurrency = next;
+
+    if (next > previous && this.spawnWorker && !this.stopped) {
+      for (let i = previous; i < next; i++) {
+        this.spawnWorker();
+      }
+    }
+  }
+
+  getConcurrency() {
+    return this.targetConcurrency;
+  }
 
   pause() {
     this.paused = true;
@@ -159,8 +176,10 @@ export class UploadEngine {
     });
 
     const fileProgress = new Map<string, { percent: number; filename: string }>();
-    const concurrency = SPEED_PRESETS[this.speedMode].fileConcurrency;
+    this.targetConcurrency = Math.max(1, this.fileConcurrency);
     let index = 0;
+    let finishedCount = 0;
+    this.workerPromises = [];
 
     const uploadOne = async (record: UploadBatchFile) => {
       const file = fileMap.get(record.id);
@@ -205,7 +224,10 @@ export class UploadEngine {
           });
 
           fileProgress.set(record.id, { percent: 100, filename: record.filename });
-          this.callbacks.onBatchUpdate?.(batch);
+          finishedCount += 1;
+          if (finishedCount % 10 === 0 || finishedCount === records.length) {
+            this.callbacks.onBatchUpdate?.(batch);
+          }
           this.emitProgress(batch, fileProgress);
           return;
         } catch (error) {
@@ -234,7 +256,20 @@ export class UploadEngine {
       }
     };
 
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    const spawnWorker = () => {
+      const workerPromise = worker();
+      this.workerPromises.push(workerPromise);
+    };
+
+    this.spawnWorker = spawnWorker;
+
+    for (let i = 0; i < this.targetConcurrency; i++) {
+      spawnWorker();
+    }
+
+    await Promise.all(this.workerPromises);
+    this.spawnWorker = null;
+    this.callbacks.onBatchUpdate?.(batch);
     this.callbacks.onComplete?.(batch);
     return batch;
   }

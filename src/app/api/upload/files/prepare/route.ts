@@ -95,6 +95,16 @@ export async function POST(request: NextRequest) {
   }
 
   const path = pathCheck.path;
+
+  await supabase
+    .from("upload_files")
+    .update({
+      status: "uploading",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", file.id)
+    .eq("batch_id", batch.id);
+
   const { data, error } = await supabase.storage.from("media").createSignedUploadUrl(path, {
     upsert: true,
   });
@@ -103,14 +113,14 @@ export async function POST(request: NextRequest) {
     const raw = error?.message ?? "Falha ao preparar upload";
     const friendly =
       /size|limit|50|413|payload too large/i.test(raw)
-        ? "Arquivo excede o limite do bucket Supabase. Execute supabase/storage-pro.sql no SQL Editor (limite recomendado: 1 GB)."
+        ? "Arquivo excede o limite do bucket Supabase. Execute supabase/storage-pro.sql no SQL Editor (limite recomendado: 500 MB)."
         : raw;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
 
   const { data: publicData } = supabase.storage.from("media").getPublicUrl(path);
 
-  await logSecurityEvent({
+  void logSecurityEvent({
     ownerId,
     eventType: "upload_prepared",
     resourceType: "upload_file",

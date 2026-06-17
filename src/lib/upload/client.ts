@@ -1,9 +1,44 @@
-import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
+import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
 import { BATCH_CREATE_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
 import { formatUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
+import type { BatchCounters } from "@/lib/upload/batches";
 
 const RETRY_DELAYS = [0, 3000, 10000, 30000];
+
+export interface UploadFilePatchResult {
+  file: UploadBatchFile;
+  counters: BatchCounters | null;
+}
+
+export function applyBatchFilePatch(batch: UploadBatch, patch: UploadFilePatchResult): UploadBatch {
+  const counters = patch.counters;
+  return {
+    ...batch,
+    total_files: counters?.total ?? batch.total_files,
+    completed_files: counters?.completed ?? batch.completed_files,
+    failed_files: counters?.failed ?? batch.failed_files,
+    status: counters?.status ?? batch.status,
+    upload_files: (batch.upload_files ?? []).map((item) =>
+      item.id === patch.file.id ? { ...item, ...patch.file } : item,
+    ),
+  };
+}
+
+function appendFilesToBatch(
+  batch: UploadBatch,
+  added: UploadBatchFile[],
+  counters?: BatchCounters,
+): UploadBatch {
+  return {
+    ...batch,
+    total_files: counters?.total ?? batch.total_files + added.length,
+    completed_files: counters?.completed ?? batch.completed_files,
+    failed_files: counters?.failed ?? batch.failed_files,
+    status: counters?.status ?? batch.status,
+    upload_files: [...(batch.upload_files ?? []), ...added],
+  };
+}
 
 function chunkItems<T>(items: T[], size: number) {
   const chunks: T[][] = [];
@@ -65,16 +100,6 @@ export async function uploadBatchFile(params: {
     }
 
     try {
-      await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "uploading",
-          bytes_uploaded: Number(record.bytes_uploaded ?? 0),
-          error_message: null,
-        }),
-      });
-
       const prepareRes = await apiFetch("/api/upload/files/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,11 +131,11 @@ export async function uploadBatchFile(params: {
         batchId: batch.id,
         recordId: record.id,
         signal,
-        onProgress: async (loaded, total) => {
+        onProgress: (loaded, total) => {
           onProgress?.(loaded, total);
           if (loaded - lastDbSync >= UPLOAD_PROGRESS_DB_SYNC_BYTES || loaded === total) {
             lastDbSync = loaded;
-            await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+            void apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ status: "uploading", bytes_uploaded: loaded }),
@@ -132,16 +157,16 @@ export async function uploadBatchFile(params: {
         }),
       });
 
-      const patchData = await patchRes.json();
+      const patchData = (await patchRes.json()) as UploadFilePatchResult & { error?: unknown };
       if (!patchRes.ok) {
         throw new Error(String(patchData.error ?? "Falha ao salvar upload"));
       }
 
-      return patchData.batch as UploadBatch;
+      return applyBatchFilePatch(batch, patchData);
     } catch (error) {
       if (signal?.aborted) throw error;
       if (attempt === RETRY_DELAYS.length - 1) {
-        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+        const failRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -152,6 +177,10 @@ export async function uploadBatchFile(params: {
             ),
           }),
         });
+        const failData = (await failRes.json()) as UploadFilePatchResult & { error?: unknown };
+        if (failRes.ok) {
+          return applyBatchFilePatch(batch, failData);
+        }
         throw error;
       }
     }
@@ -184,7 +213,7 @@ export async function createUploadBatch(params: {
     tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
     schedule_mode: params.scheduleMode,
     custom_schedule: params.customSchedule ?? undefined,
-    upload_speed_mode: params.uploadSpeedMode ?? "normal",
+    upload_speed_mode: params.uploadSpeedMode ?? "turbo",
   };
 
   const firstRes = await apiFetch("/api/upload/batches", {
@@ -218,7 +247,11 @@ export async function createUploadBatch(params: {
       throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
     }
 
-    batch = appendData.batch as UploadBatch;
+    batch = appendFilesToBatch(
+      batch,
+      appendData.added as UploadBatchFile[],
+      appendData.counters as BatchCounters | undefined,
+    );
   }
 
   return batch;

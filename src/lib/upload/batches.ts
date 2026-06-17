@@ -113,18 +113,74 @@ export async function getBatchForOwner(
   return { ...(data as UploadBatch), upload_files };
 }
 
-export async function refreshBatchCounters(supabase: SupabaseClient, batchId: string) {
-  const [{ data: batchRow }, { data: files }] = await Promise.all([
-    supabase.from("upload_batches").select("status").eq("id", batchId).single(),
-    supabase.from("upload_files").select("status").eq("batch_id", batchId),
-  ]);
+export async function verifyBatchFileAccess(
+  supabase: SupabaseClient,
+  ownerId: string,
+  batchId: string,
+  fileId: string,
+) {
+  const { data: batch } = await supabase
+    .from("upload_batches")
+    .select("id, status, owner_id")
+    .eq("id", batchId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
 
-  const rows = files ?? [];
-  const completed = rows.filter((file) => file.status === "completed").length;
-  const failed = rows.filter((file) => file.status === "failed").length;
-  const total = rows.length;
+  if (!batch) return null;
+
+  const { data: file } = await supabase
+    .from("upload_files")
+    .select("id, status, batch_id")
+    .eq("id", fileId)
+    .eq("batch_id", batchId)
+    .maybeSingle();
+
+  if (!file) return null;
+
+  return { batch, file };
+}
+
+export interface BatchCounters {
+  total: number;
+  completed: number;
+  failed: number;
+  status: UploadBatchStatus;
+}
+
+export async function refreshBatchCounters(
+  supabase: SupabaseClient,
+  batchId: string,
+): Promise<BatchCounters> {
+  const [batchResult, completedResult, failedResult, totalResult, pendingResult] =
+    await Promise.all([
+      supabase.from("upload_batches").select("status").eq("id", batchId).single(),
+      supabase
+        .from("upload_files")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", batchId)
+        .eq("status", "completed"),
+      supabase
+        .from("upload_files")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", batchId)
+        .eq("status", "failed"),
+      supabase
+        .from("upload_files")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", batchId),
+      supabase
+        .from("upload_files")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", batchId)
+        .in("status", ["pending", "uploading"]),
+    ]);
+
+  const batchRow = batchResult.data;
+  const completed = completedResult.count ?? 0;
+  const failed = failedResult.count ?? 0;
+  const total = totalResult.count ?? 0;
   const allDone = completed + failed === total && total > 0;
-  const hasPending = rows.some((file) => file.status === "pending" || file.status === "uploading");
+  const hasPending = (pendingResult.count ?? 0) > 0;
 
   let status: UploadBatchStatus = "uploading";
   if (!hasPending && allDone && completed > 0) status = "ready";
@@ -159,9 +215,10 @@ export async function updateUploadFileStatus(
     publicUrl?: string | null;
     bytesUploaded?: number;
     errorMessage?: string | null;
+    refreshCounters?: boolean;
   },
 ) {
-  const { error } = await supabase
+  const { data: file, error } = await supabase
     .from("upload_files")
     .update({
       status: params.status,
@@ -171,11 +228,18 @@ export async function updateUploadFileStatus(
       updated_at: new Date().toISOString(),
     })
     .eq("id", params.fileId)
-    .eq("batch_id", params.batchId);
+    .eq("batch_id", params.batchId)
+    .select("*")
+    .single();
 
   if (error) throw new Error(error.message);
 
-  return refreshBatchCounters(supabase, params.batchId);
+  const counters =
+    params.refreshCounters === false
+      ? undefined
+      : await refreshBatchCounters(supabase, params.batchId);
+
+  return { file: file as UploadBatchFile, counters };
 }
 
 export function buildStoragePath(ownerId: string, batchId: string, fileId: string, filename: string) {

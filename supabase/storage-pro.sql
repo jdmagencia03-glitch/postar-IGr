@@ -1,10 +1,10 @@
 -- Otimizações de storage para Supabase Pro
 -- Execute no SQL Editor após ativar o plano Pro
 
--- 1 GB por arquivo (ajuste conforme necessidade; Pro suporta até 500 GB)
+-- 500 MB por arquivo (ajuste conforme necessidade; Pro suporta até 500 GB)
 update storage.buckets
 set
-  file_size_limit = 1073741824,
+  file_size_limit = 524288000,
   public = true,
   allowed_mime_types = array[
     'video/mp4',
