@@ -71,6 +71,10 @@ class UploadSessionStore {
   getSnapshot = () => this.snapshot;
 
   private buildSnapshot(): UploadSessionSnapshot {
+    const pendingInSession = (this.batch?.upload_files ?? []).filter(
+      (file) =>
+        !file.removed && file.status !== "completed" && this.lastFileMap.has(file.id),
+    );
     const hasPending = (this.batch?.upload_files ?? []).some(
       (file) => !file.removed && file.status !== "completed",
     );
@@ -89,13 +93,27 @@ class UploadSessionStore {
       uploadLimits: this.uploadLimits,
       config: this.config,
       canResumeWithoutPicker: Boolean(
-        this.lastFileMap.size > 0 &&
-          this.batch &&
-          this.batch.status !== "ready" &&
-          hasPending &&
-          (!this.running || this.engine?.isPaused()),
+        this.batch && this.batch.status !== "ready" && pendingInSession.length > 0,
+      ),
+      needsFileReselection: Boolean(
+        this.batch && this.batch.status !== "ready" && hasPending && pendingInSession.length === 0,
       ),
     };
+  }
+
+  private hasPendingInSession() {
+    return (this.batch?.upload_files ?? []).some(
+      (file) =>
+        !file.removed && file.status !== "completed" && this.lastFileMap.has(file.id),
+    );
+  }
+
+  private promptReselectFiles() {
+    const completedCount = this.progress?.completed ?? this.batch?.completed_files ?? 0;
+    const totalCount = this.progress?.total ?? this.batch?.total_files ?? 0;
+    this.message = `Selecione novamente os vídeos no computador (ou todos de uma vez). ${completedCount} de ${totalCount} já enviados — esses não serão reenviados.`;
+    this.emit();
+    this.fileInputs?.pickResume();
   }
 
   private emit() {
@@ -481,6 +499,7 @@ class UploadSessionStore {
 
   resumeInSession() {
     if (!this.batch || !this.engine?.isPaused() || this.lastFileMap.size === 0) return false;
+
     this.paused = false;
     void setBatchPaused(this.batch.id, false);
     this.engine.resume();
@@ -488,6 +507,39 @@ class UploadSessionStore {
     this.message = null;
     this.emit();
     return true;
+  }
+
+  /** Retoma upload pausado usando arquivos já carregados na sessão (sem abrir seletor). */
+  async resumePausedUpload() {
+    if (!this.batch) return;
+
+    if (!this.lastFileMap.size || !this.hasPendingInSession()) {
+      this.promptReselectFiles();
+      return;
+    }
+
+    if (this.resumeInSession()) return;
+
+    this.paused = false;
+    this.message = null;
+    this.resuming = true;
+    this.emit();
+
+    try {
+      this.engine?.stop();
+      this.running = false;
+      await setBatchPaused(this.batch.id, false);
+      const refreshed = await refreshUploadBatch(this.batch.id);
+      this.batch = refreshed;
+      await this.startEngine(refreshed, this.lastFileMap);
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
+      this.running = false;
+      this.emit();
+    } finally {
+      this.resuming = false;
+      this.emit();
+    }
   }
 
   /** Sincroniza progresso ao voltar para a aba (upload segue em segundo plano). */
@@ -538,41 +590,38 @@ class UploadSessionStore {
   }
 
   async continueUpload() {
-    if (this.resumeInSession()) return;
-
-    if (this.batch && this.lastFileMap.size > 0 && !this.running) {
-      const hasPending = (this.batch.upload_files ?? []).some(
-        (file) => !file.removed && file.status !== "completed",
-      );
-      if (hasPending) {
-        this.message = null;
-        this.paused = false;
-        this.resuming = true;
-        this.emit();
-        try {
-          await setBatchPaused(this.batch.id, false);
-          let refreshed = await refreshUploadBatch(this.batch.id);
-          refreshed = await resetAllFailedUploadFiles(refreshed);
-          this.batch = refreshed;
-          this.autoRetryPass = 0;
-          await this.startEngine(refreshed, this.lastFileMap);
-        } catch (error) {
-          this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
-          this.running = false;
-          this.emit();
-        } finally {
-          this.resuming = false;
-          this.emit();
-        }
-        return;
-      }
+    if (this.paused) {
+      await this.resumePausedUpload();
+      return;
     }
 
-    const completedCount = this.progress?.completed ?? this.batch?.completed_files ?? 0;
-    const totalCount = this.progress?.total ?? this.batch?.total_files ?? 0;
-    this.message = `Selecione no seu computador os vídeos que faltam (ou todos de uma vez). ${completedCount} de ${totalCount} já enviados — esses não serão reenviados.`;
-    this.emit();
-    this.fileInputs?.pickResume();
+    if (this.resumeInSession()) return;
+
+    if (this.batch && this.lastFileMap.size > 0 && this.hasPendingInSession()) {
+      this.message = null;
+      this.resuming = true;
+      this.emit();
+      try {
+        this.engine?.stop();
+        this.running = false;
+        await setBatchPaused(this.batch.id, false);
+        let refreshed = await refreshUploadBatch(this.batch.id);
+        refreshed = await resetAllFailedUploadFiles(refreshed);
+        this.batch = refreshed;
+        this.autoRetryPass = 0;
+        await this.startEngine(refreshed, this.lastFileMap);
+      } catch (error) {
+        this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
+        this.running = false;
+        this.emit();
+      } finally {
+        this.resuming = false;
+        this.emit();
+      }
+      return;
+    }
+
+    this.promptReselectFiles();
   }
 
   openChooseVideos() {
@@ -591,15 +640,14 @@ class UploadSessionStore {
       this.paused = true;
       this.running = false;
       await setBatchPaused(this.batch.id, true);
-      this.message = "Upload pausado. Seu progresso foi salvo.";
+      this.message = "Upload pausado. Clique em Retomar para continuar de onde parou.";
       this.emit();
       return;
     }
 
     this.paused = false;
     await setBatchPaused(this.batch.id, false);
-    if (this.resumeInSession()) return;
-    void this.continueUpload();
+    await this.resumePausedUpload();
   }
 
   async cancelBatch() {

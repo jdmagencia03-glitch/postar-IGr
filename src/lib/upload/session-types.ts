@@ -38,4 +38,6 @@ export type UploadSessionSnapshot = {
   config: UploadSessionConfig | null;
   /** Arquivos ainda estão na memória — dá para retomar sem reescolher no disco. */
   canResumeWithoutPicker: boolean;
+  /** Faltam vídeos na sessão — precisa abrir seletor de arquivos. */
+  needsFileReselection: boolean;
 };

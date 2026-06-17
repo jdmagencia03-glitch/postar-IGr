@@ -13,6 +13,14 @@ import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import { uploadSessionStore } from "@/lib/upload/session-store";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
+import type { UploadSessionSnapshot } from "@/lib/upload/session-types";
+
+function resumeButtonLabel(session: UploadSessionSnapshot, paused: boolean) {
+  if (session.canResumeWithoutPicker) {
+    return paused ? "Retomar" : "Continuar upload";
+  }
+  return "Selecionar arquivos novamente";
+}
 
 interface Props {
   accountId: string;
@@ -164,7 +172,11 @@ export function SupremeUploadManager({
             type="button"
             className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
             disabled={session.resuming}
-            onClick={() => void uploadSessionStore.continueUpload()}
+            onClick={() =>
+              void (session.paused
+                ? uploadSessionStore.resumePausedUpload()
+                : uploadSessionStore.continueUpload())
+            }
           >
             {session.resuming ? (
               <Loader2 size={16} className="animate-spin" />
@@ -173,7 +185,7 @@ export function SupremeUploadManager({
             ) : (
               <Upload size={16} />
             )}
-            {session.canResumeWithoutPicker ? "Continuar upload" : "Escolher vídeos para continuar"}
+            {resumeButtonLabel(session, session.paused)}
           </button>
         </div>
       )}
@@ -298,20 +310,20 @@ export function SupremeUploadManager({
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  onClick={() => void uploadSessionStore.continueUpload()}
+                  disabled={session.resuming}
+                  onClick={() => void uploadSessionStore.resumePausedUpload()}
                 >
-                  <Play size={14} />{" "}
-                  {session.canResumeWithoutPicker ? "Continuar upload" : "Retomar envio"}
+                  <Play size={14} /> {resumeButtonLabel(session, true)}
                 </button>
               )}
-              {view.uploadInterrupted && !session.running && (
+              {view.uploadInterrupted && !session.running && !view.uploadPaused && (
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                  disabled={session.resuming}
                   onClick={() => void uploadSessionStore.continueUpload()}
                 >
-                  <Play size={14} />{" "}
-                  {session.canResumeWithoutPicker ? "Continuar upload" : "Escolher vídeos"}
+                  <Play size={14} /> {resumeButtonLabel(session, false)}
                 </button>
               )}
               {view.completedCount > 0 && onSchedulePartial && session.batch.status !== "ready" && (
