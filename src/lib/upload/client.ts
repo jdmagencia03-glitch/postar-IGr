@@ -1,7 +1,27 @@
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
+import { BATCH_CREATE_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
+import { formatUploadErrorMessage } from "@/lib/upload/errors";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 
 const RETRY_DELAYS = [0, 3000, 10000, 30000];
+
+function chunkItems<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function serializeUploadFiles(files: Array<{ file: File; fingerprint: string }>) {
+  return files.map(({ file, fingerprint }) => ({
+    filename: file.name,
+    file_size: file.size,
+    content_type: file.type || "video/mp4",
+    file_hash: fingerprint,
+    last_modified: file.lastModified,
+  }));
+}
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
   const response = await fetch(input, {
@@ -88,7 +108,7 @@ export async function uploadBatchFile(params: {
         signal,
         onProgress: async (loaded, total) => {
           onProgress?.(loaded, total);
-          if (loaded - lastDbSync >= 4 * 1024 * 1024 || loaded === total) {
+          if (loaded - lastDbSync >= UPLOAD_PROGRESS_DB_SYNC_BYTES || loaded === total) {
             lastDbSync = loaded;
             await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
               method: "PATCH",
@@ -126,7 +146,10 @@ export async function uploadBatchFile(params: {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status: "failed",
-            error_message: error instanceof Error ? error.message : "Erro no upload",
+            error_message: formatUploadErrorMessage(
+              error instanceof Error ? error.message : "Erro no upload",
+              file.size,
+            ),
           }),
         });
         throw error;
@@ -153,32 +176,52 @@ export async function createUploadBatch(params: {
   files: Array<{ file: File; fingerprint: string }>;
 }) {
   const platform = params.platform ?? "instagram";
-  const res = await apiFetch("/api/upload/batches", {
+  const fileChunks = chunkItems(params.files, BATCH_CREATE_CHUNK_SIZE);
+  const totalFiles = params.files.length;
+  const basePayload = {
+    platform,
+    account_id: platform === "instagram" ? params.accountId : undefined,
+    tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
+    schedule_mode: params.scheduleMode,
+    custom_schedule: params.customSchedule ?? undefined,
+    upload_speed_mode: params.uploadSpeedMode ?? "normal",
+  };
+
+  const firstRes = await apiFetch("/api/upload/batches", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      platform,
-      account_id: platform === "instagram" ? params.accountId : undefined,
-      tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
-      schedule_mode: params.scheduleMode,
-      custom_schedule: params.customSchedule ?? undefined,
-      upload_speed_mode: params.uploadSpeedMode ?? "normal",
-      files: params.files.map(({ file, fingerprint }) => ({
-        filename: file.name,
-        file_size: file.size,
-        content_type: file.type || "video/mp4",
-        file_hash: fingerprint,
-        last_modified: file.lastModified,
-      })),
+      ...basePayload,
+      total_files: totalFiles,
+      files: serializeUploadFiles(fileChunks[0]),
     }),
   });
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(String(data.error ?? "Falha ao criar lote"));
+  const firstData = await firstRes.json();
+  if (!firstRes.ok) {
+    throw new Error(String(firstData.error ?? "Falha ao criar lote"));
   }
 
-  return data.batch as UploadBatch;
+  let batch = firstData.batch as UploadBatch;
+
+  for (const chunk of fileChunks.slice(1)) {
+    const appendRes = await apiFetch(`/api/upload/batches/${batch.id}/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: serializeUploadFiles(chunk),
+      }),
+    });
+
+    const appendData = await appendRes.json();
+    if (!appendRes.ok) {
+      throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
+    }
+
+    batch = appendData.batch as UploadBatch;
+  }
+
+  return batch;
 }
 
 export async function setBatchPaused(batchId: string, paused: boolean) {

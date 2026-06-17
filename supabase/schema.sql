@@ -109,12 +109,12 @@ values (
   'media',
   'media',
   true,
-  524288000,
+  1073741824,
   array['video/mp4', 'video/quicktime', 'video/webm', 'image/jpeg', 'image/png', 'image/webp']
 )
 on conflict (id) do update set
   public = true,
-  file_size_limit = 524288000;
+  file_size_limit = 1073741824;
 
 -- Leitura pública (Instagram precisa acessar a URL)
 create policy "Public read media"

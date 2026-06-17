@@ -1,4 +1,5 @@
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
+import { MAX_UPLOAD_BYTES } from "@/lib/upload/storage-config";
+
 const ALLOWED_EXTENSIONS = [".mp4", ".mov", ".webm", ".m4v"];
 const ALLOWED_MIMES = ["video/mp4", "video/quicktime", "video/webm", "video/x-m4v"];
 
@@ -36,6 +37,7 @@ function hasAllowedExtension(name: string) {
 export function validateFiles(
   files: File[],
   existingFingerprints: Set<string> = new Set(),
+  maxBytes: number = MAX_UPLOAD_BYTES,
 ): ValidationResult {
   const valid: ValidatedFile[] = [];
   const invalid: InvalidFile[] = [];
@@ -50,8 +52,14 @@ export function validateFiles(
       continue;
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      invalid.push({ file, reason: "Arquivo maior que 500MB" });
+    if (file.size > maxBytes) {
+      const limitLabel =
+        maxBytes >= 1024 * 1024 * 1024
+          ? `${(maxBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+          : maxBytes >= 1024 * 1024
+            ? `${Math.round(maxBytes / (1024 * 1024))} MB`
+            : `${Math.round(maxBytes / 1024)} KB`;
+      invalid.push({ file, reason: `Arquivo maior que ${limitLabel}` });
       continue;
     }
 

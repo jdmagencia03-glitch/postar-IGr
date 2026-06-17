@@ -1,14 +1,8 @@
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
+import { getSpeedPresets } from "@/lib/upload/storage-config";
 import { uploadBatchFile } from "@/lib/upload/client";
 
-export const SPEED_PRESETS: Record<
-  UploadSpeedMode,
-  { label: string; fileConcurrency: number; description: string }
-> = {
-  economy: { label: "Econômico", fileConcurrency: 2, description: "2 vídeos simultâneos" },
-  normal: { label: "Normal", fileConcurrency: 4, description: "4 vídeos simultâneos" },
-  turbo: { label: "Turbo", fileConcurrency: 6, description: "6 vídeos simultâneos" },
-};
+export const SPEED_PRESETS = getSpeedPresets();
 
 const RETRY_DELAYS = [3000, 10000, 30000];
 

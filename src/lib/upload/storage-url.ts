@@ -11,5 +11,4 @@ export function getTusSignedEndpoint(supabaseUrl: string) {
   return `${getSupabaseStorageHost(supabaseUrl)}/storage/v1/upload/resumable/sign`;
 }
 
-/** Supabase exige 6MB por chunk no TUS (por enquanto). */
-export const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
+export { TUS_CHUNK_SIZE } from "@/lib/upload/storage-config";

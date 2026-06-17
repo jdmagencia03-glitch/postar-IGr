@@ -1,21 +1,98 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { DB_INSERT_CHUNK_SIZE } from "@/lib/upload/storage-config";
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
+
+export interface UploadFileInput {
+  filename: string;
+  file_size: number;
+  content_type?: string;
+  file_hash?: string;
+  last_modified?: number;
+}
+
+export function buildUploadFileRows(
+  ownerId: string,
+  batchId: string,
+  files: UploadFileInput[],
+  sortOrderOffset = 0,
+) {
+  return files.map((file, index) => {
+    const fileId = crypto.randomUUID();
+    return {
+      id: fileId,
+      batch_id: batchId,
+      filename: file.filename,
+      file_size: file.file_size,
+      content_type: file.content_type || "video/mp4",
+      storage_path: buildStoragePath(ownerId, batchId, fileId, file.filename),
+      file_hash: file.file_hash ?? null,
+      last_modified: file.last_modified ?? null,
+      sort_order: sortOrderOffset + index,
+      status: "pending" as const,
+    };
+  });
+}
+
+export async function insertUploadFiles(
+  supabase: SupabaseClient,
+  rows: ReturnType<typeof buildUploadFileRows>,
+) {
+  const inserted: UploadBatchFile[] = [];
+
+  for (let offset = 0; offset < rows.length; offset += DB_INSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(offset, offset + DB_INSERT_CHUNK_SIZE);
+    const { data, error } = await supabase.from("upload_files").insert(chunk).select("*");
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    inserted.push(...((data ?? []) as UploadBatchFile[]));
+  }
+
+  return inserted;
+}
 
 export function isActiveBatchStatus(status: UploadBatchStatus) {
   return status === "uploading" || status === "ready";
 }
 
+export async function getBatchUploadFiles(supabase: SupabaseClient, batchId: string) {
+  const pageSize = 1000;
+  const files: UploadBatchFile[] = [];
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("upload_files")
+      .select("*")
+      .eq("batch_id", batchId)
+      .order("sort_order", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) throw new Error(error.message);
+    if (!data?.length) break;
+
+    files.push(...(data as UploadBatchFile[]));
+    if (data.length < pageSize) break;
+  }
+
+  return files;
+}
+
 export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: string) {
   const { data } = await supabase
     .from("upload_batches")
-    .select("*, upload_files(*), instagram_accounts(ig_username)")
+    .select("*, instagram_accounts(ig_username)")
     .eq("owner_id", ownerId)
     .in("status", ["uploading", "ready"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  return data as (UploadBatch & { upload_files: UploadBatchFile[] }) | null;
+  if (!data) return null;
+
+  const upload_files = await getBatchUploadFiles(supabase, data.id);
+  return { ...(data as UploadBatch), upload_files };
 }
 
 export async function getBatchForOwner(
@@ -25,12 +102,15 @@ export async function getBatchForOwner(
 ) {
   const { data } = await supabase
     .from("upload_batches")
-    .select("*, upload_files(*), instagram_accounts(ig_username)")
+    .select("*, instagram_accounts(ig_username)")
     .eq("owner_id", ownerId)
     .eq("id", batchId)
     .maybeSingle();
 
-  return data as (UploadBatch & { upload_files: UploadBatchFile[] }) | null;
+  if (!data) return null;
+
+  const upload_files = await getBatchUploadFiles(supabase, batchId);
+  return { ...(data as UploadBatch), upload_files };
 }
 
 export async function refreshBatchCounters(supabase: SupabaseClient, batchId: string) {

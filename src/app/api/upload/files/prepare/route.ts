@@ -100,7 +100,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message ?? "Falha ao preparar upload" }, { status: 500 });
+    const raw = error?.message ?? "Falha ao preparar upload";
+    const friendly =
+      /size|limit|50|413|payload too large/i.test(raw)
+        ? "Arquivo excede o limite do bucket Supabase. Execute supabase/storage-pro.sql no SQL Editor (limite recomendado: 1 GB)."
+        : raw;
+    return NextResponse.json({ error: friendly }, { status: 500 });
   }
 
   const { data: publicData } = supabase.storage.from("media").getPublicUrl(path);

@@ -1,5 +1,5 @@
 import * as tus from "tus-js-client";
-import { TUS_CHUNK_SIZE } from "@/lib/upload/storage-url";
+import { STORAGE_CACHE_CONTROL, TUS_CHUNK_SIZE } from "@/lib/upload/storage-config";
 
 export interface TusPrepareResponse {
   tusEndpoint: string;
@@ -39,7 +39,7 @@ export function uploadFileWithTus(params: {
         bucketName: "media",
         objectName: params.prepare.path,
         contentType: params.prepare.contentType,
-        cacheControl: "3600",
+        cacheControl: STORAGE_CACHE_CONTROL,
       },
       chunkSize: params.prepare.chunkSize || TUS_CHUNK_SIZE,
       fingerprint: () =>

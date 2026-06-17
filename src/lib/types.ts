@@ -51,6 +51,7 @@ export interface ScheduledPost {
   permalink: string | null;
   error_message: string | null;
   published_at: string | null;
+  media_cleaned_at?: string | null;
   hidden_from_report?: boolean;
   created_at: string;
   instagram_accounts?: Pick<InstagramAccount, "ig_username" | "profile_picture_url">;

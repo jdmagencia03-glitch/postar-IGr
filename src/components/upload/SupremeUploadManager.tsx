@@ -13,7 +13,8 @@ import {
   refreshUploadBatch,
   setBatchPaused,
 } from "@/lib/upload/client";
-import { UploadEngine, SPEED_PRESETS, type UploadEngineProgress } from "@/lib/upload/engine";
+import { UploadEngine, type UploadEngineProgress } from "@/lib/upload/engine";
+import { getSpeedPresets } from "@/lib/upload/storage-config";
 import {
   clearManifestBatch,
   getManifestForBatch,
@@ -29,6 +30,14 @@ import {
   type InvalidFile,
 } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
+import { formatUploadErrorMessage } from "@/lib/upload/errors";
+
+type UploadLimits = {
+  max_upload_mb: number;
+  bucket_limit_mb: number | null;
+  bucket_limit_label: string | null;
+  concurrency: { economy: number; normal: number; turbo: number };
+};
 
 interface Props {
   accountId: string;
@@ -63,13 +72,20 @@ const FileStatusRow = memo(function FileStatusRow({
         </div>
       )}
       {file.status === "failed" && (
-        <button
-          type="button"
-          onClick={() => onRetry(file)}
-          className="mt-2 text-xs font-medium text-ig-primary hover:underline"
-        >
-          Tentar novamente
-        </button>
+        <div className="mt-2 space-y-1">
+          {file.error_message && (
+            <p className="text-xs text-ig-danger">
+              {formatUploadErrorMessage(file.error_message, Number(file.file_size))}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => onRetry(file)}
+            className="text-xs font-medium text-ig-primary hover:underline"
+          >
+            Tentar novamente
+          </button>
+        </div>
       )}
     </div>
   );
@@ -117,6 +133,33 @@ export function SupremeUploadManager({
     duplicates: DuplicateFile[];
     pendingFiles: File[];
   } | null>(null);
+  const [uploadLimits, setUploadLimits] = useState<UploadLimits | null>(null);
+  const [limitsLoading, setLimitsLoading] = useState(true);
+
+  const maxUploadBytes = (uploadLimits?.max_upload_mb ?? 1024) * 1024 * 1024;
+  const speedPresets = getSpeedPresets(uploadLimits?.concurrency);
+  const maxUploadLabel =
+    uploadLimits?.max_upload_mb && uploadLimits.max_upload_mb >= 1024
+      ? `${uploadLimits.max_upload_mb / 1024}GB`
+      : `${uploadLimits?.max_upload_mb ?? 1024}MB`;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/upload/limits", { credentials: "include" })
+      .then(async (res) => {
+        const data = (await res.json()) as UploadLimits;
+        if (!cancelled && res.ok && data.max_upload_mb) setUploadLimits(data);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLimitsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const syncBatch = useCallback((next: UploadBatch | null) => {
     setBatch((prev) => {
@@ -183,6 +226,14 @@ export function SupremeUploadManager({
         syncBatch(active);
         if (active?.upload_speed_mode) setSpeedMode(active.upload_speed_mode);
         if (active?.paused) setPaused(true);
+
+        const hasPending = (active?.upload_files ?? []).some(
+          (file) => !file.removed && file.status !== "completed",
+        );
+        if (active && active.status !== "ready" && hasPending) {
+          setPaused(true);
+        }
+
         if (active?.upload_files?.length) {
           const initialProgress: Record<string, number> = {};
           for (const file of active.upload_files) {
@@ -274,10 +325,15 @@ export function SupremeUploadManager({
   async function handleValidatedUpload(files: File[], skipDuplicates = true) {
     if (!accountId) return;
 
+    if (limitsLoading) {
+      setMessage("Aguarde, carregando limites de upload...");
+      return;
+    }
+
     const existingHashes = new Set(
       (batch?.upload_files ?? []).map((file) => file.file_hash).filter(Boolean) as string[],
     );
-    const validation = validateFiles(files, existingHashes);
+    const validation = validateFiles(files, existingHashes, maxUploadBytes);
 
     const toUpload = skipDuplicates ? validation.valid : [...validation.valid, ...validation.duplicates.map((d) => ({ file: d.file, fingerprint: d.fingerprint }))];
 
@@ -343,7 +399,7 @@ export function SupremeUploadManager({
   function handleFileSelection(selected: FileList | null) {
     if (!selected?.length) return;
     const files = Array.from(selected);
-    const validation = validateFiles(files);
+    const validation = validateFiles(files, new Set(), maxUploadBytes);
     setValidationPreview({
       validCount: validation.valid.length,
       invalid: validation.invalid,
@@ -458,6 +514,15 @@ export function SupremeUploadManager({
   const completedCount = progress?.completed ?? batch?.completed_files ?? 0;
   const totalCount = progress?.total ?? batch?.total_files ?? files.length;
   const failedCount = progress?.failed ?? batch?.failed_files ?? 0;
+  const pendingCount = files.filter((file) => file.status !== "completed").length;
+  const canContinue = Boolean(batch && batch.status !== "ready" && !running && pendingCount > 0);
+
+  function openContinueUpload() {
+    setMessage(
+      `Selecione a mesma pasta com os ${totalCount} vídeos. Os ${completedCount} já enviados não serão reenviados.`,
+    );
+    resumeInputRef.current?.click();
+  }
   const username = batch?.instagram_accounts?.ig_username;
   const overallPercent = progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
 
@@ -493,7 +558,7 @@ export function SupremeUploadManager({
     return completedOnlyFiles.slice(-20);
   }, [batch?.status, completedOnlyFiles, files, visibleFiles]);
 
-  if (initialLoading) {
+  if (initialLoading || limitsLoading) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-6 text-sm text-ig-muted">
         <Loader2 size={16} className="animate-spin" />
@@ -504,6 +569,38 @@ export function SupremeUploadManager({
 
   return (
     <div className="space-y-5">
+      {uploadLimits?.bucket_limit_mb != null && uploadLimits.bucket_limit_mb <= 50 && (
+        <div className="rounded-xl border border-ig-danger/30 bg-ig-danger/10 px-4 py-3 text-sm text-ig-danger">
+          O bucket Supabase ainda limita arquivos a{" "}
+          <strong>{uploadLimits.bucket_limit_label ?? "50 MB"}</strong>. Execute{" "}
+          <code className="rounded bg-ig-elevated px-1 text-xs">supabase/storage-pro.sql</code> no SQL
+          Editor para liberar até 1 GB por vídeo.
+        </div>
+      )}
+
+      {canContinue && (
+        <div className="rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-ig-text">Upload pendente</p>
+              <p className="mt-1 text-sm text-ig-muted">
+                {completedCount} de {totalCount} vídeos enviados
+                {failedCount > 0 ? ` · ${failedCount} falha(s)` : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
+              disabled={resuming}
+              onClick={openContinueUpload}
+            >
+              {resuming ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              Continuar upload
+            </button>
+          </div>
+        </div>
+      )}
+
       {!batch && !validationPreview && (
         <div className="space-y-3">
           <div
@@ -525,17 +622,19 @@ export function SupremeUploadManager({
               <Upload size={16} />
               Selecionar vídeos
             </button>
-            <p className="mt-4 text-xs text-ig-muted">MP4, MOV, WEBM · até 500MB por vídeo</p>
+            <p className="mt-4 text-xs text-ig-muted">MP4, MOV, WEBM · até {maxUploadLabel} por vídeo</p>
           </div>
 
           <p className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
-            Upload em chunks de 6MB com retomada byte-a-byte. Se a internet cair ou você sair da página, selecione os mesmos vídeos e continue de onde parou — nada recomeça do zero.
+            Upload em chunks de 6MB com retomada byte-a-byte. Se a internet cair ou você sair da página,
+            use <strong className="text-ig-text">Continuar upload</strong> e selecione a mesma pasta — nada
+            recomeça do zero.
           </p>
 
           <div>
             <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
             <div className="flex flex-wrap gap-2">
-              {(Object.keys(SPEED_PRESETS) as UploadSpeedMode[]).map((mode) => (
+              {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
                 <button
                   key={mode}
                   type="button"
@@ -546,12 +645,36 @@ export function SupremeUploadManager({
                       : "border border-ig-border bg-ig-secondary text-ig-text"
                   }`}
                 >
-                  {SPEED_PRESETS[mode].label}
+                  {speedPresets[mode].label}
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-xs text-ig-muted">{SPEED_PRESETS[speedMode].description}</p>
+            <p className="mt-1 text-xs text-ig-muted">{speedPresets[speedMode].description}</p>
           </div>
+        </div>
+      )}
+
+      {batch && batch.status !== "ready" && !validationPreview && (
+        <div>
+          <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setSpeedMode(mode)}
+                disabled={running}
+                className={`rounded-full px-4 py-2 text-sm disabled:opacity-50 ${
+                  speedMode === mode
+                    ? "bg-ig-primary text-ig-on-primary"
+                    : "border border-ig-border bg-ig-secondary text-ig-text"
+                }`}
+              >
+                {speedPresets[mode].label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ig-muted">{speedPresets[speedMode].description}</p>
         </div>
       )}
 
@@ -658,14 +781,15 @@ export function SupremeUploadManager({
             )}
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {batch.status !== "ready" && !running && !paused && (
+              {canContinue && (
                 <button
                   type="button"
-                  className="ig-btn-secondary px-3 py-2 text-sm"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
                   disabled={resuming}
-                  onClick={() => resumeInputRef.current?.click()}
+                  onClick={openContinueUpload}
                 >
-                  Selecionar pasta para continuar
+                  {resuming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  Continuar upload
                 </button>
               )}
               {running && (
@@ -673,15 +797,15 @@ export function SupremeUploadManager({
                   <Pause size={14} /> Pausar
                 </button>
               )}
-              {paused && (
+              {paused && running === false && canContinue && (
                 <button
                   type="button"
-                  className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
                   disabled={resuming}
-                  onClick={togglePause}
+                  onClick={openContinueUpload}
                 >
                   {resuming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                  {resuming ? "Preparando..." : "Continuar"}
+                  {resuming ? "Preparando..." : "Continuar upload"}
                 </button>
               )}
               {completedCount > 0 && onSchedulePartial && batch.status !== "ready" && (
@@ -764,7 +888,7 @@ export function SupremeUploadManager({
           <Loader2 size={16} className="animate-spin" />
           {resuming
             ? "Reconhecendo arquivos e retomando upload..."
-            : `Enviando em paralelo (${SPEED_PRESETS[speedMode].label})...`}
+            : `Enviando em paralelo (${speedPresets[speedMode].label})...`}
         </div>
       )}
 

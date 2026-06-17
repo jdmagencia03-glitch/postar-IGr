@@ -15,6 +15,7 @@ import { publishTikTokPost } from "@/lib/tiktok/publish";
 import { decryptPageAccessToken } from "@/lib/security/tokens";
 import { getCronSecret } from "@/lib/security/secrets";
 import { logSecurityEvent } from "@/lib/security/audit";
+import { cleanupPublishedMedia } from "@/lib/storage/cleanup";
 import type { TikTokAccount } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -203,9 +204,20 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  let mediaCleanup = null;
+  try {
+    mediaCleanup = await cleanupPublishedMedia(supabase);
+  } catch (err) {
+    console.error("[publish] media cleanup error:", err);
+    mediaCleanup = {
+      error: err instanceof Error ? err.message : "Falha na limpeza de mídia",
+    };
+  }
+
   return NextResponse.json({
     recovered_stale_processing: recovered,
     processed: results.length,
     results,
+    media_cleanup: mediaCleanup,
   });
 }

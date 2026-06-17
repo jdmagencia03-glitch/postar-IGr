@@ -195,6 +195,12 @@ with checks as (
       where table_schema = 'public'
         and table_name = 'scheduled_posts'
         and column_name = 'updated_at'
+    )),
+    ('media-cleanup.sql', 'coluna scheduled_posts.media_cleaned_at', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'scheduled_posts'
+        and column_name = 'media_cleaned_at'
     ))
   ) as t(script_file, check_name, ok)
 ),

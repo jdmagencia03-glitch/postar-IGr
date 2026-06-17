@@ -1,5 +1,12 @@
 import { randomUUID } from "crypto";
 
+import {
+  MAX_UPLOAD_BYTES,
+  formatMaxUploadSize,
+} from "@/lib/upload/storage-config";
+
+export { MAX_UPLOAD_BYTES, formatMaxUploadSize };
+
 const ALLOWED_EXTENSIONS = new Set(["mp4", "mov", "webm", "jpg", "jpeg", "png", "webp"]);
 const ALLOWED_MIME_TYPES = new Set([
   "video/mp4",
@@ -9,8 +16,6 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
-
-export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 
 export function sanitizeExtension(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4";
@@ -27,7 +32,7 @@ export function validateUploadMetadata(params: {
   }
 
   if (params.size > MAX_UPLOAD_BYTES) {
-    return { ok: false as const, error: `${params.filename} excede 500MB.` };
+    return { ok: false as const, error: `${params.filename} excede ${formatMaxUploadSize()}.` };
   }
 
   const ext = sanitizeExtension(params.filename);

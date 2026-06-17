@@ -1,17 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { formatZodError } from "@/lib/api-errors";
-import { MAX_VIDEOS_TOTAL } from "@/lib/autopilot-constants";
+import { BATCH_CREATE_CHUNK_SIZE, MAX_VIDEOS_TOTAL } from "@/lib/autopilot-constants";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
-  buildStoragePath,
+  buildUploadFileRows,
   getActiveBatchForOwner,
-  getBatchForOwner,
-  refreshBatchCounters,
+  insertUploadFiles,
 } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
+
+const fileInputSchema = z.object({
+  filename: z.string().min(1).max(500),
+  file_size: z.number().int().positive(),
+  content_type: z.string().max(120).optional(),
+  file_hash: z.string().max(500).optional(),
+  last_modified: z.number().int().optional(),
+});
 
 const createSchema = z
   .object({
@@ -19,34 +26,33 @@ const createSchema = z
     account_id: z.string().uuid().optional(),
     tiktok_account_id: z.string().uuid().optional(),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).default("auto"),
-  custom_schedule: z
-    .object({
-      posts_per_day: z.number().int().min(1).max(100),
-      time_slots: z.array(z.string()).max(48).optional(),
-      start_time: z.string().optional(),
-      end_time: z.string().optional(),
-    })
-    .optional(),
-  files: z
-    .array(
-      z.object({
-        filename: z.string().min(1).max(500),
-        file_size: z.number().int().positive(),
-        content_type: z.string().max(120).optional(),
-        file_hash: z.string().max(500).optional(),
-        last_modified: z.number().int().optional(),
+    custom_schedule: z
+      .object({
+        posts_per_day: z.number().int().min(1).max(100),
+        time_slots: z.array(z.string()).max(48).optional(),
+        start_time: z.string().optional(),
+        end_time: z.string().optional(),
+      })
+      .optional(),
+    files: z
+      .array(fileInputSchema)
+      .min(1)
+      .max(BATCH_CREATE_CHUNK_SIZE, {
+        message: `Envie no máximo ${BATCH_CREATE_CHUNK_SIZE} vídeos por requisição.`,
       }),
-    )
-    .min(1)
-    .max(MAX_VIDEOS_TOTAL),
-  upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
+    total_files: z.number().int().min(1).max(MAX_VIDEOS_TOTAL).optional(),
+    upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
   })
   .refine(
     (data) =>
       (data.platform === "instagram" && Boolean(data.account_id)) ||
       (data.platform === "tiktok" && Boolean(data.tiktok_account_id)),
     { message: "Conta obrigatória para a plataforma selecionada" },
-  );
+  )
+  .refine((data) => (data.total_files ?? data.files.length) <= MAX_VIDEOS_TOTAL, {
+    message: `Máximo de ${MAX_VIDEOS_TOTAL} vídeos por lote.`,
+    path: ["total_files"],
+  });
 
 export async function GET() {
   const ownerId = await getSessionUserId();
@@ -103,6 +109,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const totalFiles = parsed.data.total_files ?? parsed.data.files.length;
+
   const { data: batch, error: batchError } = await supabase
     .from("upload_batches")
     .insert({
@@ -115,7 +123,7 @@ export async function POST(request: NextRequest) {
       upload_speed_mode: parsed.data.upload_speed_mode ?? "normal",
       status: "uploading",
       started_at: new Date().toISOString(),
-      total_files: parsed.data.files.length,
+      total_files: totalFiles,
     })
     .select("*")
     .single();
@@ -124,36 +132,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: batchError?.message ?? "Falha ao criar lote" }, { status: 500 });
   }
 
-  const fileRows = parsed.data.files.map((file, index) => {
-    const fileId = crypto.randomUUID();
-    return {
-      id: fileId,
-      batch_id: batch.id,
-      filename: file.filename,
-      file_size: file.file_size,
-      content_type: file.content_type || "video/mp4",
-      storage_path: buildStoragePath(ownerId, batch.id, fileId, file.filename),
-      file_hash: file.file_hash ?? null,
-      last_modified: file.last_modified ?? null,
-      sort_order: index,
-      status: "pending",
-    };
-  });
+  try {
+    const fileRows = buildUploadFileRows(ownerId, batch.id, parsed.data.files);
+    const files = await insertUploadFiles(supabase, fileRows);
 
-  const { data: files, error: filesError } = await supabase
-    .from("upload_files")
-    .insert(fileRows)
-    .select("*");
-
-  if (filesError) {
+    return NextResponse.json({
+      batch: {
+        ...batch,
+        upload_files: files,
+      },
+    });
+  } catch (error) {
     await supabase.from("upload_batches").delete().eq("id", batch.id);
-    return NextResponse.json({ error: filesError.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Falha ao registrar arquivos" },
+      { status: 500 },
+    );
   }
-
-  return NextResponse.json({
-    batch: {
-      ...batch,
-      upload_files: files,
-    },
-  });
 }

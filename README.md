@@ -17,12 +17,14 @@ npm install
 npm run dev
 ```
 
-## 1. Supabase (gratuito)
+## 1. Supabase (gratuito ou Pro)
 
 1. Crie projeto em https://supabase.com
 2. SQL Editor → execute `supabase/schema.sql`
-3. Storage → crie bucket `media` → marque como **público**
-4. Copie URL, anon key e service role key para `.env.local`
+3. **Pro:** execute também `supabase/storage-pro.sql` (limite 1GB/arquivo + índices)
+4. Storage → crie bucket `media` → marque como **público** (se ainda não existir)
+5. Copie URL, anon key e service role key para `.env.local`
+6. **Pro:** configure `SUPABASE_PLAN=pro` e `NEXT_PUBLIC_SUPABASE_PLAN=pro` na Vercel
 
 ## 2. Meta Developer
 
@@ -48,12 +50,14 @@ O Vercel gratuito só permite cron 1x/dia. Use **cron-job.org** (grátis):
 - Intervalo: a cada **1 minuto**
 - Header: `Authorization: Bearer SEU_CRON_SECRET`
 
+O cron também **apaga vídeos do Supabase Storage 2 horas após publicar** (economiza storage). Execute `supabase/media-cleanup.sql` no SQL Editor.
+
 ## Custo total
 
 | Serviço | Custo |
 |---------|-------|
 | Vercel | R$ 0 |
-| Supabase | R$ 0 (até 500MB DB + 1GB storage) |
+| Supabase | R$ 0 (free) ou Pro (100GB+) |
 | cron-job.org | R$ 0 |
 | OpenAI (legendas, opcional) | ~R$ 0–30/mês |
 
