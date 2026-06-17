@@ -68,6 +68,10 @@ class UploadSessionStore {
   getSnapshot = () => this.snapshot;
 
   private buildSnapshot(): UploadSessionSnapshot {
+    const hasPending = (this.batch?.upload_files ?? []).some(
+      (file) => !file.removed && file.status !== "completed",
+    );
+
     return {
       batch: this.batch,
       initialLoading: this.initialLoading,
@@ -81,6 +85,13 @@ class UploadSessionStore {
       validationPreview: this.validationPreview,
       uploadLimits: this.uploadLimits,
       config: this.config,
+      canResumeWithoutPicker: Boolean(
+        this.lastFileMap.size > 0 &&
+          this.batch &&
+          this.batch.status !== "ready" &&
+          hasPending &&
+          (!this.running || this.engine?.isPaused()),
+      ),
     };
   }
 
@@ -225,9 +236,12 @@ class UploadSessionStore {
     this.paused = false;
     this.emit();
 
-    await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
-    this.running = false;
-    this.emit();
+    try {
+      await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
+    } finally {
+      this.running = false;
+      this.emit();
+    }
   }
 
   handleFileSelection(selected: FileList | null) {
@@ -431,13 +445,102 @@ class UploadSessionStore {
     return true;
   }
 
-  openChooseVideos() {
+  /** Pausa ao trocar de aba do navegador — preserva progresso e arquivos na memória. */
+  async pauseForBackground() {
+    if (!this.batch || this.paused || !this.running) return;
+
+    this.engine?.pause();
+    this.paused = true;
+    this.running = false;
+    try {
+      await setBatchPaused(this.batch.id, true);
+    } catch {
+      // ignore
+    }
+    this.message =
+      "Upload pausado ao sair da aba. Clique em Continuar upload para retomar de onde parou.";
+    this.emit();
+  }
+
+  /** Sincroniza estado ao voltar para a aba ou página de upload. */
+  async reconcileOnForeground() {
+    if (typeof document !== "undefined" && document.hidden) return;
+
+    if (this.running && this.paused) {
+      this.running = false;
+      this.emit();
+    }
+
+    if (this.running && !this.paused) {
+      await this.pauseForBackground();
+      return;
+    }
+
+    if (!this.batch) return;
+
+    try {
+      const refreshed = await refreshUploadBatch(this.batch.id);
+      if (!this.running) {
+        this.batch = refreshed;
+        if (refreshed.paused) this.paused = true;
+
+        const incomplete = (refreshed.upload_files ?? []).some(
+          (file) => !file.removed && file.status !== "completed",
+        );
+
+        if (
+          incomplete &&
+          this.lastFileMap.size > 0 &&
+          !this.message?.includes("Continuar upload")
+        ) {
+          this.message =
+            "Upload interrompido. Clique em Continuar upload para retomar de onde parou.";
+        }
+        this.emit();
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async continueUpload() {
     if (this.resumeInSession()) return;
+
+    if (this.batch && this.lastFileMap.size > 0 && !this.running) {
+      const hasPending = (this.batch.upload_files ?? []).some(
+        (file) => !file.removed && file.status !== "completed",
+      );
+      if (hasPending) {
+        this.message = null;
+        this.paused = false;
+        this.resuming = true;
+        this.emit();
+        try {
+          await setBatchPaused(this.batch.id, false);
+          const refreshed = await refreshUploadBatch(this.batch.id);
+          this.batch = refreshed;
+          await this.startEngine(refreshed, this.lastFileMap);
+        } catch (error) {
+          this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
+          this.running = false;
+          this.emit();
+        } finally {
+          this.resuming = false;
+          this.emit();
+        }
+        return;
+      }
+    }
+
     const completedCount = this.progress?.completed ?? this.batch?.completed_files ?? 0;
     const totalCount = this.progress?.total ?? this.batch?.total_files ?? 0;
     this.message = `Selecione no seu computador os vídeos que faltam (ou todos de uma vez). ${completedCount} de ${totalCount} já enviados — esses não serão reenviados.`;
     this.emit();
     this.fileInputs?.pickResume();
+  }
+
+  openChooseVideos() {
+    void this.continueUpload();
   }
 
   openFilePicker() {
@@ -460,7 +563,7 @@ class UploadSessionStore {
     this.paused = false;
     await setBatchPaused(this.batch.id, false);
     if (this.resumeInSession()) return;
-    this.openChooseVideos();
+    void this.continueUpload();
   }
 
   async cancelBatch() {

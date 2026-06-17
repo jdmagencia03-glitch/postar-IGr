@@ -36,4 +36,6 @@ export type UploadSessionSnapshot = {
   validationPreview: ValidationPreview | null;
   uploadLimits: UploadLimits | null;
   config: UploadSessionConfig | null;
+  /** Arquivos ainda estão na memória — dá para retomar sem reescolher no disco. */
+  canResumeWithoutPicker: boolean;
 };

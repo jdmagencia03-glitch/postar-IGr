@@ -16,6 +16,26 @@ const UploadSessionContext = createContext<typeof uploadSessionStore | null>(nul
 export function UploadSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void uploadSessionStore.initialize();
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        void uploadSessionStore.pauseForBackground();
+      } else {
+        void uploadSessionStore.reconcileOnForeground();
+      }
+    };
+
+    const onFocus = () => {
+      void uploadSessionStore.reconcileOnForeground();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   return (

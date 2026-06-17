@@ -141,10 +141,11 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
               {view.canContinue && !session.running && (
                 <button
                   type="button"
-                  className="rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
-                  onClick={() => uploadSessionStore.openChooseVideos()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
+                  onClick={() => void uploadSessionStore.continueUpload()}
                 >
                   <Play size={14} />
+                  {session.canResumeWithoutPicker ? "Continuar" : "Retomar"}
                 </button>
               )}
               <Link

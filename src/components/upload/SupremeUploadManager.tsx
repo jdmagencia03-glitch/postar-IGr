@@ -87,6 +87,10 @@ export function SupremeUploadManager({
   }, [store, accountId, platform, scheduleMode, customSchedule]);
 
   useEffect(() => {
+    void store.reconcileOnForeground();
+  }, [store]);
+
+  useEffect(() => {
     return store.registerBatchListener(onBatchUpdate ?? null);
   }, [store, onBatchUpdate]);
 
@@ -141,21 +145,34 @@ export function SupremeUploadManager({
         <div className="space-y-3 rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
           <div>
             <p className="font-semibold text-ig-text">
-              {view.uploadPaused ? "Upload pausado" : "Falta enviar alguns vídeos"}
+              {view.uploadPaused
+                ? "Upload pausado"
+                : view.failedCount > 0
+                  ? "Upload interrompido com erros"
+                  : "Falta enviar alguns vídeos"}
             </p>
             <p className="mt-1 text-sm text-ig-muted">
               {view.completedCount} de {view.totalCount} já enviados
               {view.failedCount > 0 ? ` · ${view.failedCount} com erro` : ""}
+              {session.canResumeWithoutPicker
+                ? " · seus arquivos ainda estão nesta sessão"
+                : " · selecione os vídeos no computador para continuar"}
             </p>
           </div>
           <button
             type="button"
             className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
             disabled={session.resuming}
-            onClick={() => uploadSessionStore.openChooseVideos()}
+            onClick={() => void uploadSessionStore.continueUpload()}
           >
-            {session.resuming ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-            Escolher vídeos
+            {session.resuming ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : session.canResumeWithoutPicker ? (
+              <Play size={16} />
+            ) : (
+              <Upload size={16} />
+            )}
+            {session.canResumeWithoutPicker ? "Continuar upload" : "Escolher vídeos para continuar"}
           </button>
         </div>
       )}
@@ -280,9 +297,20 @@ export function SupremeUploadManager({
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  onClick={() => uploadSessionStore.openChooseVideos()}
+                  onClick={() => void uploadSessionStore.continueUpload()}
                 >
-                  <Play size={14} /> Retomar envio
+                  <Play size={14} />{" "}
+                  {session.canResumeWithoutPicker ? "Continuar upload" : "Retomar envio"}
+                </button>
+              )}
+              {view.uploadInterrupted && !session.running && (
+                <button
+                  type="button"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                  onClick={() => void uploadSessionStore.continueUpload()}
+                >
+                  <Play size={14} />{" "}
+                  {session.canResumeWithoutPicker ? "Continuar upload" : "Escolher vídeos"}
                 </button>
               )}
               {view.completedCount > 0 && onSchedulePartial && session.batch.status !== "ready" && (
