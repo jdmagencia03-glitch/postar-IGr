@@ -3,15 +3,19 @@ const STORE = "manifest";
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE, { keyPath: "fileId" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    try {
+      const request = indexedDB.open(DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE)) {
+          db.createObjectStore(STORE, { keyPath: "fileId" });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
@@ -25,47 +29,61 @@ export interface ManifestEntry {
 }
 
 export async function saveManifestEntries(entries: ManifestEntry[]) {
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  const store = tx.objectStore(STORE);
-  for (const entry of entries) {
-    store.put(entry);
+  if (!entries.length) return;
+  try {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    for (const entry of entries) {
+      store.put(entry);
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    // IndexedDB indisponível (modo privado, quota) — retomada usa matching por metadados.
   }
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
 }
 
 export async function getManifestForBatch(batchId: string) {
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readonly");
-  const store = tx.objectStore(STORE);
-  const request = store.getAll();
+  try {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readonly");
+    const store = tx.objectStore(STORE);
+    const request = store.getAll();
 
-  const entries: ManifestEntry[] = await new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result as ManifestEntry[]);
-    request.onerror = () => reject(request.error);
-  });
+    const entries: ManifestEntry[] = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result as ManifestEntry[]);
+      request.onerror = () => reject(request.error);
+    });
 
-  db.close();
-  return entries.filter((entry) => entry.batchId === batchId);
+    db.close();
+    return entries.filter((entry) => entry.batchId === batchId);
+  } catch {
+    return [];
+  }
 }
 
 export async function clearManifestBatch(batchId: string) {
-  const entries = await getManifestForBatch(batchId);
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  const store = tx.objectStore(STORE);
-  for (const entry of entries) {
-    store.delete(entry.fileId);
+  try {
+    const entries = await getManifestForBatch(batchId);
+    if (!entries.length) return;
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    for (const entry of entries) {
+      store.delete(entry.fileId);
+    }
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    // ignore
   }
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
 }
 
 export function matchFilesToManifest(files: File[], manifest: ManifestEntry[]) {

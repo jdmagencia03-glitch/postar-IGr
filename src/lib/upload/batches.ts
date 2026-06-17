@@ -57,6 +57,11 @@ export function isActiveBatchStatus(status: UploadBatchStatus) {
   return status === "uploading" || status === "ready";
 }
 
+/** Lote que impede criar outro — só enquanto ainda está enviando. */
+export function isBlockingBatchStatus(status: UploadBatchStatus) {
+  return status === "uploading";
+}
+
 export async function getBatchUploadFiles(supabase: SupabaseClient, batchId: string) {
   const pageSize = 1000;
   const files: UploadBatchFile[] = [];
@@ -77,6 +82,20 @@ export async function getBatchUploadFiles(supabase: SupabaseClient, batchId: str
   }
 
   return files;
+}
+
+export async function getUploadingBatchForOwner(supabase: SupabaseClient, ownerId: string) {
+  const { data } = await supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("status", "uploading")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return null;
+  return getBatchForOwner(supabase, ownerId, data.id);
 }
 
 export async function getActiveBatchSummaryForOwner(supabase: SupabaseClient, ownerId: string) {
@@ -158,6 +177,8 @@ export async function refreshBatchCounters(
   supabase: SupabaseClient,
   batchId: string,
 ): Promise<BatchCounters> {
+  const notRemoved = "removed.is.null,removed.eq.false";
+
   const [batchResult, completedResult, failedResult, totalResult, pendingResult] =
     await Promise.all([
       supabase.from("upload_batches").select("status").eq("id", batchId).single(),
@@ -165,20 +186,24 @@ export async function refreshBatchCounters(
         .from("upload_files")
         .select("id", { count: "exact", head: true })
         .eq("batch_id", batchId)
+        .or(notRemoved)
         .eq("status", "completed"),
       supabase
         .from("upload_files")
         .select("id", { count: "exact", head: true })
         .eq("batch_id", batchId)
+        .or(notRemoved)
         .eq("status", "failed"),
       supabase
         .from("upload_files")
         .select("id", { count: "exact", head: true })
-        .eq("batch_id", batchId),
+        .eq("batch_id", batchId)
+        .or(notRemoved),
       supabase
         .from("upload_files")
         .select("id", { count: "exact", head: true })
         .eq("batch_id", batchId)
+        .or(notRemoved)
         .in("status", ["pending", "uploading"]),
     ]);
 

@@ -327,7 +327,7 @@ export function SupremeUploadManager({
                   <Play size={14} /> {resumeButtonLabel(session, false)}
                 </button>
               )}
-              {view.completedCount > 0 && onSchedulePartial && session.batch.status !== "ready" && (
+              {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
                 <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
                   Agendar vídeos enviados
                 </button>

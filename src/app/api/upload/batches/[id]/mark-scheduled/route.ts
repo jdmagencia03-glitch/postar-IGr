@@ -61,10 +61,23 @@ export async function POST(
       (file) => file.status === "completed" && file.public_url && !file.removed,
     ).length ?? 0;
 
+  const stillActive =
+    batchAfterMark?.upload_files?.some(
+      (file) =>
+        !file.removed && (file.status === "pending" || file.status === "uploading"),
+    ) ?? false;
+
+  let nextStatus: "ready" | "scheduled" | "uploading" = "scheduled";
+  if (stillActive) {
+    nextStatus = "uploading";
+  } else if (remainingToSchedule > 0) {
+    nextStatus = "ready";
+  }
+
   await supabase
     .from("upload_batches")
     .update({
-      status: remainingToSchedule > 0 ? "ready" : "scheduled",
+      status: nextStatus,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);

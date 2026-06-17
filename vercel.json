@@ -23,6 +23,12 @@
     },
     "src/app/api/upload/files/prepare/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/upload/limits/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/upload/batches/[id]/mark-scheduled/route.ts": {
+      "maxDuration": 120
     }
   }
 }

@@ -7,6 +7,7 @@ import {
   buildUploadFileRows,
   getActiveBatchForOwner,
   getActiveBatchSummaryForOwner,
+  getUploadingBatchForOwner,
   insertUploadFiles,
 } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -101,12 +102,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const existing = await getActiveBatchForOwner(supabase, ownerId);
+  const existing = await getUploadingBatchForOwner(supabase, ownerId);
   if (existing) {
     return NextResponse.json(
       {
         error:
-          "Já existe um lote em andamento. Retome o upload anterior ou cancele-o antes de criar outro.",
+          "Já existe um upload em andamento. Retome o upload anterior ou cancele-o antes de criar outro.",
         batch: existing,
       },
       { status: 409 },

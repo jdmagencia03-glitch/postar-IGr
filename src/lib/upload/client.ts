@@ -58,7 +58,7 @@ function serializeUploadFiles(files: Array<{ file: File; fingerprint: string }>)
   }));
 }
 
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit, attempt = 0): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(input, {
@@ -69,21 +69,51 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
     throw new Error(humanizeFetchError(error));
   }
 
+  if (response.status === 429 && attempt < 4) {
+    const retryAfter = Number(response.headers.get("Retry-After") || "2");
+    await new Promise((resolve) => setTimeout(resolve, Math.max(retryAfter, 1) * 1000));
+    return apiFetch(input, init, attempt + 1);
+  }
+
   if (response.status === 401) {
-    window.location.href = "/login?next=/dashboard/bulk";
+    const next =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : "/dashboard/bulk";
+    window.location.href = `/login?next=${encodeURIComponent(next)}`;
     throw new Error("Sessão expirada. Faça login novamente.");
   }
 
   return response;
 }
 
+export function fileFingerprint(file: File) {
+  return `${file.name}|${file.size}|${file.lastModified}`;
+}
+
 export function matchFileToRecord(file: File, records: UploadBatchFile[]) {
-  const fingerprint = `${file.name}|${file.size}|${file.lastModified}`;
-  return records.find(
+  const fingerprint = fileFingerprint(file);
+  const byHash = records.find((record) => record.file_hash === fingerprint);
+  if (byHash) return byHash;
+
+  const byMeta = records.filter(
     (record) =>
-      record.file_hash === fingerprint ||
-      (record.filename === file.name && Number(record.file_size) === file.size),
+      record.filename === file.name &&
+      Number(record.file_size) === file.size &&
+      (record.last_modified == null || record.last_modified === file.lastModified),
   );
+  if (byMeta.length === 1) return byMeta[0];
+  return undefined;
+}
+
+export function findRecordForUpload(
+  file: File,
+  fingerprint: string,
+  records: UploadBatchFile[],
+): UploadBatchFile | undefined {
+  const byHash = records.find((record) => record.file_hash === fingerprint);
+  if (byHash) return byHash;
+  return matchFileToRecord(file, records);
 }
 
 export async function uploadBatchFile(params: {
@@ -299,25 +329,30 @@ export async function createUploadBatch(params: {
 
   let batch = firstData.batch as UploadBatch;
 
-  for (const chunk of fileChunks.slice(1)) {
-    const appendRes = await apiFetch(`/api/upload/batches/${batch.id}/files`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        files: serializeUploadFiles(chunk),
-      }),
-    });
+  try {
+    for (const chunk of fileChunks.slice(1)) {
+      const appendRes = await apiFetch(`/api/upload/batches/${batch.id}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          files: serializeUploadFiles(chunk),
+        }),
+      });
 
-    const appendData = await appendRes.json();
-    if (!appendRes.ok) {
-      throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
+      const appendData = await appendRes.json();
+      if (!appendRes.ok) {
+        throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
+      }
+
+      batch = appendFilesToBatch(
+        batch,
+        appendData.added as UploadBatchFile[],
+        appendData.counters as BatchCounters | undefined,
+      );
     }
-
-    batch = appendFilesToBatch(
-      batch,
-      appendData.added as UploadBatchFile[],
-      appendData.counters as BatchCounters | undefined,
-    );
+  } catch (error) {
+    await apiFetch(`/api/upload/batches/${batch.id}`, { method: "DELETE" }).catch(() => undefined);
+    throw error;
   }
 
   return batch;
@@ -331,6 +366,17 @@ export async function setBatchPaused(batchId: string, paused: boolean) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao atualizar lote"));
+  return data.batch as UploadBatch;
+}
+
+export async function setBatchSpeedMode(batchId: string, uploadSpeedMode: UploadSpeedMode) {
+  const res = await apiFetch(`/api/upload/batches/${batchId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ upload_speed_mode: uploadSpeedMode }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(String(data.error ?? "Falha ao salvar velocidade de upload"));
   return data.batch as UploadBatch;
 }
 

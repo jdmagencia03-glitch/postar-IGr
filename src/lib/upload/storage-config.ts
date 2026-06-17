@@ -25,7 +25,7 @@ export const DB_INSERT_CHUNK_SIZE = readPositiveInt(process.env.UPLOAD_DB_CHUNK_
 /** Supabase TUS exige mínimo de 6MB por chunk (não aumentar). */
 export const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
 
-export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 32 * 1024 * 1024;
+export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 64 * 1024 * 1024;
 
 /** Cache CDN — paths são imutáveis (uuid por arquivo). */
 export const STORAGE_CACHE_CONTROL = "31536000";

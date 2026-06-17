@@ -7,11 +7,13 @@ import {
   createUploadBatch,
   ensureBatchWithFiles,
   fetchActiveBatch,
+  findRecordForUpload,
   matchFileToRecord,
   refreshUploadBatch,
   resetAllFailedUploadFiles,
   resetFailedUploadFile,
   setBatchPaused,
+  setBatchSpeedMode,
 } from "@/lib/upload/client";
 import { formatUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
 import {
@@ -63,6 +65,7 @@ class UploadSessionStore {
   private pendingProgress: UploadEngineProgress | null = null;
   private initialized = false;
   private autoRetryPass = 0;
+  private engineStarting = false;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
 
   subscribe = (listener: () => void) => {
@@ -179,9 +182,13 @@ class UploadSessionStore {
     try {
       const limitsRes = await fetch("/api/upload/limits", { credentials: "include" });
       const limits = (await limitsRes.json()) as UploadLimits;
-      if (limitsRes.ok && limits.max_upload_mb) this.uploadLimits = limits;
+      if (limitsRes.ok && limits.max_upload_mb) {
+        this.uploadLimits = limits;
+      } else {
+        this.message = "Não foi possível carregar limites de upload. Usando padrão de 500 MB.";
+      }
     } catch {
-      // ignore
+      this.message = "Não foi possível carregar limites de upload. Verifique sua conexão.";
     }
 
     try {
@@ -212,6 +219,14 @@ class UploadSessionStore {
     this.speedMode = mode;
     if (this.running && this.engine) {
       this.engine.setConcurrency(this.speedPresets[mode].fileConcurrency);
+    }
+    if (this.batch) {
+      void setBatchSpeedMode(this.batch.id, mode)
+        .then((updated) => {
+          this.batch = updated;
+          this.emit();
+        })
+        .catch(() => undefined);
     }
     this.emit();
   }
@@ -268,56 +283,60 @@ class UploadSessionStore {
     fileMap: Map<string, File>,
     onlyFileIds?: string[],
   ) {
-    const batchWithFiles = await ensureBatchWithFiles(currentBatch);
-    if (batchWithFiles !== currentBatch) {
-      this.syncBatch(batchWithFiles);
-      currentBatch = batchWithFiles;
-    }
-
-    this.engine?.stop();
-    const engine = new UploadEngine(this.speedPresets[this.speedMode].fileConcurrency, {
-      onProgress: this.scheduleProgressUpdate,
-      onBatchUpdate: (next) => {
-        if (this.cancelledBatchIds.has(next.id)) return;
-        this.batch = next;
-        for (const listener of this.batchListeners) listener(next);
-        this.emit();
-      },
-      onFileProgress: (fileId, loaded, total) => {
-        const percent = Math.round((loaded / total) * 100);
-        if (this.progressMap[fileId] !== percent) {
-          this.progressMap = { ...this.progressMap, [fileId]: percent };
-          this.emit();
-        }
-      },
-      onComplete: async (latest) => {
-        if (this.cancelledBatchIds.has(latest.id)) return;
-        const refreshed = await refreshUploadBatch(latest.id);
-        if (this.cancelledBatchIds.has(latest.id) || refreshed.status === "cancelled") return;
-        this.syncBatch(refreshed);
-        if (refreshed.status === "ready") {
-          this.autoRetryPass = 0;
-          this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
-        }
-        this.emit();
-      },
-      onError: (errorMessage) => {
-        this.message = formatUploadErrorMessage(errorMessage);
-        this.emit();
-      },
-    });
-
-    this.engine = engine;
-    this.lastFileMap = fileMap;
-    this.running = true;
-    this.paused = false;
-    this.emit();
+    if (this.engineStarting) return;
+    this.engineStarting = true;
 
     try {
+      const batchWithFiles = await ensureBatchWithFiles(currentBatch);
+      if (batchWithFiles !== currentBatch) {
+        this.syncBatch(batchWithFiles);
+        currentBatch = batchWithFiles;
+      }
+
+      this.engine?.stop();
+      const engine = new UploadEngine(this.speedPresets[this.speedMode].fileConcurrency, {
+        onProgress: this.scheduleProgressUpdate,
+        onBatchUpdate: (next) => {
+          if (this.cancelledBatchIds.has(next.id)) return;
+          this.batch = next;
+          for (const listener of this.batchListeners) listener(next);
+          this.emit();
+        },
+        onFileProgress: (fileId, loaded, total) => {
+          const percent = Math.round((loaded / total) * 100);
+          if (this.progressMap[fileId] !== percent) {
+            this.progressMap = { ...this.progressMap, [fileId]: percent };
+            this.emit();
+          }
+        },
+        onComplete: async (latest) => {
+          if (this.cancelledBatchIds.has(latest.id)) return;
+          const refreshed = await refreshUploadBatch(latest.id);
+          if (this.cancelledBatchIds.has(latest.id) || refreshed.status === "cancelled") return;
+          this.syncBatch(refreshed);
+          if (refreshed.status === "ready") {
+            this.autoRetryPass = 0;
+            this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
+          }
+          this.emit();
+        },
+        onError: (errorMessage) => {
+          this.message = formatUploadErrorMessage(errorMessage);
+          this.emit();
+        },
+      });
+
+      this.engine = engine;
+      this.lastFileMap = fileMap;
+      this.running = true;
+      this.paused = false;
+      this.emit();
+
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
       await this.tryAutoRetryAfterRun(currentBatch.id, fileMap);
     } finally {
       this.running = false;
+      this.engineStarting = false;
       this.emit();
     }
   }
@@ -384,19 +403,24 @@ class UploadSessionStore {
         this.syncBatch(currentBatch);
 
         await saveManifestEntries(
-          toUpload.map(({ file, fingerprint }) => {
-            const record = currentBatch!.upload_files!.find(
-              (item) => item.file_hash === fingerprint || item.filename === file.name,
-            )!;
-            return {
-              fileId: record.id,
-              batchId: currentBatch!.id,
-              name: file.name,
-              size: file.size,
-              lastModified: file.lastModified,
-              fingerprint,
-            };
-          }),
+          toUpload
+            .map(({ file, fingerprint }) => {
+              const record = findRecordForUpload(
+                file,
+                fingerprint,
+                currentBatch!.upload_files ?? [],
+              );
+              if (!record) return null;
+              return {
+                fileId: record.id,
+                batchId: currentBatch!.id,
+                name: file.name,
+                size: file.size,
+                lastModified: file.lastModified,
+                fingerprint,
+              };
+            })
+            .filter((entry): entry is NonNullable<typeof entry> => entry != null),
         );
       } else if (currentBatch) {
         currentBatch = await ensureBatchWithFiles(currentBatch);
@@ -405,10 +429,13 @@ class UploadSessionStore {
 
       const fileMap = new Map<string, File>();
       for (const { file, fingerprint } of toUpload) {
-        const record = currentBatch.upload_files?.find(
-          (item) => item.file_hash === fingerprint || item.filename === file.name,
-        );
+        const record = findRecordForUpload(file, fingerprint, currentBatch.upload_files ?? []);
         if (record) fileMap.set(record.id, file);
+      }
+
+      if (!fileMap.size) {
+        this.setUserMessage(null, "Nenhum arquivo reconhecido no lote. Tente selecionar novamente.");
+        return;
       }
 
       await this.startEngine(currentBatch, fileMap);
@@ -516,15 +543,8 @@ class UploadSessionStore {
   }
 
   resumeInSession() {
-    if (!this.batch || !this.engine?.isPaused() || this.lastFileMap.size === 0) return false;
-
-    this.paused = false;
-    void setBatchPaused(this.batch.id, false);
-    this.engine.resume();
-    this.running = true;
-    this.message = null;
-    this.emit();
-    return true;
+    // Sempre reiniciar via startEngine — engine.resume() pula arquivos pausados no meio.
+    return false;
   }
 
   /** Retoma upload pausado usando arquivos já carregados na sessão (sem abrir seletor). */

@@ -47,8 +47,17 @@ async function resolveUserIdFromRequest(request: NextRequest): Promise<string | 
 
 function enforceApiRateLimit(request: NextRequest, pathname: string) {
   const ip = getClientIp(request);
+
+  // PATCH de progresso durante TUS — não contar no limite (centenas/min em turbo).
+  if (
+    request.method === "PATCH" &&
+    /\/api\/upload\/batches\/[^/]+\/files\/[^/]+$/.test(pathname)
+  ) {
+    return null;
+  }
+
   const scope = pathname.startsWith("/api/upload") ? "upload" : "api";
-  const limit = pathname.startsWith("/api/upload") ? 120 : 180;
+  const limit = pathname.startsWith("/api/upload") ? 600 : 180;
   const result = checkRateLimit({
     key: `${scope}:${ip}`,
     limit,

@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
   const { data: batch } = await supabase
     .from("upload_batches")
-    .select("id")
+    .select("id, status")
     .eq("id", parsed.data.batch_id)
     .eq("owner_id", ownerId)
     .maybeSingle();
@@ -69,6 +69,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
   }
 
+  if (batch.status === "cancelled" || batch.status === "scheduled") {
+    return NextResponse.json({ error: "Este lote não aceita novos uploads." }, { status: 409 });
+  }
+
   const { data: file } = await supabase
     .from("upload_files")
     .select("*")
@@ -78,6 +82,14 @@ export async function POST(request: NextRequest) {
 
   if (!file) {
     return NextResponse.json({ error: "Arquivo não encontrado no lote" }, { status: 404 });
+  }
+
+  if (file.status === "completed" && file.public_url) {
+    return NextResponse.json({ error: "Arquivo já foi enviado." }, { status: 409 });
+  }
+
+  if (file.removed) {
+    return NextResponse.json({ error: "Arquivo removido do lote." }, { status: 409 });
   }
 
   if (parsed.data.storage_path !== file.storage_path) {

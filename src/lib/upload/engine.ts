@@ -1,7 +1,7 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import { uploadBatchFile } from "@/lib/upload/client";
 
-const RETRY_DELAYS = [5000, 15000, 45000, 90000];
+type UploadOutcome = "done" | "requeue" | "stopped";
 
 export interface UploadEngineProgress {
   completed: number;
@@ -38,6 +38,7 @@ export class UploadEngine {
   private targetConcurrency = 1;
   private workerPromises: Promise<void>[] = [];
   private spawnWorker: (() => void) | null = null;
+  private batchMutex = Promise.resolve();
 
   constructor(
     private fileConcurrency: number,
@@ -94,6 +95,15 @@ export class UploadEngine {
     });
   }
 
+  private withBatchLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.batchMutex.then(fn);
+    this.batchMutex = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   private updateSpeed(bytes: number) {
     if (bytes < this.lastBytes) {
       this.lastBytes = bytes;
@@ -141,9 +151,9 @@ export class UploadEngine {
 
   private emitProgress(
     batch: UploadBatch,
-    fileMap: Map<string, { percent: number; filename: string }>,
+    fileProgress: Map<string, { percent: number; filename: string }>,
   ) {
-    const files = batch.upload_files ?? [];
+    const files = (batch.upload_files ?? []).filter((file) => !file.removed);
     const completed = files.filter((file) => file.status === "completed").length;
     const failed = files.filter((file) => file.status === "failed").length;
     const uploading = files.filter((file) => file.status === "uploading").length;
@@ -152,7 +162,7 @@ export class UploadEngine {
     ).length;
     const total = files.length;
 
-    const activeFiles = [...fileMap.entries()]
+    const activeFiles = [...fileProgress.entries()]
       .filter(([, value]) => value.percent > 0 && value.percent < 100)
       .slice(0, 4)
       .map(([id, value]) => ({ id, filename: value.filename, percent: value.percent }));
@@ -199,6 +209,7 @@ export class UploadEngine {
     this.lastSpeedAt = Date.now();
 
     batch.upload_files?.forEach((record) => {
+      if (record.removed) return;
       if (record.status === "completed") {
         this.bytesUploaded += Number(record.file_size);
       } else if (Number(record.bytes_uploaded ?? 0) > 0) {
@@ -208,31 +219,28 @@ export class UploadEngine {
 
     const fileProgress = new Map<string, { percent: number; filename: string }>();
     this.targetConcurrency = Math.max(1, this.fileConcurrency);
-    let index = 0;
+    const pendingQueue = [...records];
     let finishedCount = 0;
     this.workerPromises = [];
 
-    const uploadOne = async (record: UploadBatchFile) => {
+    const uploadOne = async (record: UploadBatchFile): Promise<UploadOutcome> => {
       const file = fileMap.get(record.id);
-      if (!file) return;
+      if (!file) return "done";
+
+      if (this.stopped) return "stopped";
 
       fileProgress.set(record.id, { percent: 0, filename: record.filename });
       let currentRecord = record;
 
-      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-        if (this.stopped) return;
+      const controller = new AbortController();
+      this.abortControllers.set(currentRecord.id, controller);
+
+      try {
         await this.waitWhilePaused();
-        if (this.stopped) return;
+        if (this.stopped) return "stopped";
 
-        if (attempt > 0) {
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt - 1]));
-        }
-
-        const controller = new AbortController();
-        this.abortControllers.set(currentRecord.id, controller);
-
-        try {
-          batch = await uploadBatchFile({
+        batch = await this.withBatchLock(() =>
+          uploadBatchFile({
             batch,
             record: currentRecord,
             file,
@@ -248,44 +256,44 @@ export class UploadEngine {
               this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
               this.emitProgress(batch, fileProgress);
             },
-          });
+          }),
+        );
 
-          const updatedRecord = batch.upload_files?.find((item) => item.id === currentRecord.id);
+        const updatedRecord = batch.upload_files?.find((item) => item.id === currentRecord.id);
 
-          if (!updatedRecord || updatedRecord.status === "failed") {
-            if (updatedRecord) currentRecord = updatedRecord;
-            if (attempt < RETRY_DELAYS.length) continue;
-            this.callbacks.onBatchUpdate?.(batch);
-            this.emitProgress(batch, fileProgress);
-            this.callbacks.onError?.(
-              updatedRecord?.error_message ?? `Falha ao enviar ${currentRecord.filename}`,
-            );
-            return;
-          }
-
-          if (updatedRecord.status !== "completed") {
-            if (attempt < RETRY_DELAYS.length) continue;
-            return;
-          }
-
-          fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
-          this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
-          finishedCount += 1;
-          if (finishedCount % 5 === 0 || finishedCount === records.length) {
-            this.callbacks.onBatchUpdate?.(batch);
-          }
+        if (!updatedRecord || updatedRecord.status === "failed") {
+          this.callbacks.onBatchUpdate?.(batch);
           this.emitProgress(batch, fileProgress);
-          return;
-        } catch (error) {
-          if (controller.signal.aborted && this.paused) return;
-          if (attempt === RETRY_DELAYS.length) {
-            this.callbacks.onError?.(
-              error instanceof Error ? error.message : `Falha ao enviar ${currentRecord.filename}`,
-            );
-          }
-        } finally {
-          this.abortControllers.delete(currentRecord.id);
+          this.callbacks.onError?.(
+            updatedRecord?.error_message ?? `Falha ao enviar ${currentRecord.filename}`,
+          );
+          return "done";
         }
+
+        if (updatedRecord.status !== "completed") {
+          return "done";
+        }
+
+        fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
+        this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
+        finishedCount += 1;
+        if (finishedCount % 5 === 0 || finishedCount === records.length) {
+          this.callbacks.onBatchUpdate?.(batch);
+        }
+        this.emitProgress(batch, fileProgress);
+        return "done";
+      } catch (error) {
+        if (controller.signal.aborted && this.paused && !this.stopped) {
+          return "requeue";
+        }
+        if (!controller.signal.aborted) {
+          this.callbacks.onError?.(
+            error instanceof Error ? error.message : `Falha ao enviar ${currentRecord.filename}`,
+          );
+        }
+        return "done";
+      } finally {
+        this.abortControllers.delete(currentRecord.id);
       }
     };
 
@@ -296,9 +304,14 @@ export class UploadEngine {
           continue;
         }
 
-        const current = index++;
-        if (current >= records.length) return;
-        await uploadOne(records[current]);
+        const record = pendingQueue.shift();
+        if (!record) return;
+
+        const outcome = await uploadOne(record);
+        if (outcome === "requeue" && !this.stopped) {
+          pendingQueue.unshift(record);
+        }
+        if (outcome === "stopped") return;
       }
     };
 
@@ -316,7 +329,17 @@ export class UploadEngine {
     await Promise.all(this.workerPromises);
     this.spawnWorker = null;
     this.callbacks.onBatchUpdate?.(batch);
-    this.callbacks.onComplete?.(batch);
+
+    const activeFiles = (batch.upload_files ?? []).filter(
+      (file) =>
+        !file.removed &&
+        (file.status === "pending" || file.status === "uploading") &&
+        fileMap.has(file.id),
+    );
+    if (!this.stopped && activeFiles.length === 0) {
+      this.callbacks.onComplete?.(batch);
+    }
+
     return batch;
   }
 }
