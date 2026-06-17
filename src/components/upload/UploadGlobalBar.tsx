@@ -98,7 +98,8 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
   if (!session || !view?.showGlobalBar || !session.batch) return null;
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
-  const speedPresets = getSpeedPresets(session.uploadLimits?.concurrency);
+  const speedPresets =
+    session.uploadLimits?.speed_presets ?? getSpeedPresets(session.uploadLimits?.concurrency);
   const username = session.batch.instagram_accounts?.ig_username ?? "conta";
 
   return (

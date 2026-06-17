@@ -40,11 +40,32 @@ export const UPLOAD_FILE_CONCURRENCY = {
 
 export type UploadConcurrencyConfig = typeof UPLOAD_FILE_CONCURRENCY;
 
+export type UploadSpeedMode = keyof UploadConcurrencyConfig;
+
+export type UploadSpeedPreset = {
+  label: string;
+  fileConcurrency: number;
+  description: string;
+};
+
+export type UploadSpeedPresets = Record<UploadSpeedMode, UploadSpeedPreset>;
+
 export function clampUploadConcurrency(requested: number) {
   return Math.min(Math.max(1, requested), BROWSER_UPLOAD_CONCURRENCY_CAP);
 }
 
-export function getSpeedPresets(concurrency: UploadConcurrencyConfig = UPLOAD_FILE_CONCURRENCY) {
+/** Valores efetivos usados pelo motor de upload (respeitam o teto do navegador). */
+export function getEffectiveUploadConcurrency(
+  concurrency: UploadConcurrencyConfig = UPLOAD_FILE_CONCURRENCY,
+): UploadConcurrencyConfig {
+  return {
+    economy: clampUploadConcurrency(concurrency.economy),
+    normal: clampUploadConcurrency(concurrency.normal),
+    turbo: clampUploadConcurrency(concurrency.turbo),
+  };
+}
+
+export function getSpeedPresets(concurrency: UploadConcurrencyConfig = UPLOAD_FILE_CONCURRENCY): UploadSpeedPresets {
   const capNote =
     Math.max(concurrency.economy, concurrency.normal, concurrency.turbo) >
     BROWSER_UPLOAD_CONCURRENCY_CAP

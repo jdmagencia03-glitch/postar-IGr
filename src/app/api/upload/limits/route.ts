@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  BROWSER_UPLOAD_CONCURRENCY_CAP,
   MAX_UPLOAD_MB,
   UPLOAD_FILE_CONCURRENCY,
   formatBucketLimitMb,
+  getEffectiveUploadConcurrency,
+  getSpeedPresets,
 } from "@/lib/upload/storage-config";
 
 export async function GET() {
@@ -27,12 +30,17 @@ export async function GET() {
       ? Math.min(MAX_UPLOAD_MB, bucketLimitMb)
       : MAX_UPLOAD_MB;
 
+  const speedPresets = getSpeedPresets();
+
   return NextResponse.json({
     max_upload_mb: effectiveMaxMb,
     app_max_upload_mb: MAX_UPLOAD_MB,
     bucket_limit_mb: bucketLimitMb,
     bucket_limit_label: formatBucketLimitMb(bucketLimitBytes),
     bucket_error: error?.message ?? null,
-    concurrency: UPLOAD_FILE_CONCURRENCY,
+    browser_concurrency_cap: BROWSER_UPLOAD_CONCURRENCY_CAP,
+    concurrency: getEffectiveUploadConcurrency(),
+    concurrency_configured: UPLOAD_FILE_CONCURRENCY,
+    speed_presets: speedPresets,
   });
 }

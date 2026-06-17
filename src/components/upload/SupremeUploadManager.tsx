@@ -119,7 +119,8 @@ export function SupremeUploadManager({
   );
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
-  const speedPresets = getSpeedPresets(session.uploadLimits?.concurrency);
+  const speedPresets =
+    session.uploadLimits?.speed_presets ?? getSpeedPresets(session.uploadLimits?.concurrency);
   const maxUploadLabel =
     session.uploadLimits?.max_upload_mb && session.uploadLimits.max_upload_mb >= 1024
       ? `${session.uploadLimits.max_upload_mb / 1024}GB`
@@ -402,7 +403,7 @@ function SpeedModePicker({
                 : "border border-ig-border bg-ig-secondary text-ig-text"
             }`}
           >
-            {speedPresets[mode].label}
+            {speedPresets[mode].label} · {speedPresets[mode].fileConcurrency}
           </button>
         ))}
       </div>

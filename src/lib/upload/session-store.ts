@@ -145,7 +145,7 @@ class UploadSessionStore {
   }
 
   private get speedPresets() {
-    return getSpeedPresets(this.uploadLimits?.concurrency);
+    return this.uploadLimits?.speed_presets ?? getSpeedPresets(this.uploadLimits?.concurrency);
   }
 
   private get maxUploadBytes() {
