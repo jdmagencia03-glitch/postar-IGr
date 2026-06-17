@@ -445,59 +445,48 @@ class UploadSessionStore {
     return true;
   }
 
-  /** Pausa ao trocar de aba do navegador — preserva progresso e arquivos na memória. */
-  async pauseForBackground() {
-    if (!this.batch || this.paused || !this.running) return;
-
-    this.engine?.pause();
-    this.paused = true;
-    this.running = false;
-    try {
-      await setBatchPaused(this.batch.id, true);
-    } catch {
-      // ignore
-    }
-    this.message =
-      "Upload pausado ao sair da aba. Clique em Continuar upload para retomar de onde parou.";
-    this.emit();
-  }
-
-  /** Sincroniza estado ao voltar para a aba ou página de upload. */
+  /** Sincroniza progresso ao voltar para a aba (upload segue em segundo plano). */
   async reconcileOnForeground() {
     if (typeof document !== "undefined" && document.hidden) return;
-
-    if (this.running && this.paused) {
-      this.running = false;
-      this.emit();
-    }
-
-    if (this.running && !this.paused) {
-      await this.pauseForBackground();
-      return;
-    }
 
     if (!this.batch) return;
 
     try {
       const refreshed = await refreshUploadBatch(this.batch.id);
-      if (!this.running) {
+
+      if (this.running) {
         this.batch = refreshed;
-        if (refreshed.paused) this.paused = true;
-
-        const incomplete = (refreshed.upload_files ?? []).some(
-          (file) => !file.removed && file.status !== "completed",
-        );
-
-        if (
-          incomplete &&
-          this.lastFileMap.size > 0 &&
-          !this.message?.includes("Continuar upload")
-        ) {
-          this.message =
-            "Upload interrompido. Clique em Continuar upload para retomar de onde parou.";
+        const nextProgress: Record<string, number> = { ...this.progressMap };
+        for (const file of refreshed.upload_files ?? []) {
+          const uploaded = Number(file.bytes_uploaded ?? 0);
+          const total = Number(file.file_size);
+          if (file.status === "completed") {
+            nextProgress[file.id] = 100;
+          } else if (uploaded > 0 && total > 0) {
+            nextProgress[file.id] = Math.round((uploaded / total) * 100);
+          }
         }
+        this.progressMap = nextProgress;
         this.emit();
+        return;
       }
+
+      this.batch = refreshed;
+      if (refreshed.paused) this.paused = true;
+
+      const incomplete = (refreshed.upload_files ?? []).some(
+        (file) => !file.removed && file.status !== "completed",
+      );
+
+      if (
+        incomplete &&
+        this.lastFileMap.size > 0 &&
+        !this.message?.includes("Continuar upload")
+      ) {
+        this.message =
+          "Upload interrompido. Clique em Continuar upload para retomar de onde parou.";
+      }
+      this.emit();
     } catch {
       // ignore
     }

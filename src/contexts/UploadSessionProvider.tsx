@@ -18,9 +18,7 @@ export function UploadSessionProvider({ children }: { children: ReactNode }) {
     void uploadSessionStore.initialize();
 
     const onVisibilityChange = () => {
-      if (document.hidden) {
-        void uploadSessionStore.pauseForBackground();
-      } else {
+      if (!document.hidden) {
         void uploadSessionStore.reconcileOnForeground();
       }
     };

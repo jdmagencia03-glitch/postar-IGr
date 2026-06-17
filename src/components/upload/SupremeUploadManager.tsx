@@ -137,7 +137,8 @@ export function SupremeUploadManager({
       )}
 
       <p className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
-        Você pode navegar pelo site (Dashboard, Relatórios, Contas…) enquanto o upload continua.
+        Você pode trocar de aba, navegar pelo site (Dashboard, Relatórios, Contas…) — o upload{" "}
+        <strong className="text-ig-text">continua em segundo plano</strong>.
         Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
       </p>
 

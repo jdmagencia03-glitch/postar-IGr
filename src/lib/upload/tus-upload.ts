@@ -35,7 +35,7 @@ export function uploadFileWithTus(params: {
   const promise = new Promise<void>((resolve, reject) => {
     const upload = new tus.Upload(params.file, {
       endpoint: params.prepare.tusEndpoint,
-      retryDelays: [0, 3000, 5000, 10000, 20000],
+      retryDelays: [0, 3000, 5000, 10000, 20000, 30000, 60000],
       headers: {
         "x-signature": params.prepare.signature,
         "x-upsert": "true",
