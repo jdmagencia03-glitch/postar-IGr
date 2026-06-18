@@ -75,20 +75,34 @@ export function AccountOperationsGrid({ accounts }: Props) {
                 <dd className="font-semibold text-ig-text">{account.publishedToday}</dd>
               </div>
               <div>
-                <dt className="text-ig-muted">Programados</dt>
-                <dd className="font-semibold text-ig-text">{account.pendingCount}</dd>
+                <dt className="text-ig-muted">7 dias</dt>
+                <dd className="font-semibold text-ig-text">{account.publishedLast7Days}</dd>
               </div>
               <div>
-                <dt className="text-ig-muted">Stories</dt>
-                <dd className="font-semibold text-ig-text">{account.storiesPending}</dd>
+                <dt className="text-ig-muted">30 dias</dt>
+                <dd className="font-semibold text-ig-text">{account.publishedLast30Days}</dd>
+              </div>
+              <div>
+                <dt className="text-ig-muted">Programados</dt>
+                <dd className="font-semibold text-ig-text">{account.pendingCount}</dd>
               </div>
               <div>
                 <dt className="text-ig-muted">Falhas</dt>
                 <dd className="font-semibold text-ig-danger">{account.failedCount}</dd>
               </div>
+              <div>
+                <dt className="text-ig-muted">Taxa sucesso</dt>
+                <dd className="font-semibold text-ig-text">{account.successRate}%</dd>
+              </div>
             </dl>
 
-            <div className="mt-4 space-y-1 text-xs text-ig-muted">
+            <div className="mt-3 space-y-1 text-xs text-ig-muted">
+              {account.topContentType && (
+                <p>
+                  Tipo mais usado:{" "}
+                  <span className="font-medium text-ig-text">{account.topContentType}</span>
+                </p>
+              )}
               <p>
                 Token:{" "}
                 <span className="font-medium text-ig-text">
@@ -122,6 +136,12 @@ export function AccountOperationsGrid({ accounts }: Props) {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href={`/dashboard/reports?view=audit&account=${account.id}&platform=${account.platform}`}
+                className="rounded-lg border border-ig-border px-3 py-1.5 text-xs font-medium hover:bg-ig-secondary"
+              >
+                Conferir
+              </Link>
               <Link
                 href={`/dashboard/accounts/${account.id}/diagnostics?platform=${account.platform}`}
                 className="rounded-lg border border-ig-border px-3 py-1.5 text-xs font-medium hover:bg-ig-secondary"

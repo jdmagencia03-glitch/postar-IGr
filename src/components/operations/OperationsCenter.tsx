@@ -3,9 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PostsManager } from "@/components/PostsManager";
 import { AccountOperationsGrid } from "@/components/operations/AccountOperationsGrid";
+import { ErrorReportPanel } from "@/components/operations/ErrorReportPanel";
+import { ExportReportButton } from "@/components/operations/ExportReportButton";
+import { MetricsPanels } from "@/components/operations/MetricsPanels";
 import { OperationsAlertsPanel } from "@/components/operations/OperationsAlertsPanel";
+import { PublicationAuditPanel } from "@/components/operations/PublicationAuditPanel";
+import { PublicationMetricsBar } from "@/components/operations/PublicationMetricsBar";
+import { ReportFiltersBar } from "@/components/operations/ReportFiltersBar";
 import type { AccountOperationsSummary } from "@/lib/operations/account-ops";
 import type { OperationsAlert } from "@/lib/operations/alerts-engine";
+import type { ErrorReportSummary } from "@/lib/operations/error-report";
+import type { ReportFilters } from "@/lib/operations/filters";
+import { buildReportQuery } from "@/lib/operations/filters";
 import {
   computeHealthChecks,
   formatDuration,
@@ -14,7 +23,14 @@ import {
   hoursUntilNextPost,
   type computeOperationsSnapshot,
 } from "@/lib/operations/compute";
-import type { ScheduledPost, SocialPlatform, ContentType } from "@/lib/types";
+import type {
+  ContentTypeMetricsRow,
+  MultiplatformGroupMetrics,
+  PlatformMetrics,
+  PublicationMetrics,
+} from "@/lib/operations/metrics";
+import type { PublicationAuditReport } from "@/lib/operations/publication-audit";
+import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 
 interface AccountOption {
   id: string;
@@ -37,12 +53,16 @@ interface Props {
   accountsOverview?: AccountOperationsSummary[];
   operationsAlerts?: OperationsAlert[];
   selectedAccountId: string;
-  selectedPlatform?: SocialPlatform | "all";
-  selectedContentType?: ContentType | "all";
+  filters: ReportFilters;
   posts: ScheduledPost[];
+  allPosts: ScheduledPost[];
   snapshot: ReturnType<typeof computeOperationsSnapshot>;
-  statusFilter: string;
-  periodFilter: string;
+  publicationMetrics: PublicationMetrics;
+  platformMetrics: PlatformMetrics[];
+  contentTypeMetrics: ContentTypeMetricsRow[];
+  multiplatformMetrics: MultiplatformGroupMetrics;
+  errorReport: ErrorReportSummary;
+  publicationAudit: PublicationAuditReport;
 }
 
 function formatSigned(value: number) {
@@ -85,14 +105,19 @@ export function OperationsCenter({
   accountsOverview = [],
   operationsAlerts = [],
   selectedAccountId,
-  selectedPlatform = "all",
-  selectedContentType = "all",
+  filters,
   posts,
+  allPosts,
   snapshot,
-  statusFilter,
-  periodFilter,
+  publicationMetrics,
+  platformMetrics,
+  contentTypeMetrics,
+  multiplatformMetrics,
+  errorReport,
+  publicationAudit,
 }: Props) {
   const accountId = selectedAccountId;
+  const view = filters.view;
   const [tokenValid, setTokenValid] = useState(true);
   const [followersToday, setFollowersToday] = useState(0);
   const [followers7d, setFollowers7d] = useState(0);
@@ -171,50 +196,15 @@ export function OperationsCenter({
     )[0];
   }, [rankingRows]);
 
-  function buildHref(params: Record<string, string | undefined>) {
-    const query = new URLSearchParams();
-    if (params.platform && params.platform !== "all") query.set("platform", params.platform);
-    if (params.content_type && params.content_type !== "all") query.set("content_type", params.content_type);
-    if (params.account) query.set("account", params.account);
-    if (params.status && params.status !== "all") query.set("status", params.status);
-    if (params.period && params.period !== "all") query.set("period", params.period);
-    const qs = query.toString();
-    return qs ? `/dashboard/reports?${qs}` : "/dashboard/reports";
+  function buildHref(patch: Partial<ReportFilters>) {
+    return buildReportQuery({ ...filters, ...patch, accountId: accountId || undefined });
   }
 
-  const platformTabs = [
-    ["all", "Todas"],
-    ["instagram", "Instagram"],
-    ["tiktok", "TikTok"],
-  ] as const;
-
-  const contentTypeTabs = [
-    ["all", "Todos"],
-    ["reel", "Reels"],
-    ["post", "Posts"],
-    ["story", "Stories"],
-    ["tiktok_video", "TikTok Videos"],
-  ] as const;
-
-  const visibleAccounts = accounts.filter(
-    (account) => selectedPlatform === "all" || account.platform === selectedPlatform,
-  );
-
-  const statusFilters = [
-    ["all", "Todos"],
-    ["pending", "Pendentes"],
-    ["retrying", "Reagendando"],
-    ["processing", "Publicando"],
-    ["published", "Publicados"],
-    ["failed", "Falhas"],
-  ] as const;
-
-  const periodFilters = [
-    ["all", "Todos"],
-    ["today", "Hoje"],
-    ["tomorrow", "Amanhã"],
-    ["week", "Esta semana"],
-    ["month", "Este mês"],
+  const viewTabs = [
+    ["publications", "Publicações"],
+    ["audit", "Conferência"],
+    ["metrics", "Métricas"],
+    ["errors", "Erros"],
   ] as const;
 
   return (
@@ -227,17 +217,67 @@ export function OperationsCenter({
             <div>
               <h2 className="text-xl font-bold text-ig-text">Suas páginas</h2>
               <p className="text-sm text-ig-muted">
-                Visão rápida de saúde, fila e ações por conta.
+                Métricas por conta — hoje, 7 dias, fila e taxa de sucesso.
               </p>
             </div>
-            <a href="/dashboard/uploads" className="text-sm font-medium text-ig-primary hover:underline">
-              Histórico de uploads
-            </a>
+            <div className="flex flex-wrap gap-2">
+              <ExportReportButton posts={allPosts} />
+              <a href="/dashboard/uploads" className="text-sm font-medium text-ig-primary hover:underline">
+                Histórico de uploads
+              </a>
+            </div>
           </div>
           <AccountOperationsGrid accounts={accountsOverview} />
         </section>
       )}
 
+      <PublicationMetricsBar metrics={publicationMetrics} />
+
+      {view !== "audit" && <ReportFiltersBar filters={filters} accounts={accounts} />}
+
+      <div className="flex flex-wrap gap-2 border-b border-ig-border pb-2">
+        {viewTabs.map(([value, label]) => (
+          <a
+            key={value}
+            href={buildHref({ view: value })}
+            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition ${
+              view === value
+                ? "border border-b-0 border-ig-border bg-ig-elevated text-ig-primary"
+                : "text-ig-muted hover:text-ig-text"
+            }`}
+          >
+            {label}
+          </a>
+        ))}
+        <a
+          href="/dashboard/logs"
+          className="ml-auto self-center text-sm text-ig-primary hover:underline"
+        >
+          Logs operacionais →
+        </a>
+      </div>
+
+      {view === "metrics" && (
+        <MetricsPanels
+          platformMetrics={platformMetrics}
+          contentTypeMetrics={contentTypeMetrics}
+          multiplatformMetrics={multiplatformMetrics}
+        />
+      )}
+
+      {view === "errors" && <ErrorReportPanel report={errorReport} />}
+
+      {view === "audit" && (
+        <PublicationAuditPanel
+          audit={publicationAudit}
+          filters={filters}
+          accounts={accounts}
+          selectedAccountId={accountId}
+        />
+      )}
+
+      {view === "publications" && (
+        <>
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
           <p className="text-sm text-ig-muted">Publicados hoje</p>
@@ -254,95 +294,10 @@ export function OperationsCenter({
         <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
           <p className="text-sm text-ig-muted">Taxa de sucesso</p>
           <p className="mt-1 text-2xl font-bold text-ig-text">
-            {snapshot.scheduledCount
-              ? Math.round((snapshot.publishedCount / snapshot.scheduledCount) * 100)
-              : 0}
-            %
+            {publicationMetrics.successRate}%
           </p>
         </div>
       </section>
-
-      <div className="flex flex-wrap gap-2">
-        {platformTabs.map(([value, label]) => (
-          <a
-            key={value}
-            href={buildHref({
-              platform: value,
-              content_type: selectedContentType,
-              status: statusFilter,
-              period: periodFilter,
-            })}
-            className={`rounded-full px-4 py-2 text-sm transition ${
-              selectedPlatform === value
-                ? "bg-ig-primary text-ig-on-primary"
-                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
-            }`}
-          >
-            {label}
-          </a>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {contentTypeTabs.map(([value, label]) => (
-          <a
-            key={value}
-            href={buildHref({
-              platform: selectedPlatform === "all" ? undefined : selectedPlatform,
-              content_type: value,
-              account: accountId || undefined,
-              status: statusFilter,
-              period: periodFilter,
-            })}
-            className={`rounded-full px-4 py-2 text-sm transition ${
-              selectedContentType === value
-                ? "bg-ig-primary text-ig-on-primary"
-                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
-            }`}
-          >
-            {label}
-          </a>
-        ))}
-      </div>
-
-      {visibleAccounts.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={buildHref({
-              platform: selectedPlatform === "all" ? undefined : selectedPlatform,
-              content_type: selectedContentType === "all" ? undefined : selectedContentType,
-              status: statusFilter,
-              period: periodFilter,
-            })}
-            className={`rounded-full px-4 py-2 text-sm transition ${
-              !accountId
-                ? "bg-ig-primary text-ig-on-primary"
-                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
-            }`}
-          >
-            Todas as contas
-          </a>
-          {visibleAccounts.map((account) => (
-            <a
-              key={account.id}
-              href={buildHref({
-                platform: account.platform,
-                content_type: selectedContentType === "all" ? undefined : selectedContentType,
-                account: account.id,
-                status: statusFilter,
-                period: periodFilter,
-              })}
-              className={`rounded-full px-4 py-2 text-sm transition ${
-                accountId === account.id
-                  ? "bg-ig-primary text-ig-on-primary"
-                  : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
-              }`}
-            >
-              {account.platform === "tiktok" ? "TT" : "IG"} @{account.ig_username ?? "conta"}
-            </a>
-          ))}
-        </div>
-      )}
 
       <section className="ig-hero rounded-3xl border border-ig-info-border bg-gradient-to-br from-ig-primary/10 via-ig-elevated to-ig-secondary p-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-ig-primary">
@@ -598,52 +553,11 @@ export function OperationsCenter({
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold text-ig-text">Publicações</h2>
-            <p className="text-sm text-ig-muted">Gerencie tudo que a IA programou para sua conta</p>
+            <p className="text-sm text-ig-muted">
+              {posts.length} resultado(s) · busca, filtros e ordenação combinados
+            </p>
           </div>
-        </div>
-
-        <div className="mb-4 flex flex-wrap gap-2">
-          {statusFilters.map(([value, label]) => (
-            <a
-              key={value}
-              href={buildHref({
-                platform: selectedPlatform === "all" ? undefined : selectedPlatform,
-                content_type: selectedContentType === "all" ? undefined : selectedContentType,
-                account: accountId,
-                status: value,
-                period: periodFilter,
-              })}
-              className={`rounded-full px-4 py-2 text-sm transition ${
-                statusFilter === value
-                  ? "bg-ig-primary text-ig-on-primary"
-                  : "border border-ig-border bg-ig-secondary text-ig-text"
-              }`}
-            >
-              {label}
-            </a>
-          ))}
-        </div>
-
-        <div className="mb-6 flex flex-wrap gap-2">
-          {periodFilters.map(([value, label]) => (
-            <a
-              key={value}
-              href={buildHref({
-                platform: selectedPlatform === "all" ? undefined : selectedPlatform,
-                content_type: selectedContentType === "all" ? undefined : selectedContentType,
-                account: accountId,
-                status: statusFilter,
-                period: value,
-              })}
-              className={`rounded-full px-4 py-2 text-sm transition ${
-                periodFilter === value
-                  ? "bg-ig-primary text-ig-on-primary"
-                  : "border border-ig-border bg-ig-secondary text-ig-text"
-              }`}
-            >
-              {label}
-            </a>
-          ))}
+          <ExportReportButton posts={posts} />
         </div>
 
         <PostsManager posts={posts} enableBulk rich showPublishedMeta />
@@ -661,6 +575,8 @@ export function OperationsCenter({
           </div>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }

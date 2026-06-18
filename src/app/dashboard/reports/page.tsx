@@ -1,98 +1,61 @@
 import { redirect } from "next/navigation";
 import { OperationsCenter } from "@/components/operations/OperationsCenter";
-import {
-  computeOperationsSnapshot,
-  filterPostsByPeriod,
-} from "@/lib/operations/compute";
-import { getOwnerAccounts } from "@/lib/accounts";
+import { computeOperationsSnapshot } from "@/lib/operations/compute";
 import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
+import { buildErrorReport } from "@/lib/operations/error-report";
+import {
+  applyReportFilters,
+  parseReportFilters,
+  sortReportPosts,
+} from "@/lib/operations/filters";
+import {
+  computeContentTypeMetrics,
+  computeMultiplatformGroupMetrics,
+  computePlatformMetrics,
+  computePublicationMetrics,
+} from "@/lib/operations/metrics";
+import { buildPublicationAudit } from "@/lib/operations/publication-audit";
+import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { getActiveBatchSummaryForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost, SocialPlatform, ContentType, PostStatus } from "@/lib/types";
+import type { ScheduledPost } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const statusLabels = {
-  all: "Todos",
-  pending: "Pendentes",
-  processing: "Publicando",
-  published: "Publicados",
-  failed: "Falhas",
-  retrying: "Reagendando",
-} as const;
-
-type StatusFilter = keyof typeof statusLabels;
-type PeriodFilter = "all" | "today" | "tomorrow" | "week" | "month";
-
-function isStatusFilter(value: string | undefined): value is StatusFilter {
-  return value !== undefined && value in statusLabels;
-}
-
-function isPeriodFilter(value: string | undefined): value is PeriodFilter {
-  return value === "all" || value === "today" || value === "tomorrow" || value === "week" || value === "month";
-}
-
-function isPlatformFilter(value: string | undefined): value is SocialPlatform | "all" {
-  return value === "instagram" || value === "tiktok" || value === "all" || value === undefined;
-}
-
-function isContentTypeFilter(value: string | undefined): value is ContentType | "all" {
-  return (
-    value === "reel" ||
-    value === "post" ||
-    value === "story" ||
-    value === "tiktok_video" ||
-    value === "youtube_short" ||
-    value === "all" ||
-    value === undefined
-  );
-}
 
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    status?: string;
-    account?: string;
-    period?: string;
-    platform?: string;
-    content_type?: string;
-  }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard/reports");
 
   const params = await searchParams;
-  const filter: StatusFilter = isStatusFilter(params.status) ? params.status : "all";
-  const period: PeriodFilter = isPeriodFilter(params.period) ? params.period : "all";
-  const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
-    ? params.platform ?? "all"
-    : "all";
-  const contentTypeFilter: ContentType | "all" = isContentTypeFilter(params.content_type)
-    ? params.content_type ?? "all"
-    : "all";
+  const filters = parseReportFilters(params);
 
   const supabase = createAdminClient();
   const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
   const visibleRefs = accountRefs.filter(
-    (account) => platformFilter === "all" || account.platform === platformFilter,
+    (account) => filters.platform === "all" || account.platform === filters.platform,
   );
   const selectedAccountId =
     params.account && visibleRefs.some((account) => account.id === params.account)
       ? params.account
       : undefined;
 
+  filters.accountId = selectedAccountId;
+
   const allPosts = await getOwnerScheduledPosts(supabase, ownerId, {
-    platform: platformFilter,
+    platform: filters.platform,
     accountId: selectedAccountId,
-    contentType: contentTypeFilter,
+    contentType: filters.contentType,
     hiddenFromReport: false,
     order: "asc",
-    limit: 2000,
+    limit: 5000,
   });
 
   const [igAccounts, tiktokAccounts, activeBatch] = await Promise.all([
@@ -110,6 +73,18 @@ export default async function ReportsPage({
   });
 
   const snapshot = computeOperationsSnapshot(allPosts);
+  const publicationMetrics = computePublicationMetrics(allPosts);
+  const platformMetrics = computePlatformMetrics(allPosts);
+  const contentTypeMetrics = computeContentTypeMetrics(allPosts);
+  const multiplatformMetrics = computeMultiplatformGroupMetrics(allPosts);
+  const errorReport = buildErrorReport(allPosts);
+  const publicationAudit = buildPublicationAudit(allPosts, {
+    platform: filters.platform,
+    contentType: filters.contentType,
+    accountId: selectedAccountId,
+    auditPeriod: filters.auditPeriod,
+    auditDate: filters.auditDate,
+  });
 
   const postIds = new Set(allPosts.map((post) => post.id));
   const { data: recentLogs } = postIds.size
@@ -131,50 +106,38 @@ export default async function ReportsPage({
     activeUploadBatchId: activeBatch?.id ?? null,
   });
 
-  let visiblePosts = allPosts;
-
-  if (filter === "failed") {
-    visiblePosts = visiblePosts.filter(
-      (post) => post.status === "failed" || post.status === "failed_persistent",
-    );
-  } else if (filter === "pending") {
-    visiblePosts = visiblePosts.filter(
-      (post) => post.status === "pending" || post.status === "retrying",
-    );
-  } else if (filter === "retrying") {
-    visiblePosts = visiblePosts.filter((post) => post.status === "retrying");
-  } else if (filter !== "all") {
-    visiblePosts = visiblePosts.filter((post) => post.status === (filter as PostStatus));
-  }
-
-  visiblePosts = filterPostsByPeriod(visiblePosts, period);
-  visiblePosts = [...visiblePosts].sort(
-    (a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime(),
+  const visiblePosts = sortReportPosts(
+    applyReportFilters(allPosts, filters),
+    filters,
   );
 
   return (
     <>
       <header className="ig-page-header">
         <h1>Central de operações</h1>
-        <p>Monitore publicações, falhas e fila de posts.</p>
+        <p>Relatórios, filtros, métricas e visibilidade detalhada das publicações.</p>
       </header>
       <OperationsCenter
-          accounts={accountRefs.map((account) => ({
-            id: account.id,
-            platform: account.platform,
-            ig_username: account.username,
-            profile_picture_url: account.profile_picture_url,
-          }))}
-          accountsOverview={accountsOverview}
-          operationsAlerts={operationsAlerts}
-          selectedAccountId={selectedAccountId ?? ""}
-          selectedPlatform={platformFilter}
-          selectedContentType={contentTypeFilter}
-          posts={visiblePosts as ScheduledPost[]}
-          snapshot={snapshot}
-          statusFilter={filter}
-          periodFilter={period}
-        />
+        accounts={accountRefs.map((account) => ({
+          id: account.id,
+          platform: account.platform,
+          ig_username: account.username,
+          profile_picture_url: account.profile_picture_url,
+        }))}
+        accountsOverview={accountsOverview}
+        operationsAlerts={operationsAlerts}
+        selectedAccountId={selectedAccountId ?? ""}
+        filters={filters}
+        posts={visiblePosts as ScheduledPost[]}
+        allPosts={allPosts as ScheduledPost[]}
+        snapshot={snapshot}
+        publicationMetrics={publicationMetrics}
+        platformMetrics={platformMetrics}
+        contentTypeMetrics={contentTypeMetrics}
+        multiplatformMetrics={multiplatformMetrics}
+        errorReport={errorReport}
+        publicationAudit={publicationAudit}
+      />
     </>
   );
 }

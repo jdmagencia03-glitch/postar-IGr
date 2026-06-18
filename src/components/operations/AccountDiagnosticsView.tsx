@@ -158,14 +158,42 @@ export function AccountDiagnosticsView({
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Pendentes", initial.posts.pending.length],
-          ["Falhas", initial.posts.failed.length],
-          ["Publicando", initial.posts.processing.length],
-          ["Publicados (recentes)", initial.posts.published.length],
+          ["Hoje", initial.account.publishedToday],
+          ["7 dias", initial.account.publishedLast7Days],
+          ["30 dias", initial.account.publishedLast30Days],
+          ["Pendentes", initial.account.pendingCount],
+          ["Falhas", initial.account.failedCount],
+          ["Falha persistente", initial.account.failedPersistentCount],
+          ["Taxa sucesso", `${initial.account.successRate}%`],
+          ["Tipo mais usado", initial.account.topContentType ?? "—"],
         ].map(([label, value]) => (
-          <div key={label} className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+          <div key={String(label)} className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
             <p className="text-sm text-ig-muted">{label}</p>
             <p className="mt-1 text-2xl font-bold text-ig-text">{value}</p>
+          </div>
+        ))}
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ["Publicando", initial.posts.processing.length],
+          ["Publicados (recentes)", initial.posts.published.length],
+          [
+            "Próxima publicação",
+            initial.account.nextPublication
+              ? formatShortDateTime(initial.account.nextPublication)
+              : "—",
+          ],
+          [
+            "Última publicação",
+            initial.account.lastPublication
+              ? formatShortDateTime(initial.account.lastPublication)
+              : "—",
+          ],
+        ].map(([label, value]) => (
+          <div key={String(label)} className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+            <p className="text-sm text-ig-muted">{label}</p>
+            <p className="mt-1 text-lg font-bold text-ig-text">{value}</p>
           </div>
         ))}
       </section>
@@ -189,6 +217,12 @@ export function AccountDiagnosticsView({
                   )}
                 </div>
                 <StatusBadge status={post.status} />
+                <Link
+                  href={`/dashboard/posts/${post.id}`}
+                  className="text-xs text-ig-primary hover:underline"
+                >
+                  Detalhes
+                </Link>
               </div>
             ))}
         </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -256,6 +257,9 @@ export function ScheduledPostCard({
           <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleDuplicate}>
             📋 Duplicar
           </button>
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
         </div>
       );
     }
@@ -269,6 +273,9 @@ export function ScheduledPostCard({
           <button type="button" className={actionButtonClass()} onClick={() => setDialog("cancel-processing")}>
             Cancelar envio
           </button>
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
         </div>
       );
     }
@@ -303,6 +310,9 @@ export function ScheduledPostCard({
               Excluir publicação do Instagram
             </button>
           )}
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
         </div>
       );
     }
@@ -319,11 +329,52 @@ export function ScheduledPostCard({
           <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleDuplicate}>
             📋 Duplicar
           </button>
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
         </div>
       );
     }
 
-    return null;
+    if (status === "retrying" || status === "failed_persistent") {
+      return (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleRetry}>
+            {loading ? "Reenviando..." : "Tentar novamente"}
+          </button>
+          <button type="button" className={actionButtonClass()} onClick={() => { setScheduleDraft(toDateTimeLocalValue(post.scheduled_at)); setDialog("reschedule"); }}>
+            📅 Reagendar
+          </button>
+          <button type="button" className={actionButtonClass()} onClick={() => setDialog("delete")}>
+            🗑 Excluir
+          </button>
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
+        </div>
+      );
+    }
+
+    if (status === "cancelled") {
+      return (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={actionButtonClass()} disabled={loading} onClick={handleDuplicate}>
+            📋 Duplicar
+          </button>
+          <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+            Ver detalhes
+          </Link>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-3">
+        <Link href={`/dashboard/posts/${post.id}`} className={actionButtonClass()}>
+          Ver detalhes
+        </Link>
+      </div>
+    );
   }
 
   return (

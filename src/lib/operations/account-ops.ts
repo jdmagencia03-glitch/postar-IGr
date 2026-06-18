@@ -1,7 +1,9 @@
 import { isToday, parseISO } from "date-fns";
 import { getPlaybookForAccount, playbookHasContent, resolveNicheFromPlaybook } from "@/lib/ai/playbook";
+import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
+import { computeAccountWindowMetrics } from "@/lib/operations/metrics";
 import type { OwnerAccountRef } from "@/lib/posts";
-import type { InstagramAccount, ScheduledPost, SocialPlatform, TikTokAccount } from "@/lib/types";
+import type { ContentType, InstagramAccount, ScheduledPost, SocialPlatform, TikTokAccount } from "@/lib/types";
 
 export type AccountHealthLevel = "healthy" | "attention" | "error";
 export type TokenStatus = "valid" | "expired" | "unknown";
@@ -18,6 +20,8 @@ export interface AccountOperationsSummary {
   tokenStatus: TokenStatus;
   publishingPaused: boolean;
   publishedToday: number;
+  publishedLast7Days: number;
+  publishedLast30Days: number;
   pendingCount: number;
   storiesPending: number;
   storiesFailed: number;
@@ -25,7 +29,10 @@ export interface AccountOperationsSummary {
   tiktokPending: number;
   tiktokFailed: number;
   failedCount: number;
+  failedPersistentCount: number;
   retryingCount: number;
+  successRate: number;
+  topContentType: string | null;
   nextPublication: string | null;
   lastPublication: string | null;
   lastError: string | null;
@@ -97,7 +104,10 @@ export async function buildAccountOperationsSummary(params: {
   const failedCount = scoped.filter(
     (post) => post.status === "failed" || post.status === "failed_persistent",
   ).length;
+  const failedPersistentCount = scoped.filter((post) => post.status === "failed_persistent").length;
   const retryingCount = scoped.filter((post) => post.status === "retrying").length;
+
+  const windowMetrics = computeAccountWindowMetrics(posts, ref.id, ref.platform);
 
   const nextPublication =
     scoped
@@ -144,6 +154,8 @@ export async function buildAccountOperationsSummary(params: {
     tokenStatus,
     publishingPaused,
     publishedToday,
+    publishedLast7Days: windowMetrics.publishedLast7Days,
+    publishedLast30Days: windowMetrics.publishedLast30Days,
     pendingCount,
     storiesPending,
     storiesFailed,
@@ -151,7 +163,12 @@ export async function buildAccountOperationsSummary(params: {
     tiktokPending,
     tiktokFailed,
     failedCount,
+    failedPersistentCount,
     retryingCount,
+    successRate: windowMetrics.successRate,
+    topContentType: windowMetrics.topContentType
+      ? CONTENT_TYPE_LABELS[windowMetrics.topContentType as ContentType]
+      : null,
     nextPublication,
     lastPublication,
     lastError,

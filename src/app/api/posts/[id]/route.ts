@@ -7,16 +7,65 @@ import {
   canHideFromReport,
   canReschedulePost,
   getOwnerPostById,
+  getOwnerScheduledPosts,
 } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
+
+const POST_SELECT_PUBLIC =
+  "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url)";
 
 const patchSchema = z.object({
   caption: z.string().optional(),
   scheduled_at: z.string().datetime().optional(),
   hidden_from_report: z.boolean().optional(),
 });
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const userId = await getSessionUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const supabase = createAdminClient();
+  const post = await getOwnerPostById(supabase, userId, id);
+
+  if (!post) {
+    return NextResponse.json({ error: "Post não encontrado" }, { status: 404 });
+  }
+
+  const { data: publicPost } = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_PUBLIC)
+    .eq("id", id)
+    .maybeSingle();
+
+  let siblingPosts: unknown[] = [];
+  if (post.parent_publish_group_id) {
+    const allPosts = await getOwnerScheduledPosts(supabase, userId, { limit: 5000 });
+    const siblings = allPosts.filter(
+      (p) => p.parent_publish_group_id === post.parent_publish_group_id && p.id !== id,
+    );
+    siblingPosts = siblings;
+  }
+
+  const { data: logs } = await supabase
+    .from("publish_logs")
+    .select("*")
+    .eq("post_id", id)
+    .order("created_at", { ascending: true });
+
+  return NextResponse.json({
+    post: publicPost ?? post,
+    siblingPosts,
+    logs: logs ?? [],
+  });
+}
 
 export async function PATCH(
   request: NextRequest,

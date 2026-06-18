@@ -97,7 +97,13 @@ export function PostsManager({
   const editablePostIds = useMemo(
     () =>
       bulkPosts
-        .filter((post) => post.status === "pending" || post.status === "failed")
+        .filter(
+          (post) =>
+            post.status === "pending" ||
+            post.status === "failed" ||
+            post.status === "retrying" ||
+            post.status === "failed_persistent",
+        )
         .map((post) => post.id),
     [bulkPosts],
   );
