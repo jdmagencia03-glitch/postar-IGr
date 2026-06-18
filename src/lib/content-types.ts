@@ -41,3 +41,7 @@ export function mediaTypeForStoryFile(filename: string, mimeType?: string): Medi
 export function defaultInsertContentType(mediaType: MediaType): ContentType {
   return contentTypeFromMediaType(mediaType);
 }
+
+export function contentTypeForPlatform(platform: "instagram" | "tiktok"): ContentType {
+  return platform === "tiktok" ? "tiktok_video" : "reel";
+}

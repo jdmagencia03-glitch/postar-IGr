@@ -1,9 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, Plus, UserRound, X } from "lucide-react";
+import { Check, Loader2, Plus, UserRound, X } from "lucide-react";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
+import { MultiplatformPreview } from "@/components/MultiplatformPreview";
 import { updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
+import type { PublishDestination } from "@/lib/multiplatform/types";
+import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
+import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
 import { formatApiError } from "@/lib/api-errors";
@@ -192,18 +196,35 @@ export function BulkUploadForm({
   tiktokAccounts = [],
   defaultAccountId,
 }: Props) {
-  const activeAccounts = platform === "tiktok" ? tiktokAccounts : accounts;
+  const initialDestination: PublishDestination =
+    platform === "tiktok" ? "tiktok" : "instagram";
 
-  const initialAccountId = useMemo(() => {
-    if (defaultAccountId && activeAccounts.some((account) => account.id === defaultAccountId)) {
-      return defaultAccountId;
-    }
-    return activeAccounts[0]?.id ?? "";
-  }, [activeAccounts, defaultAccountId]);
+  const [destinationMode, setDestinationMode] = useState<PublishDestination>(initialDestination);
+  const [selectedInstagramId, setSelectedInstagramId] = useState(
+    () =>
+      (defaultAccountId && accounts.some((a) => a.id === defaultAccountId)
+        ? defaultAccountId
+        : accounts[0]?.id) ?? "",
+  );
+  const [selectedTiktokId, setSelectedTiktokId] = useState(
+    () =>
+      (defaultAccountId && tiktokAccounts.some((a) => a.id === defaultAccountId)
+        ? defaultAccountId
+        : tiktokAccounts[0]?.id) ?? "",
+  );
+
+  const uploadPlatform: SocialPlatform =
+    destinationMode === "tiktok" ? "tiktok" : "instagram";
+  const uploadAccountId =
+    destinationMode === "tiktok" ? selectedTiktokId : selectedInstagramId;
+
+  const activeAccounts = uploadPlatform === "tiktok" ? tiktokAccounts : accounts;
+
+  const initialAccountId = useMemo(() => uploadAccountId, [uploadAccountId]);
 
   const draft = useMemo(
-    () => readScheduleDraft(platform, initialAccountId),
-    [platform, initialAccountId],
+    () => readScheduleDraft(uploadPlatform, initialAccountId),
+    [uploadPlatform, initialAccountId],
   );
 
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(draft?.scheduleMode ?? "auto");
@@ -226,6 +247,13 @@ export function BulkUploadForm({
   );
   const [newTimeInput, setNewTimeInput] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId);
+  const [previewVideos, setPreviewVideos] = useState<MultiplatformVideoPreview[] | null>(null);
+  const [previewSummary, setPreviewSummary] = useState("");
+  const [previewTotalPosts, setPreviewTotalPosts] = useState(0);
+  const [previewItems, setPreviewItems] = useState<Array<{ media_urls: string[]; filename: string }>>(
+    [],
+  );
+  const [confirmingPreview, setConfirmingPreview] = useState(false);
   const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
   const restoredBatchIdRef = useRef<string | null>(null);
   const handleScheduleRef = useRef<(partial?: boolean) => Promise<void>>(async () => {});
@@ -238,26 +266,40 @@ export function BulkUploadForm({
   const [captionSource, setCaptionSource] = useState<"ai" | "fallback" | null>(null);
 
   useEffect(() => {
-    if (platform === "tiktok" && scheduleMode === "warmup") {
+    setSelectedAccountId(uploadAccountId);
+  }, [uploadAccountId]);
+
+  useEffect(() => {
+    if (destinationMode === "tiktok" && scheduleMode === "warmup") {
       setScheduleMode("auto");
     }
-  }, [platform, scheduleMode]);
+  }, [destinationMode, scheduleMode]);
 
   const selectedAccount =
     activeAccounts.find((account) => account.id === selectedAccountId) ?? activeAccounts[0];
   const selectedUsername =
-    platform === "tiktok"
+    uploadPlatform === "tiktok"
       ? (selectedAccount as TikTokAccount | undefined)?.username ??
         (selectedAccount as TikTokAccount | undefined)?.display_name ??
         "conta"
       : (selectedAccount as InstagramAccount | undefined)?.ig_username ?? "conta";
+  const warmupDays =
+    destinationMode !== "tiktok"
+      ? ((accounts.find((a) => a.id === selectedInstagramId) as InstagramAccount | undefined)
+          ?.warmup_days ?? DEFAULT_WARMUP_DAYS)
+      : DEFAULT_WARMUP_DAYS;
+
+  const canUseInstagram = accounts.length > 0;
+  const canUseTiktok = tiktokAccounts.length > 0;
+  const destinationReady =
+    destinationMode === "instagram"
+      ? canUseInstagram && Boolean(selectedInstagramId)
+      : destinationMode === "tiktok"
+        ? canUseTiktok && Boolean(selectedTiktokId)
+        : canUseInstagram && canUseTiktok && Boolean(selectedInstagramId) && Boolean(selectedTiktokId);
   const selectedAvatar = selectedAccount?.profile_picture_url ?? null;
   const completedCount = activeBatch?.completed_files ?? 0;
   const totalCount = activeBatch?.total_files ?? 0;
-  const warmupDays =
-    platform === "instagram"
-      ? ((selectedAccount as InstagramAccount | undefined)?.warmup_days ?? DEFAULT_WARMUP_DAYS)
-      : DEFAULT_WARMUP_DAYS;
   const batchReady = activeBatch?.status === "ready";
   const canSchedulePartial = completedCount > 0 && !batchReady;
   const canScheduleAll = batchReady && completedCount > 0;
@@ -308,18 +350,18 @@ export function BulkUploadForm({
     setCustomStartTime(restored.customStartTime);
     setCustomEndTime(restored.customEndTime);
     setCustomTimeSlots(restored.customTimeSlots);
-    writeScheduleDraft(platform, selectedAccountId, restored);
-  }, [activeBatch, platform, selectedAccountId]);
+    writeScheduleDraft(uploadPlatform, selectedAccountId, restored);
+  }, [activeBatch, uploadPlatform, selectedAccountId]);
 
   useEffect(() => {
-    writeScheduleDraft(platform, selectedAccountId, {
+    writeScheduleDraft(uploadPlatform, selectedAccountId, {
       scheduleMode,
       customPostsPerDay,
       customStartTime,
       customEndTime,
       customTimeSlots,
     });
-  }, [platform, selectedAccountId, scheduleMode, customPostsPerDay, customStartTime, customEndTime, customTimeSlots]);
+  }, [uploadPlatform, selectedAccountId, scheduleMode, customPostsPerDay, customStartTime, customEndTime, customTimeSlots]);
 
   function buildCustomSchedulePayload(
     postsPerDay: number,
@@ -434,8 +476,10 @@ export function BulkUploadForm({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        platform,
-        account_ids: [selectedAccountId],
+        platform: uploadPlatform,
+        account_ids: [
+          uploadPlatform === "tiktok" ? selectedTiktokId : selectedInstagramId,
+        ],
         schedule_mode: effectiveScheduleMode,
         items: params.items,
         captions: params.captions,
@@ -471,8 +515,10 @@ export function BulkUploadForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platform,
-          account_ids: [selectedAccountId],
+          platform: uploadPlatform,
+          account_ids: [
+          uploadPlatform === "tiktok" ? selectedTiktokId : selectedInstagramId,
+        ],
           schedule_mode: effectiveScheduleMode,
           items: batchItems,
           batch_offset: offset,
@@ -511,8 +557,134 @@ export function BulkUploadForm({
     return { totalCreated, lastScheduleSummary };
   }
 
+  function buildMultiplatformTargets() {
+    if (destinationMode === "both") {
+      return [
+        { platform: "instagram" as const, account_id: selectedInstagramId },
+        { platform: "tiktok" as const, account_id: selectedTiktokId },
+      ];
+    }
+    if (destinationMode === "tiktok") {
+      return [{ platform: "tiktok" as const, account_id: selectedTiktokId }];
+    }
+    return [{ platform: "instagram" as const, account_id: selectedInstagramId }];
+  }
+
+  async function runMultiplatformPreview(
+    items: Array<{ media_urls: string[]; filename: string }>,
+  ) {
+    const targets = buildMultiplatformTargets();
+    const batches = chunkArray(items, API_BATCH_SIZE);
+    const allVideos: MultiplatformVideoPreview[] = [];
+    let lastScheduleSummary = "";
+    let source: "ai" | "fallback" = "ai";
+
+    markStep("captions");
+    markStep("hashtags");
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batchItems = batches[batchIndex];
+      const offset = batchIndex * API_BATCH_SIZE;
+
+      setLoadingStep("Gerando legendas e horários por plataforma...");
+      setProgress(30 + Math.round(((batchIndex + 0.5) / batches.length) * 50));
+      markStep("calendar");
+
+      const previewRes = await apiFetch("/api/posts/multiplatform/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targets,
+          schedule_mode: effectiveScheduleMode,
+          items: batchItems,
+          batch_offset: offset,
+          total_count: items.length,
+          ...buildSchedulePayload(),
+        }),
+      });
+
+      const previewData = await readJsonResponse(previewRes);
+      if (!previewRes.ok) {
+        throw new Error(formatApiError(previewData.error) || "Falha ao gerar prévia");
+      }
+
+      if (previewData.caption_source === "fallback") source = "fallback";
+      allVideos.push(...((previewData.preview as MultiplatformVideoPreview[]) ?? []));
+      lastScheduleSummary = String(previewData.schedule_summary ?? "");
+    }
+
+    setCaptionSource(source);
+    setPreviewVideos(allVideos);
+    setPreviewSummary(lastScheduleSummary);
+    setPreviewTotalPosts(
+      allVideos.reduce((sum, video) => sum + video.destinations.length, 0),
+    );
+    setPreviewItems(items);
+    setProgress(100);
+  }
+
+  async function confirmMultiplatformPreview() {
+    if (!previewVideos?.length) return 0;
+
+    setConfirmingPreview(true);
+    try {
+      const confirmRes = await apiFetch("/api/posts/multiplatform/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videos: previewVideos.map((video) => ({
+            parent_publish_group_id: video.parent_publish_group_id,
+            media_urls: video.media_urls,
+            filename: video.filename,
+            destinations: video.destinations.map((dest) => ({
+              platform: dest.platform,
+              account_id: dest.account_id,
+              caption: dest.caption,
+              scheduled_at: dest.scheduled_at,
+            })),
+          })),
+        }),
+      });
+
+      const confirmData = await readJsonResponse(confirmRes);
+      if (!confirmRes.ok) {
+        throw new Error(formatApiError(confirmData.error) || "Falha ao confirmar agendamento");
+      }
+
+      if (activeBatch?.id && previewItems.length) {
+        await markBatchFilesScheduled(
+          activeBatch.id,
+          previewItems.flatMap((item) => item.media_urls),
+        );
+      }
+
+      return Number(confirmData.created ?? 0);
+    } finally {
+      setConfirmingPreview(false);
+    }
+  }
+
+  function handlePreviewCaptionChange(
+    videoIndex: number,
+    platform: "instagram" | "tiktok",
+    caption: string,
+  ) {
+    setPreviewVideos((current) =>
+      current?.map((video) =>
+        video.index === videoIndex
+          ? {
+              ...video,
+              destinations: video.destinations.map((dest) =>
+                dest.platform === platform ? { ...dest, caption } : dest,
+              ),
+            }
+          : video,
+      ) ?? null,
+    );
+  }
+
   async function handleSchedule(partial = false) {
-    if (!activeBatch || !selectedAccountId) return;
+    if (!activeBatch || !destinationReady) return;
 
     if (activeBatch.status === "scheduled" && !partial) {
       setResult("Este lote já foi agendado. Inicie um novo upload para programar mais vídeos.");
@@ -553,6 +725,13 @@ export function BulkUploadForm({
     markStep("videos");
 
     try {
+      if (destinationMode === "both") {
+        await runMultiplatformPreview(items);
+        setScheduling(false);
+        setLoadingStep("");
+        return;
+      }
+
       const { totalCreated, lastScheduleSummary } = await runAutopilot(items);
 
       if (activeBatch?.id) {
@@ -569,12 +748,12 @@ export function BulkUploadForm({
 
       if (!partial) {
         const query = new URLSearchParams({
-          platform,
-          account: selectedAccountId,
+          platform: uploadPlatform,
+          account: uploadPlatform === "tiktok" ? selectedTiktokId : selectedInstagramId,
         });
         window.setTimeout(() => {
           window.location.href =
-            platform === "tiktok"
+            uploadPlatform === "tiktok"
               ? `/dashboard/tiktok?${query.toString()}`
               : `/dashboard/reports?${query.toString()}`;
         }, 1200);
@@ -607,7 +786,7 @@ export function BulkUploadForm({
       description:
         "A IA escolhe quantos posts por dia, os melhores horários e a distribuição no calendário.",
     },
-    ...(platform === "instagram"
+    ...(destinationMode !== "tiktok"
       ? [
           {
             id: "warmup" as ScheduleMode,
@@ -643,52 +822,87 @@ export function BulkUploadForm({
     >
       <section className="ig-panel space-y-5 p-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Conta</p>
-          <p className="mt-1 text-sm text-ig-text">
-            {platform === "tiktok" ? "TikTok conectado" : "Instagram conectado"}
+          <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">
+            Escolher destinos
           </p>
-          <div className="mt-3 flex items-center gap-3 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {(
+              [
+                ["instagram", canUseInstagram],
+                ["tiktok", canUseTiktok],
+                ["both", canUseInstagram && canUseTiktok],
+              ] as const
+            ).map(([mode, enabled]) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={!enabled}
+                onClick={() => setDestinationMode(mode)}
+                className={`rounded-xl border px-3 py-3 text-left text-sm transition ${
+                  destinationMode === mode
+                    ? "border-ig-primary bg-ig-primary/10"
+                    : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
+                } ${!enabled ? "cursor-not-allowed opacity-50" : ""}`}
+              >
+                <p className="font-semibold text-ig-text">{DESTINATION_LABELS[mode]}</p>
+                {!enabled && (
+                  <p className="mt-1 text-xs text-ig-muted">Conecte a conta primeiro</p>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {(destinationMode === "instagram" || destinationMode === "both") && canUseInstagram && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">
+              Conta Instagram
+            </p>
+            <select
+              value={selectedInstagramId}
+              onChange={(event) => setSelectedInstagramId(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-ig-border bg-ig-secondary px-4 py-3 text-sm"
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  @{account.ig_username ?? "conta"}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {(destinationMode === "tiktok" || destinationMode === "both") && canUseTiktok && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">
+              Conta TikTok
+            </p>
+            <select
+              value={selectedTiktokId}
+              onChange={(event) => setSelectedTiktokId(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-ig-border bg-ig-secondary px-4 py-3 text-sm"
+            >
+              {tiktokAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  @{account.username ?? account.display_name ?? "conta"}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {destinationMode === "instagram" && (
+          <div className="flex items-center gap-3 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
             {selectedAvatar ? (
-              <img
-                src={selectedAvatar}
-                alt=""
-                className="h-10 w-10 rounded-full object-cover"
-              />
+              <img src={selectedAvatar} alt="" className="h-10 w-10 rounded-full object-cover" />
             ) : (
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-ig-elevated text-ig-muted">
                 <UserRound size={18} />
               </div>
             )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold text-ig-text">@{selectedUsername}</p>
-              {activeAccounts.length > 1 && (
-                <div className="relative mt-1">
-                  <select
-                    value={selectedAccountId}
-                    onChange={(event) => setSelectedAccountId(event.target.value)}
-                    className="w-full appearance-none rounded-lg border border-ig-border bg-ig-elevated py-1.5 pl-2 pr-8 text-xs text-ig-text"
-                  >
-                    {activeAccounts.map((account) => {
-                      const label =
-                        platform === "tiktok"
-                          ? `@${(account as TikTokAccount).username ?? (account as TikTokAccount).display_name ?? "conta"}`
-                          : `@${(account as InstagramAccount).ig_username ?? "conta"}`;
-                      return (
-                        <option key={account.id} value={account.id}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  <ChevronDown
-                    size={14}
-                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ig-muted"
-                  />
-                </div>
-              )}
-            </div>
+            <p className="truncate font-semibold text-ig-text">@{selectedUsername}</p>
           </div>
-        </div>
+        )}
 
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Upload</p>
@@ -697,8 +911,8 @@ export function BulkUploadForm({
           </p>
           <div className="mt-3">
             <SupremeUploadManager
-              accountId={selectedAccountId}
-              platform={platform}
+              accountId={uploadAccountId}
+              platform={uploadPlatform}
               scheduleMode={scheduleMode}
               customSchedule={customSchedulePayload}
               onBatchUpdate={handleBatchUpdate}
@@ -851,8 +1065,16 @@ export function BulkUploadForm({
           </h2>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between gap-4">
+              <dt className="text-ig-muted">Destinos</dt>
+              <dd className="font-medium text-ig-text">{DESTINATION_LABELS[destinationMode]}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Conta</dt>
-              <dd className="font-medium text-ig-text">@{selectedUsername}</dd>
+              <dd className="font-medium text-ig-text">
+                {destinationMode === "both"
+                  ? `@${accounts.find((a) => a.id === selectedInstagramId)?.ig_username ?? "ig"} + @${tiktokAccounts.find((a) => a.id === selectedTiktokId)?.username ?? "tt"}`
+                  : `@${selectedUsername}`}
+              </dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-ig-muted">Vídeos</dt>
@@ -884,7 +1106,7 @@ export function BulkUploadForm({
       {canSchedulePartial && (
         <button
           type="button"
-          disabled={scheduling || isUploading}
+          disabled={scheduling || isUploading || !destinationReady}
           onClick={() => handleSchedule(true)}
           className="ig-btn-secondary w-full py-3 text-sm font-semibold disabled:opacity-50"
         >
@@ -894,7 +1116,7 @@ export function BulkUploadForm({
 
       <button
         type="submit"
-        disabled={scheduling || isUploading || !canScheduleAll}
+        disabled={scheduling || isUploading || !canScheduleAll || !destinationReady}
         className="ig-btn w-full py-4 text-base font-bold disabled:opacity-50"
       >
         {scheduling
@@ -941,6 +1163,35 @@ export function BulkUploadForm({
           {result.includes("agendad") ? "✓ " : ""}
           {result}
         </p>
+      )}
+
+      {previewVideos && (
+        <MultiplatformPreview
+          videos={previewVideos}
+          scheduleSummary={previewSummary}
+          captionSource={captionSource ?? "ai"}
+          totalPosts={previewTotalPosts}
+          loading={confirmingPreview}
+          onCaptionChange={handlePreviewCaptionChange}
+          onCancel={() => {
+            setPreviewVideos(null);
+            setPreviewItems([]);
+          }}
+          onConfirm={async () => {
+            try {
+              const totalCreated = await confirmMultiplatformPreview();
+              setPreviewVideos(null);
+              setResult(
+                `${totalCreated} publicações agendadas em múltiplas plataformas. ${previewSummary}`,
+              );
+              window.setTimeout(() => {
+                window.location.href = "/dashboard/reports";
+              }, 1200);
+            } catch (error) {
+              setResult(error instanceof Error ? error.message : "Erro ao confirmar");
+            }
+          }}
+        />
       )}
     </form>
   );

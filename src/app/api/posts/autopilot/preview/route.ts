@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
       total_count: parsed.data.total_count ?? parsed.data.items.length,
       warmup,
       custom,
+      platform,
     });
 
     return NextResponse.json({

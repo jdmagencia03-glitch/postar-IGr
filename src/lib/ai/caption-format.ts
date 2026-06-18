@@ -118,3 +118,27 @@ export function formatInstagramCaption(raw: string) {
 export function formatInstagramCaptions(captions: string[]) {
   return captions.map((caption) => formatInstagramCaption(caption));
 }
+
+/** Legendas TikTok: mais curtas, uma linha principal + hashtags compactas. */
+export function formatTikTokCaption(raw: string) {
+  const normalized = raw.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return normalized;
+
+  const { body, hashtags } = extractHashtagBlock(normalized);
+  const lines = body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const shortBody = lines.join(" ").slice(0, 220).trim();
+
+  if (hashtags) {
+    const tags = hashtags
+      .split(/\s+/)
+      .slice(0, 6)
+      .join(" ");
+    return shortBody ? `${shortBody}\n\n${tags}` : tags;
+  }
+
+  return shortBody;
+}

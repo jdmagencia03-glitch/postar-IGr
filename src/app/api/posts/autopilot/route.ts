@@ -6,7 +6,7 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
-import { contentTypeFromMediaType } from "@/lib/content-types";
+import { contentTypeForPlatform } from "@/lib/content-types";
 import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
         platform,
         account_id: platform === "instagram" ? account.id : null,
         tiktok_account_id: platform === "tiktok" ? account.id : null,
-        content_type: contentTypeFromMediaType("REELS"),
+        content_type: contentTypeForPlatform(platform),
         media_type: "REELS" as const,
         media_urls: item.media_urls,
         caption: parsed.data.captions[index]?.trim() || null,

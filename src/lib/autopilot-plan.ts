@@ -64,6 +64,7 @@ export async function buildAutopilotPlan(params: {
   total_count?: number;
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
+  platform?: SocialPlatform;
 }) {
   const scheduleMode = params.schedule_mode ?? "auto";
   const totalCount = params.total_count ?? params.items.length;
@@ -89,6 +90,7 @@ export async function buildAutopilotPlan(params: {
     accountId: params.accountId,
     globalOffset: batchOffset,
     niche: params.niche,
+    platform: params.platform ?? "instagram",
   });
 
   const preview: AutopilotPreviewEntry[] = params.items.map((item, index) => ({
