@@ -1,4 +1,5 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
+import { MAX_PUBLISH_RETRIES, nextRetryAtFromCount } from "@/lib/publish/retry-policy";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -73,7 +74,7 @@ export async function assertSafeToPublish(supabase: AdminClient, postId: string)
           "Publicação anterior detectada nos logs. Republicação bloqueada por segurança. Verifique o Instagram.",
       })
       .eq("id", postId)
-      .in("status", ["pending", "processing"])
+      .in("status", ["pending", "processing", "retrying"])
       .is("media_id", null);
 
     throw new PublishGuardError("Log de sucesso existente — republicação bloqueada");
@@ -168,7 +169,9 @@ export async function claimPostForProcessing(
   supabase: AdminClient,
   postId: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase
+  const now = new Date().toISOString();
+
+  const { data: pendingClaim, error: pendingError } = await supabase
     .from("scheduled_posts")
     .update({ status: "processing" })
     .eq("id", postId)
@@ -177,11 +180,27 @@ export async function claimPostForProcessing(
     .select("id")
     .maybeSingle();
 
-  if (error) {
-    throw new Error(`Falha ao reservar post: ${error.message}`);
+  if (pendingError) {
+    throw new Error(`Falha ao reservar post: ${pendingError.message}`);
   }
 
-  return Boolean(data);
+  if (pendingClaim) return true;
+
+  const { data: retryClaim, error: retryError } = await supabase
+    .from("scheduled_posts")
+    .update({ status: "processing" })
+    .eq("id", postId)
+    .eq("status", "retrying")
+    .is("media_id", null)
+    .lte("next_retry_at", now)
+    .select("id")
+    .maybeSingle();
+
+  if (retryError) {
+    throw new Error(`Falha ao reservar post em retry: ${retryError.message}`);
+  }
+
+  return Boolean(retryClaim);
 }
 
 /** Grava media_id IMEDIATAMENTE após sucesso na API — impede loop de republicação. */
@@ -302,7 +321,7 @@ export async function markPostPublishCriticalFailure(
 export async function markPostFailed(supabase: AdminClient, postId: string, message: string) {
   const { data: post } = await supabase
     .from("scheduled_posts")
-    .select("media_id")
+    .select("media_id, retry_count")
     .eq("id", postId)
     .maybeSingle();
 
@@ -321,25 +340,62 @@ export async function markPostFailed(supabase: AdminClient, postId: string, mess
     await supabase
       .from("scheduled_posts")
       .update({
-        status: "failed",
-        error_message:
-          "Publicação detectada nos logs. Republicação bloqueada por segurança.",
+        status: "failed_persistent",
+        error_message: "Publicação detectada nos logs. Republicação bloqueada por segurança.",
       })
       .eq("id", postId)
       .is("media_id", null);
     return;
   }
 
+  const nextRetryCount = (post?.retry_count ?? 0) + 1;
+
+  if (nextRetryCount >= MAX_PUBLISH_RETRIES) {
+    const { error } = await supabase
+      .from("scheduled_posts")
+      .update({
+        status: "failed_persistent",
+        retry_count: nextRetryCount,
+        next_retry_at: null,
+        error_message: message,
+      })
+      .eq("id", postId)
+      .is("media_id", null);
+
+    if (error) {
+      console.error(`[publish] failed to mark post ${postId} as failed_persistent:`, error.message);
+    }
+
+    await logPublishEvent(
+      supabase,
+      postId,
+      "error",
+      `Falha persistente após ${nextRetryCount} tentativa(s): ${message}`,
+    );
+    return;
+  }
+
+  const nextRetryAt = nextRetryAtFromCount(nextRetryCount);
   const { error } = await supabase
     .from("scheduled_posts")
     .update({
-      status: "failed",
+      status: "retrying",
+      retry_count: nextRetryCount,
+      next_retry_at: nextRetryAt,
       error_message: message,
     })
     .eq("id", postId)
     .is("media_id", null);
 
   if (error) {
-    console.error(`[publish] failed to mark post ${postId} as failed:`, error.message);
+    console.error(`[publish] failed to schedule retry for post ${postId}:`, error.message);
+    return;
   }
+
+  await logPublishEvent(
+    supabase,
+    postId,
+    "info",
+    `Retry ${nextRetryCount}/${MAX_PUBLISH_RETRIES} agendado para ${nextRetryAt}. Erro: ${message}`,
+  );
 }

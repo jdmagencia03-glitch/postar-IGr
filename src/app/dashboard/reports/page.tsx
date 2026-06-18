@@ -4,10 +4,15 @@ import {
   computeOperationsSnapshot,
   filterPostsByPeriod,
 } from "@/lib/operations/compute";
+import { getOwnerAccounts } from "@/lib/accounts";
+import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
+import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
+import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
+import { getActiveBatchSummaryForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost, SocialPlatform, ContentType } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform, ContentType, PostStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +22,7 @@ const statusLabels = {
   processing: "Publicando",
   published: "Publicados",
   failed: "Falhas",
+  retrying: "Reagendando",
 } as const;
 
 type StatusFilter = keyof typeof statusLabels;
@@ -89,12 +95,56 @@ export default async function ReportsPage({
     limit: 2000,
   });
 
+  const [igAccounts, tiktokAccounts, activeBatch] = await Promise.all([
+    getOwnerAccounts(supabase, ownerId),
+    getOwnerTikTokAccounts(supabase, ownerId),
+    getActiveBatchSummaryForOwner(supabase, ownerId),
+  ]);
+
+  const accountsOverview = await buildAllAccountOperationsSummaries({
+    refs: accountRefs,
+    igAccounts,
+    tiktokAccounts,
+    posts: allPosts,
+    ownerId,
+  });
+
   const snapshot = computeOperationsSnapshot(allPosts);
+
+  const postIds = new Set(allPosts.map((post) => post.id));
+  const { data: recentLogs } = postIds.size
+    ? await supabase
+        .from("publish_logs")
+        .select("created_at")
+        .in("post_id", [...postIds])
+        .eq("level", "success")
+        .order("created_at", { ascending: false })
+        .limit(1)
+    : { data: [] };
+
+  const operationsAlerts = buildOperationsAlerts({
+    accounts: accountsOverview,
+    posts: allPosts,
+    coverageDays: snapshot.coverageDays,
+    cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
+    lastPublishAt: recentLogs?.[0]?.created_at ?? null,
+    activeUploadBatchId: activeBatch?.id ?? null,
+  });
 
   let visiblePosts = allPosts;
 
-  if (filter !== "all") {
-    visiblePosts = visiblePosts.filter((post) => post.status === filter);
+  if (filter === "failed") {
+    visiblePosts = visiblePosts.filter(
+      (post) => post.status === "failed" || post.status === "failed_persistent",
+    );
+  } else if (filter === "pending") {
+    visiblePosts = visiblePosts.filter(
+      (post) => post.status === "pending" || post.status === "retrying",
+    );
+  } else if (filter === "retrying") {
+    visiblePosts = visiblePosts.filter((post) => post.status === "retrying");
+  } else if (filter !== "all") {
+    visiblePosts = visiblePosts.filter((post) => post.status === (filter as PostStatus));
   }
 
   visiblePosts = filterPostsByPeriod(visiblePosts, period);
@@ -115,6 +165,8 @@ export default async function ReportsPage({
             ig_username: account.username,
             profile_picture_url: account.profile_picture_url,
           }))}
+          accountsOverview={accountsOverview}
+          operationsAlerts={operationsAlerts}
           selectedAccountId={selectedAccountId ?? ""}
           selectedPlatform={platformFilter}
           selectedContentType={contentTypeFilter}

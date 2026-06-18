@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PostsManager } from "@/components/PostsManager";
+import { AccountOperationsGrid } from "@/components/operations/AccountOperationsGrid";
+import { OperationsAlertsPanel } from "@/components/operations/OperationsAlertsPanel";
+import type { AccountOperationsSummary } from "@/lib/operations/account-ops";
+import type { OperationsAlert } from "@/lib/operations/alerts-engine";
 import {
-  computeAlerts,
   computeHealthChecks,
   formatDuration,
   formatShortDate,
@@ -31,6 +34,8 @@ interface RankingRow {
 
 interface Props {
   accounts: AccountOption[];
+  accountsOverview?: AccountOperationsSummary[];
+  operationsAlerts?: OperationsAlert[];
   selectedAccountId: string;
   selectedPlatform?: SocialPlatform | "all";
   selectedContentType?: ContentType | "all";
@@ -77,6 +82,8 @@ function StatLine({ label, value }: { label: string; value: string }) {
 
 export function OperationsCenter({
   accounts,
+  accountsOverview = [],
+  operationsAlerts = [],
   selectedAccountId,
   selectedPlatform = "all",
   selectedContentType = "all",
@@ -152,16 +159,7 @@ export function OperationsCenter({
     [tokenValid, snapshot.pendingCount, snapshot.failedCount],
   );
 
-  const alerts = useMemo(
-    () =>
-      computeAlerts({
-        coverageDays: snapshot.coverageDays,
-        failedCount: snapshot.failedCount,
-        tokenValid,
-      }),
-    [snapshot.coverageDays, snapshot.failedCount, tokenValid],
-  );
-
+  const publishedToday = accountsOverview.reduce((sum, account) => sum + account.publishedToday, 0);
   const nextHours = hoursUntilNextPost(snapshot.nextPost);
   const growthPercent =
     followers7d > 0 ? Math.round(((followersToday * 7) / Math.max(followers7d, 1)) * 100 - 100) : 0;
@@ -205,6 +203,7 @@ export function OperationsCenter({
   const statusFilters = [
     ["all", "Todos"],
     ["pending", "Pendentes"],
+    ["retrying", "Reagendando"],
     ["processing", "Publicando"],
     ["published", "Publicados"],
     ["failed", "Falhas"],
@@ -220,6 +219,49 @@ export function OperationsCenter({
 
   return (
     <div className="space-y-8">
+      {operationsAlerts.length > 0 && <OperationsAlertsPanel alerts={operationsAlerts} />}
+
+      {accountsOverview.length > 0 && (
+        <section>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-ig-text">Suas páginas</h2>
+              <p className="text-sm text-ig-muted">
+                Visão rápida de saúde, fila e ações por conta.
+              </p>
+            </div>
+            <a href="/dashboard/uploads" className="text-sm font-medium text-ig-primary hover:underline">
+              Histórico de uploads
+            </a>
+          </div>
+          <AccountOperationsGrid accounts={accountsOverview} />
+        </section>
+      )}
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+          <p className="text-sm text-ig-muted">Publicados hoje</p>
+          <p className="mt-1 text-2xl font-bold text-ig-text">{publishedToday}</p>
+        </div>
+        <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+          <p className="text-sm text-ig-muted">Pendentes</p>
+          <p className="mt-1 text-2xl font-bold text-ig-text">{snapshot.pendingCount}</p>
+        </div>
+        <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+          <p className="text-sm text-ig-muted">Com falha</p>
+          <p className="mt-1 text-2xl font-bold text-ig-danger">{snapshot.failedCount}</p>
+        </div>
+        <div className="rounded-2xl border border-ig-border bg-ig-elevated p-4">
+          <p className="text-sm text-ig-muted">Taxa de sucesso</p>
+          <p className="mt-1 text-2xl font-bold text-ig-text">
+            {snapshot.scheduledCount
+              ? Math.round((snapshot.publishedCount / snapshot.scheduledCount) * 100)
+              : 0}
+            %
+          </p>
+        </div>
+      </section>
+
       <div className="flex flex-wrap gap-2">
         {platformTabs.map(([value, label]) => (
           <a
@@ -490,30 +532,6 @@ export function OperationsCenter({
           </div>
         </MetricCard>
       </section>
-
-      {alerts.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-ig-text">Alertas</h2>
-          {alerts.map((alert) => (
-            <div
-              key={alert.id}
-              className={`rounded-2xl border px-5 py-4 ${
-                alert.tone === "danger"
-                  ? "border-ig-danger/30 bg-ig-danger/10"
-                  : "border-ig-info-border bg-ig-info-bg"
-              }`}
-            >
-              <p className="font-semibold text-ig-text">⚠ {alert.title}</p>
-              <p className="mt-1 text-sm text-ig-muted">{alert.message}</p>
-              {alert.actionHref && alert.actionLabel && (
-                <a href={alert.actionHref} className="mt-3 inline-block text-sm font-medium text-ig-primary hover:underline">
-                  {alert.actionLabel}
-                </a>
-              )}
-            </div>
-          ))}
-        </section>
-      )}
 
       <section className="grid gap-4 lg:grid-cols-2">
         <MetricCard title="🏆 Melhor Conta Hoje">

@@ -190,20 +190,41 @@ export function getPostAccountUsername(post: ScheduledPost) {
 }
 
 export function canEditPost(status: PostStatus) {
-  return status === "pending" || status === "failed";
+  return (
+    status === "pending" ||
+    status === "failed" ||
+    status === "retrying" ||
+    status === "failed_persistent"
+  );
 }
 
 export function canReschedulePost(status: PostStatus) {
-  return status === "pending" || status === "failed";
+  return (
+    status === "pending" ||
+    status === "failed" ||
+    status === "retrying" ||
+    status === "failed_persistent"
+  );
 }
 
 export function canDeleteSchedule(status: PostStatus) {
-  return status === "pending" || status === "failed" || status === "processing";
+  return (
+    status === "pending" ||
+    status === "failed" ||
+    status === "retrying" ||
+    status === "failed_persistent" ||
+    status === "processing"
+  );
 }
 
 export function canRetryPost(post: Pick<ScheduledPost, "status" | "media_id">) {
   if (post.media_id) return false;
-  return post.status === "failed" || post.status === "processing";
+  return (
+    post.status === "failed" ||
+    post.status === "failed_persistent" ||
+    post.status === "retrying" ||
+    post.status === "processing"
+  );
 }
 
 export function canHideFromReport(status: PostStatus) {

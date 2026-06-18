@@ -274,6 +274,22 @@ export async function updateUploadFileStatus(
   return { file: file as UploadBatchFile, counters };
 }
 
+export async function listBatchHistoryForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+  limit = 30,
+) {
+  const { data, error } = await supabase
+    .from("upload_batches")
+    .select("*, instagram_accounts(ig_username), tiktok_accounts(username, display_name)")
+    .eq("owner_id", ownerId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as UploadBatch[];
+}
+
 export function buildStoragePath(ownerId: string, batchId: string, fileId: string, filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase() || "mp4";
   return `${ownerId}/${batchId}/${fileId}.${ext}`;

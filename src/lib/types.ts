@@ -1,6 +1,13 @@
 export type MediaType = "IMAGE" | "REELS" | "CAROUSEL";
 export type ContentType = "reel" | "post" | "story" | "tiktok_video" | "youtube_short";
-export type PostStatus = "pending" | "processing" | "published" | "failed";
+export type PostStatus =
+  | "pending"
+  | "processing"
+  | "published"
+  | "failed"
+  | "retrying"
+  | "failed_persistent"
+  | "cancelled";
 export type LogLevel = "info" | "error" | "success";
 export type SocialPlatform = "instagram" | "tiktok";
 
@@ -17,6 +24,7 @@ export interface InstagramAccount {
   warmup_enabled?: boolean;
   warmup_days?: number;
   warmup_started_at?: string | null;
+  publishing_paused?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +41,7 @@ export interface TikTokAccount {
   token_expires_at: string | null;
   refresh_expires_at: string | null;
   scopes: string | null;
+  publishing_paused?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +68,7 @@ export interface ScheduledPost {
   upload_batch_id?: string | null;
   parent_publish_group_id?: string | null;
   retry_count?: number;
+  next_retry_at?: string | null;
   is_draft?: boolean;
   publish_block_reason?: string | null;
   scheduled_at: string;
@@ -164,4 +174,5 @@ export interface UploadBatch {
   updated_at: string;
   upload_files?: UploadBatchFile[];
   instagram_accounts?: Pick<InstagramAccount, "ig_username">;
+  tiktok_accounts?: Pick<TikTokAccount, "username" | "display_name">;
 }

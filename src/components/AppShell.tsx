@@ -20,6 +20,7 @@ import {
   X,
   Brain,
   CircleDot,
+  History,
 } from "lucide-react";
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 import { BrandLogo } from "@/components/BrandLogo";
@@ -36,6 +37,7 @@ const links = [
   { href: "/dashboard/ai", label: "Assistente de conteúdo", icon: Brain },
   { href: "/dashboard/accounts", label: "Contas", icon: Users },
   { href: "/dashboard/reports", label: "Operações", icon: BarChart3 },
+  { href: "/dashboard/uploads", label: "Uploads", icon: History },
   { href: "/dashboard/calendar", label: "Calendário", icon: Calendar },
   { href: "/dashboard/logs", label: "Logs", icon: List },
 ];

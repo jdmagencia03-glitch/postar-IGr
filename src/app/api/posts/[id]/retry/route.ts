@@ -54,6 +54,7 @@ export async function POST(
     .update({
       status: "pending",
       error_message: null,
+      next_retry_at: null,
     })
     .eq("id", id)
     .is("media_id", null)

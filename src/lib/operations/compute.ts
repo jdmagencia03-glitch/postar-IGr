@@ -43,7 +43,12 @@ export function formatDuration(minutes: number) {
 }
 
 function pendingPosts(posts: ScheduledPost[]) {
-  return posts.filter((post) => post.status === "pending" || post.status === "processing");
+  return posts.filter(
+    (post) =>
+      post.status === "pending" ||
+      post.status === "processing" ||
+      post.status === "retrying",
+  );
 }
 
 function publishedPosts(posts: ScheduledPost[]) {
@@ -283,8 +288,12 @@ export function hoursUntilNextPost(nextPost: ScheduledPost | null) {
 }
 
 export function computeOperationsSnapshot(posts: ScheduledPost[]) {
-  const pendingCount = posts.filter((post) => post.status === "pending").length;
-  const failedCount = posts.filter((post) => post.status === "failed").length;
+  const pendingCount = posts.filter(
+    (post) => post.status === "pending" || post.status === "retrying",
+  ).length;
+  const failedCount = posts.filter(
+    (post) => post.status === "failed" || post.status === "failed_persistent",
+  ).length;
   const publishedCount = posts.filter((post) => post.status === "published").length;
   const scheduledCount = posts.filter(
     (post) => post.status === "pending" || post.status === "processing" || post.status === "published",

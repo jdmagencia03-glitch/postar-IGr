@@ -46,16 +46,32 @@ export async function GET(request: NextRequest) {
   const recovered = await recoverStaleProcessingPosts(supabase, STALE_PROCESSING_MS);
   const now = new Date().toISOString();
 
-  const { data: posts, error } = await supabase
+  const { data: pendingPosts, error: pendingError } = await supabase
     .from("scheduled_posts")
     .select(
-      "*, instagram_accounts(ig_user_id, page_access_token, auth_provider), tiktok_accounts(*)",
+      "*, instagram_accounts(ig_user_id, page_access_token, auth_provider, publishing_paused), tiktok_accounts(*)",
     )
     .eq("status", "pending")
     .lte("scheduled_at", now)
     .is("media_id", null)
     .order("scheduled_at", { ascending: true })
     .limit(POSTS_FETCH_LIMIT);
+
+  const { data: retryPosts, error: retryError } = await supabase
+    .from("scheduled_posts")
+    .select(
+      "*, instagram_accounts(ig_user_id, page_access_token, auth_provider, publishing_paused), tiktok_accounts(*)",
+    )
+    .eq("status", "retrying")
+    .lte("next_retry_at", now)
+    .is("media_id", null)
+    .order("next_retry_at", { ascending: true })
+    .limit(POSTS_FETCH_LIMIT);
+
+  const error = pendingError ?? retryError;
+  const posts = [...(pendingPosts ?? []), ...(retryPosts ?? [])].sort(
+    (a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
+  );
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -66,6 +82,13 @@ export async function GET(request: NextRequest) {
 
   for (const post of postsToProcess) {
     const platform = post.platform ?? "instagram";
+
+    const igPaused = post.instagram_accounts?.publishing_paused === true;
+    const ttPaused = (post.tiktok_accounts as TikTokAccount | null)?.publishing_paused === true;
+    if ((platform === "instagram" && igPaused) || (platform === "tiktok" && ttPaused)) {
+      results.push({ id: post.id, status: "paused", skipped: true, error: "Conta com publicação pausada" });
+      continue;
+    }
 
     if (post.media_id) {
       results.push({ id: post.id, status: post.status, skipped: true });
