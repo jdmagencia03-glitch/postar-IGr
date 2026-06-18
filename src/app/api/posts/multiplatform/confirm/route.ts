@@ -1,3 +1,4 @@
+import { getOwnerAccountById } from "@/lib/accounts";
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -6,6 +7,7 @@ import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import { z } from "zod";
 
 const confirmSchema = z.object({
@@ -45,11 +47,45 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createAdminClient();
+  const validatedAccounts = new Map<string, "instagram" | "tiktok">();
 
   for (const video of parsed.data.videos) {
     const mediaCheck = validateMediaUrlsForOwner(video.media_urls, ownerId);
     if (!mediaCheck.ok) {
       return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+    }
+
+    for (const dest of video.destinations) {
+      const knownPlatform = validatedAccounts.get(dest.account_id);
+      if (knownPlatform) {
+        if (knownPlatform !== dest.platform) {
+          return NextResponse.json(
+            { error: "Conta inválida para a plataforma informada." },
+            { status: 400 },
+          );
+        }
+        continue;
+      }
+
+      if (dest.platform === "tiktok") {
+        const account = await getOwnerTikTokAccountById(supabase, ownerId, dest.account_id);
+        if (!account) {
+          return NextResponse.json(
+            { error: "Conta TikTok não encontrada ou sem permissão para agendar." },
+            { status: 403 },
+          );
+        }
+      } else {
+        const account = await getOwnerAccountById(supabase, ownerId, dest.account_id);
+        if (!account) {
+          return NextResponse.json(
+            { error: "Conta Instagram não encontrada ou sem permissão para agendar." },
+            { status: 403 },
+          );
+        }
+      }
+
+      validatedAccounts.set(dest.account_id, dest.platform);
     }
   }
 

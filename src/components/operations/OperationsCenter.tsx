@@ -193,8 +193,9 @@ export function OperationsCenter({
   const contentTypeTabs = [
     ["all", "Todos"],
     ["reel", "Reels"],
-    ["story", "Stories"],
     ["post", "Posts"],
+    ["story", "Stories"],
+    ["tiktok_video", "TikTok Videos"],
   ] as const;
 
   const visibleAccounts = accounts.filter(

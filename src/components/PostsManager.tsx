@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { MultiplatformPostGroup } from "@/components/MultiplatformPostGroup";
 import { ScheduledPostCard } from "@/components/ScheduledPostCard";
+import { groupScheduledPostsByPublishGroup } from "@/lib/operations/group-posts";
 import { fromDateTimeLocalInAppTz } from "@/lib/timezone";
 import { formatDateTime } from "@/lib/utils";
 import type { ScheduledPost } from "@/lib/types";
@@ -61,6 +63,8 @@ export function PostsManager({
   } | null>(null);
 
   const bulkPosts = bulkScopePosts ?? posts;
+
+  const listItems = useMemo(() => groupScheduledPostsByPublishGroup(posts), [posts]);
 
   const selectableIds = useMemo(() => bulkPosts.map((post) => post.id), [bulkPosts]);
 
@@ -340,22 +344,37 @@ export function PostsManager({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {posts.map((post) => (
-          <ScheduledPostCard
-            key={post.id}
-            post={post}
-            selectable={enableBulk}
-            selected={selectedIds.includes(post.id)}
-            onSelect={(selected) => toggleSelect(post.id, selected)}
-            onUpdated={() => router.refresh()}
-            rich={rich}
-            publishedMeta={
-              showPublishedMeta && post.status === "published" && post.published_at
-                ? `Publicado em ${formatDateTime(post.published_at)}`
-                : null
-            }
-          />
-        ))}
+        {listItems.map((item, index) =>
+          item.kind === "group" ? (
+            <MultiplatformPostGroup
+              key={item.groupId}
+              groupId={item.groupId}
+              posts={item.posts}
+              index={index}
+              selectable={enableBulk}
+              selectedIds={selectedIds}
+              onSelect={(postId, selected) => toggleSelect(postId, selected)}
+              onUpdated={() => router.refresh()}
+              rich={rich}
+              showPublishedMeta={showPublishedMeta}
+            />
+          ) : (
+            <ScheduledPostCard
+              key={item.post.id}
+              post={item.post}
+              selectable={enableBulk}
+              selected={selectedIds.includes(item.post.id)}
+              onSelect={(selected) => toggleSelect(item.post.id, selected)}
+              onUpdated={() => router.refresh()}
+              rich={rich}
+              publishedMeta={
+                showPublishedMeta && item.post.status === "published" && item.post.published_at
+                  ? `Publicado em ${formatDateTime(item.post.published_at)}`
+                  : null
+              }
+            />
+          ),
+        )}
       </div>
 
       {bulkDialog === "delete" && (

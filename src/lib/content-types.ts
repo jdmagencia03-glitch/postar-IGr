@@ -11,10 +11,10 @@ export const CONTENT_TYPES = [
 export type ContentType = (typeof CONTENT_TYPES)[number];
 
 export const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
-  reel: "Reel",
-  post: "Post",
-  story: "Story",
-  tiktok_video: "TikTok",
+  reel: "Instagram Reel",
+  post: "Instagram Post",
+  story: "Instagram Story",
+  tiktok_video: "TikTok Video",
   youtube_short: "YouTube Short",
 };
 

@@ -9,6 +9,9 @@ import { generateCustomSchedule, earliestScheduleInstant, sanitizeScheduledAt, e
 import { zonedDateTimeToUtc, formatInAppTimezone } from "../src/lib/timezone";
 import { contentTypeForPlatform } from "../src/lib/content-types";
 import { TIKTOK_SCHEDULE_OFFSET_MINUTES } from "../src/lib/multiplatform/types";
+import { generateBulkCaptions } from "../src/lib/ai/captions";
+import { groupScheduledPostsByPublishGroup } from "../src/lib/operations/group-posts";
+import type { ScheduledPost } from "../src/lib/types";
 
 function loadEnv() {
   try {
@@ -125,6 +128,10 @@ function checkReportsFilters() {
     pass("Operações tabs Instagram/TikTok");
   } else fail("Operações tabs plataforma");
 
+  if (opsSrc.includes('["tiktok_video", "TikTok Videos"]')) {
+    pass("Operações tab TikTok Videos");
+  } else fail("Operações tab TikTok Videos");
+
   if (postsSrc.includes("contentType") && postsSrc.includes("platform")) {
     pass("posts.ts filtra por platform e contentType");
   } else fail("posts.ts filtros");
@@ -154,10 +161,74 @@ function checkFlows() {
     confirmSrc.includes("parent_publish_group_id") &&
     confirmSrc.includes("flatMap") &&
     confirmSrc.includes("sanitizeScheduledAt") &&
-    confirmSrc.includes("contentTypeForPlatform")
+    confirmSrc.includes("contentTypeForPlatform") &&
+    confirmSrc.includes("getOwnerAccountById") &&
+    confirmSrc.includes("getOwnerTikTokAccountById")
   ) {
-    pass("Confirm: 2 registros/vídeo com group id e horários futuros");
+    pass("Confirm: ownership + 2 registros/vídeo com group id e horários futuros");
   } else fail("Confirm multiplataforma");
+}
+
+async function checkCaptionPlatformsInLargeBatches() {
+  const counts = [5, 25, 30, 50];
+
+  for (const count of counts) {
+    const filenames = Array.from({ length: count }, (_, index) => `video-${index + 1}.mp4`);
+    const instagram = await generateBulkCaptions({
+      count,
+      filenames,
+      niche: "fitness",
+      platform: "instagram",
+    });
+    const tiktok = await generateBulkCaptions({
+      count,
+      filenames,
+      niche: "fitness",
+      platform: "tiktok",
+    });
+
+    if (instagram.captions.length !== count || tiktok.captions.length !== count) {
+      fail(`Legendas lote ${count}`, "quantidade incorreta");
+      continue;
+    }
+
+    const tiktokStyled = tiktok.captions.every(
+      (caption) => caption.includes("#fyp") || caption.includes("#foryou"),
+    );
+    const instagramStyled = instagram.captions.every((caption) => caption.includes("#reels"));
+    const differs = tiktok.captions.some((caption, index) => caption !== instagram.captions[index]);
+
+    if (tiktokStyled && instagramStyled && differs) {
+      pass(`Legendas lote ${count}`, "plataforma preservada em chunks");
+    } else {
+      fail(`Legendas lote ${count}`, `tt=${tiktokStyled} ig=${instagramStyled} diff=${differs}`);
+    }
+  }
+}
+
+function checkPublishGroupUi() {
+  const postsManagerSrc = readFileSync(resolve(process.cwd(), "src/components/PostsManager.tsx"), "utf8");
+  const groupSrc = readFileSync(resolve(process.cwd(), "src/lib/operations/group-posts.ts"), "utf8");
+
+  if (
+    postsManagerSrc.includes("groupScheduledPostsByPublishGroup") &&
+    postsManagerSrc.includes("MultiplatformPostGroup")
+  ) {
+    pass("UI agrupamento multiplataforma");
+  } else fail("UI agrupamento multiplataforma");
+
+  const sample = [
+    { id: "a", parent_publish_group_id: "g1" },
+    { id: "b", parent_publish_group_id: "g1" },
+    { id: "c", parent_publish_group_id: null },
+  ] as ScheduledPost[];
+
+  const grouped = groupScheduledPostsByPublishGroup(sample);
+  const hasGroup = grouped.some((item) => item.kind === "group" && item.posts.length === 2);
+  const hasSingle = grouped.some((item) => item.kind === "single" && item.post.id === "c");
+
+  if (hasGroup && hasSingle) pass("groupScheduledPostsByPublishGroup");
+  else fail("groupScheduledPostsByPublishGroup");
 }
 
 async function main() {
@@ -168,6 +239,8 @@ async function main() {
   checkCronIndependence();
   checkReportsFilters();
   checkFlows();
+  checkPublishGroupUi();
+  await checkCaptionPlatformsInLargeBatches();
 
   console.log(`\n=== ${failed === 0 ? "TODOS OS TESTES PASSARAM" : `${failed} FALHA(S)`} ===\n`);
   process.exit(failed > 0 ? 1 : 0);

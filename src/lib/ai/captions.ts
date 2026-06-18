@@ -102,6 +102,7 @@ export async function generateBulkCaptions(params: {
       ownerId: params.ownerId,
       accountId: params.accountId,
       globalOffset: globalOffset + i,
+      platform: params.platform,
     });
 
     captions.push(...chunk.captions);
