@@ -16,6 +16,9 @@ import {
   computePublicationMetrics,
 } from "@/lib/operations/metrics";
 import { buildPublicationAudit } from "@/lib/operations/publication-audit";
+import { buildCampaignOperationsRows } from "@/lib/campaigns/operations-stats";
+import { listOwnerCampaigns } from "@/lib/campaigns/campaigns";
+import { listOwnerProducts } from "@/lib/products/products";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
@@ -58,10 +61,12 @@ export default async function ReportsPage({
     limit: 5000,
   });
 
-  const [igAccounts, tiktokAccounts, activeBatch] = await Promise.all([
+  const [igAccounts, tiktokAccounts, activeBatch, products, campaigns] = await Promise.all([
     getOwnerAccounts(supabase, ownerId),
     getOwnerTikTokAccounts(supabase, ownerId),
     getActiveBatchSummaryForOwner(supabase, ownerId),
+    listOwnerProducts(supabase, ownerId),
+    listOwnerCampaigns(supabase, ownerId),
   ]);
 
   const accountsOverview = await buildAllAccountOperationsSummaries({
@@ -111,6 +116,8 @@ export default async function ReportsPage({
     filters,
   );
 
+  const campaignRows = buildCampaignOperationsRows(campaigns, allPosts);
+
   return (
     <>
       <header className="ig-page-header">
@@ -137,6 +144,9 @@ export default async function ReportsPage({
         multiplatformMetrics={multiplatformMetrics}
         errorReport={errorReport}
         publicationAudit={publicationAudit}
+        campaignRows={campaignRows}
+        filterProducts={products.map((p) => ({ id: p.id, name: p.name }))}
+        filterCampaigns={campaigns.map((c) => ({ id: c.id, name: c.name }))}
       />
     </>
   );

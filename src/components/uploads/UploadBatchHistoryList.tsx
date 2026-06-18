@@ -91,6 +91,12 @@ export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) 
             </dl>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href={`/dashboard/uploads/${batch.id}`}
+                className="rounded-lg border border-ig-border px-4 py-2 text-sm font-medium hover:bg-ig-secondary"
+              >
+                Ver detalhe
+              </Link>
               {(batch.status === "uploading" || batch.status === "ready") && (
                 <Link href="/dashboard/bulk" className="ig-btn-secondary px-4 py-2 text-sm">
                   {batch.status === "ready" ? "Agendar vídeos" : "Retomar upload"}

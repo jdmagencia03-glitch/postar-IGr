@@ -83,6 +83,8 @@ export interface ScheduledPost {
   created_at: string;
   instagram_accounts?: Pick<InstagramAccount, "ig_username" | "profile_picture_url">;
   tiktok_accounts?: Pick<TikTokAccount, "username" | "display_name" | "profile_picture_url">;
+  products?: Pick<Product, "id" | "name" | "main_cta"> | null;
+  campaigns?: Pick<Campaign, "id" | "name" | "default_cta" | "objective"> | null;
 }
 
 export type ScheduledPostWithAccountSecrets = ScheduledPost & {
@@ -175,4 +177,77 @@ export interface UploadBatch {
   upload_files?: UploadBatchFile[];
   instagram_accounts?: Pick<InstagramAccount, "ig_username">;
   tiktok_accounts?: Pick<TikTokAccount, "username" | "display_name">;
+}
+
+export type ProductStatus = "active" | "paused";
+export type CampaignStatus = "active" | "paused" | "finished";
+
+export type CampaignObjective =
+  | "sell_product"
+  | "generate_leads"
+  | "bio_traffic"
+  | "whatsapp"
+  | "dm"
+  | "warm_audience"
+  | "grow_followers"
+  | "test_offer"
+  | "remarketing";
+
+export interface Product {
+  id: string;
+  owner_id: string;
+  name: string;
+  niche: string | null;
+  description: string | null;
+  price: number | null;
+  checkout_url: string | null;
+  sales_page_url: string | null;
+  whatsapp_url: string | null;
+  bio_url: string | null;
+  main_cta: string | null;
+  comment_keyword: string | null;
+  dm_message: string | null;
+  coupon: string | null;
+  status: ProductStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignAccountLink {
+  id: string;
+  campaign_id: string;
+  account_id: string;
+  platform: SocialPlatform;
+  content_types: string[];
+  created_at: string;
+}
+
+export interface Campaign {
+  id: string;
+  owner_id: string;
+  product_id: string | null;
+  name: string;
+  niche: string | null;
+  objective: CampaignObjective;
+  default_cta: string | null;
+  comment_keyword: string | null;
+  dm_message: string | null;
+  main_link: string | null;
+  posts_per_day: number;
+  stories_per_day: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  status: CampaignStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  products?: Pick<Product, "id" | "name" | "main_cta" | "comment_keyword"> | null;
+  campaign_accounts?: CampaignAccountLink[];
+}
+
+export interface CampaignContext {
+  product?: Product | null;
+  campaign?: Campaign | null;
+  contentObjective?: string | null;
 }

@@ -6,6 +6,7 @@ import { contentTypeForPlatform } from "@/lib/content-types";
 import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { mergeCampaignFields, resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import { z } from "zod";
@@ -32,6 +33,9 @@ const confirmSchema = z.object({
     )
     .min(1)
     .max(50),
+  product_id: z.string().uuid().optional().nullable(),
+  campaign_id: z.string().uuid().optional().nullable(),
+  content_objective: z.string().max(200).optional().nullable(),
 });
 
 export async function POST(request: NextRequest) {
@@ -48,6 +52,8 @@ export async function POST(request: NextRequest) {
 
   const supabase = createAdminClient();
   const validatedAccounts = new Map<string, "instagram" | "tiktok">();
+  const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
+  const campaignFields = mergeCampaignFields(campaignContext);
 
   for (const video of parsed.data.videos) {
     const mediaCheck = validateMediaUrlsForOwner(video.media_urls, ownerId);
@@ -101,6 +107,9 @@ export async function POST(request: NextRequest) {
       scheduled_at: sanitizeScheduledAt(dest.scheduled_at),
       parent_publish_group_id: video.parent_publish_group_id,
       status: "pending" as const,
+      product_id: campaignFields.product_id,
+      campaign_id: campaignFields.campaign_id,
+      content_objective: campaignFields.content_objective,
     })),
   );
 

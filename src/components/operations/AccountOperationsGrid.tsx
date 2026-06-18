@@ -11,6 +11,7 @@ import {
   Play,
   Upload,
 } from "lucide-react";
+import { ValidatePermissionsButton } from "@/components/operations/ValidatePermissionsButton";
 import {
   healthClass,
   healthLabel,
@@ -136,6 +137,11 @@ export function AccountOperationsGrid({ accounts }: Props) {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <ValidatePermissionsButton
+                accountId={account.id}
+                platform={account.platform}
+                compact
+              />
               <Link
                 href={`/dashboard/reports?view=audit&account=${account.id}&platform=${account.platform}`}
                 className="rounded-lg border border-ig-border px-3 py-1.5 text-xs font-medium hover:bg-ig-secondary"

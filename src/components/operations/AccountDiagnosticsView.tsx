@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ValidatePermissionsButton } from "@/components/operations/ValidatePermissionsButton";
+import { TestPublishButton } from "@/components/operations/TestPublishButton";
 import { OperationsAlertsPanel } from "@/components/operations/OperationsAlertsPanel";
 import { PostsManager } from "@/components/PostsManager";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -120,6 +122,10 @@ export function AccountDiagnosticsView({
               </div>
             )}
           </dl>
+          <div className="mt-4 space-y-4">
+            <ValidatePermissionsButton accountId={accountId} platform={platform} />
+            <TestPublishButton accountId={accountId} platform={platform} />
+          </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <a href={reconnectHref} className="ig-btn-secondary px-4 py-2 text-sm">
               Reconectar

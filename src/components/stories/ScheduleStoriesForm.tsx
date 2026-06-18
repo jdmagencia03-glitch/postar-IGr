@@ -11,6 +11,10 @@ import {
   STORY_OBJECTIVES,
   type StoryPreviewEntry,
 } from "@/lib/stories/types";
+import {
+  ProductCampaignSelector,
+  type ProductCampaignSelection,
+} from "@/components/products/ProductCampaignSelector";
 import type { InstagramAccount } from "@/lib/types";
 
 type ScheduleMode = "auto" | "today" | "custom";
@@ -94,6 +98,11 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [campaignSelection, setCampaignSelection] = useState<ProductCampaignSelection>({
+    productId: null,
+    campaignId: null,
+    contentObjective: null,
+  });
   const [capability, setCapability] = useState<CapabilityState>({
     autoPublishReady: false,
     message: "",
@@ -163,6 +172,14 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
     setPreview(null);
   }
 
+  function buildCampaignPayload() {
+    return {
+      product_id: campaignSelection.productId,
+      campaign_id: campaignSelection.campaignId,
+      content_objective: campaignSelection.contentObjective ?? objective,
+    };
+  }
+
   async function generatePreview() {
     if (!accountId || !items.length) {
       setError("Selecione uma conta e envie pelo menos um arquivo.");
@@ -191,6 +208,7 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
             media_url: item.media_url,
             filename: item.filename,
           })),
+          ...buildCampaignPayload(),
         }),
       });
 
@@ -236,6 +254,7 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
             story_link: entry.story_link,
             story_objective: entry.story_objective,
           })),
+          ...buildCampaignPayload(),
         }),
       });
 
@@ -352,7 +371,18 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
       </section>
 
       <section className="rounded-2xl border border-ig-border bg-ig-elevated p-6">
-        <h2 className="text-lg font-semibold text-ig-text">3. Objetivo e CTA</h2>
+        <h2 className="text-lg font-semibold text-ig-text">3. Produto / Campanha</h2>
+        <div className="mt-4">
+          <ProductCampaignSelector
+            value={campaignSelection}
+            onChange={setCampaignSelection}
+            compact
+          />
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-ig-border bg-ig-elevated p-6">
+        <h2 className="text-lg font-semibold text-ig-text">4. Objetivo e CTA</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm text-ig-muted">Objetivo do story</label>
@@ -405,7 +435,7 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
       </section>
 
       <section className="rounded-2xl border border-ig-border bg-ig-elevated p-6">
-        <h2 className="text-lg font-semibold text-ig-text">4. Horários</h2>
+        <h2 className="text-lg font-semibold text-ig-text">5. Horários</h2>
         <div className="mt-4 flex flex-wrap gap-2">
           {(
             [
@@ -462,7 +492,7 @@ export function ScheduleStoriesForm({ accounts, defaultAccountId }: Props) {
         <section className="rounded-2xl border border-ig-border bg-ig-elevated p-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-ig-text">5. Prévia dos Stories</h2>
+              <h2 className="text-lg font-semibold text-ig-text">6. Prévia dos Stories</h2>
               <p className="text-sm text-ig-muted">
                 {scheduleSummary}
                 {textSource ? ` · Textos: ${textSource === "ai" ? "IA" : "modelo"}` : ""}

@@ -10,6 +10,7 @@ import {
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { parseCustomSchedulePayload, parseTimeSlots } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import type { InstagramAccount, TikTokAccount } from "@/lib/types";
 import { z } from "zod";
 
@@ -30,6 +31,9 @@ const previewSchema = z
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
+    product_id: z.string().uuid().optional().nullable(),
+    campaign_id: z.string().uuid().optional().nullable(),
+    content_objective: z.string().max(200).optional().nullable(),
     items: z
       .array(
         z.object({
@@ -128,6 +132,7 @@ export async function POST(request: NextRequest) {
       warmup,
       custom,
       platform,
+      campaignContext: await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data),
     });
 
     return NextResponse.json({

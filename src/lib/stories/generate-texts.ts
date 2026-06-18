@@ -1,5 +1,7 @@
+import { buildCampaignPromptContext } from "@/lib/campaigns/context";
 import { getPlaybookForAccount, resolveNicheFromPlaybook, buildPlaybookContext } from "@/lib/ai/playbook";
 import { logCaptionGeneration } from "@/lib/ai/caption-debug";
+import type { CampaignContext } from "@/lib/types";
 import type { StoryCtaOption, StoryObjective } from "@/lib/stories/types";
 
 function fallbackStoryText(params: {
@@ -26,6 +28,7 @@ export async function generateStoryTexts(params: {
   storyObjective: string;
   storyCta: string;
   storyLink?: string | null;
+  campaignContext?: CampaignContext | null;
 }) {
   const playbook = await getPlaybookForAccount(params.ownerId, params.accountId);
   const niche = resolveNicheFromPlaybook(playbook);
@@ -59,6 +62,9 @@ export async function generateStoryTexts(params: {
   }
 
   const playbookContext = buildPlaybookContext(playbook, niche);
+  const campaignBlock = params.campaignContext
+    ? `\n\n${buildCampaignPromptContext(params.campaignContext, "instagram", "story")}`
+    : "";
   const fileList = params.filenames
     .map((name, index) => `${index + 1}. ${name.replace(/\.[^.]+$/, "")}`)
     .join("\n");
@@ -74,7 +80,7 @@ ${params.storyLink ? `- Link de referência: ${params.storyLink}` : ""}
 - Use o playbook da marca abaixo
 
 PLAYBOOK:
-${playbookContext}
+${playbookContext}${campaignBlock}
 
 Retorne JSON: {"texts":["story 1","story 2",...]}`;
 

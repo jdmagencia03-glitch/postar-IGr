@@ -6,6 +6,7 @@ import { buildStorySchedulePlan } from "@/lib/stories/plan";
 import { STORY_CTA_OPTIONS, STORY_OBJECTIVES } from "@/lib/stories/types";
 import { parseCustomSchedulePayload } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { z } from "zod";
 
@@ -22,6 +23,9 @@ const previewSchema = z
     story_objective: z.string().min(1).max(200),
     story_cta: z.string().min(1).max(200),
     story_link: z.string().url().optional().nullable(),
+    product_id: z.string().uuid().optional().nullable(),
+    campaign_id: z.string().uuid().optional().nullable(),
+    content_objective: z.string().max(200).optional().nullable(),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
     custom_schedule: customScheduleSchema.optional(),
     items: z
@@ -84,6 +88,7 @@ export async function POST(request: NextRequest) {
     storyLink: parsed.data.story_link,
     schedule_mode: scheduleMode === "warmup" ? "auto" : scheduleMode,
     custom_schedule: parsed.data.custom_schedule,
+    campaignContext: await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data),
   });
 
   return NextResponse.json({

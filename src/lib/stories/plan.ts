@@ -17,6 +17,7 @@ export async function buildStorySchedulePlan(params: {
     start_time?: string;
     end_time?: string;
   };
+  campaignContext?: import("@/lib/types").CampaignContext | null;
 }) {
   const filenames = params.items.map((item, index) => item.filename || `story-${index + 1}`);
   const customOptions =
@@ -41,6 +42,7 @@ export async function buildStorySchedulePlan(params: {
     storyObjective: params.storyObjective,
     storyCta: params.storyCta,
     storyLink: params.storyLink,
+    campaignContext: params.campaignContext,
   });
 
   const preview: StoryPreviewEntry[] = params.items.map((item, index) => ({

@@ -13,6 +13,8 @@ interface AccountOption {
 interface Props {
   filters: ReportFilters;
   accounts: AccountOption[];
+  products?: Array<{ id: string; name: string }>;
+  campaigns?: Array<{ id: string; name: string }>;
 }
 
 function FilterLink({
@@ -38,7 +40,7 @@ function FilterLink({
   );
 }
 
-export function ReportFiltersBar({ filters, accounts }: Props) {
+export function ReportFiltersBar({ filters, accounts, products = [], campaigns = [] }: Props) {
   const base = (patch: Partial<ReportFilters>) =>
     buildReportQuery({ ...filters, ...patch });
 
@@ -195,6 +197,47 @@ export function ReportFiltersBar({ filters, accounts }: Props) {
               href={base({ accountId: account.id, platform: account.platform })}
             />
           ))}
+        </div>
+      )}
+
+      {(products.length > 0 || campaigns.length > 0) && (
+        <div className="flex flex-wrap gap-4">
+          {products.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <span className="self-center text-xs font-medium text-ig-muted">Produto:</span>
+              <FilterLink
+                label="Todos"
+                active={!filters.productId}
+                href={base({ productId: undefined })}
+              />
+              {products.map((product) => (
+                <FilterLink
+                  key={product.id}
+                  label={product.name}
+                  active={filters.productId === product.id}
+                  href={base({ productId: product.id })}
+                />
+              ))}
+            </div>
+          )}
+          {campaigns.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <span className="self-center text-xs font-medium text-ig-muted">Campanha:</span>
+              <FilterLink
+                label="Todas"
+                active={!filters.campaignId}
+                href={base({ campaignId: undefined })}
+              />
+              {campaigns.map((campaign) => (
+                <FilterLink
+                  key={campaign.id}
+                  label={campaign.name}
+                  active={filters.campaignId === campaign.id}
+                  href={base({ campaignId: campaign.id })}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

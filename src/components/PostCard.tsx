@@ -67,6 +67,33 @@ export function PostCard({
           {post.error_message && (
             <p className="mt-2 text-xs text-ig-danger">{post.error_message}</p>
           )}
+          {(post.products?.name || post.campaigns?.name) && (
+            <div className="mt-2 space-y-1 text-xs text-ig-muted">
+              {post.products?.name && (
+                <p>
+                  Produto: <span className="font-medium text-ig-text">{post.products.name}</span>
+                </p>
+              )}
+              {post.campaigns?.name && (
+                <p>
+                  Campanha: <span className="font-medium text-ig-text">{post.campaigns.name}</span>
+                </p>
+              )}
+              {post.content_objective && (
+                <p>
+                  Objetivo: <span className="font-medium text-ig-text">{post.content_objective}</span>
+                </p>
+              )}
+              {(post.campaigns?.default_cta || post.products?.main_cta) && (
+                <p>
+                  CTA:{" "}
+                  <span className="font-medium text-ig-text">
+                    {post.campaigns?.default_cta ?? post.products?.main_cta}
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -110,6 +137,12 @@ export function PostCard({
       )}
       {post.error_message && (
         <p className="mt-2 text-xs text-ig-danger">{post.error_message}</p>
+      )}
+      {(post.products?.name || post.campaigns?.name) && (
+        <p className="mt-2 text-xs text-ig-muted">
+          {post.products?.name && <>Produto: {post.products.name} · </>}
+          {post.campaigns?.name && <>Campanha: {post.campaigns.name}</>}
+        </p>
       )}
     </div>
   );

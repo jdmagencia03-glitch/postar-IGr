@@ -280,9 +280,7 @@ export class UploadEngine {
         fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
         this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
         finishedCount += 1;
-        if (finishedCount % 5 === 0 || finishedCount === records.length) {
-          this.callbacks.onBatchUpdate?.(batch);
-        }
+        this.callbacks.onBatchUpdate?.(batch);
         this.emitProgress(batch, fileProgress);
         return "done";
       } catch (error) {

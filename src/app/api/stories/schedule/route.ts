@@ -7,6 +7,7 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { decryptPageAccessToken } from "@/lib/security/tokens";
+import { mergeCampaignFields, resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
@@ -27,6 +28,9 @@ const scheduleSchema = z.object({
     .max(50),
   schedule: z.array(z.string()).min(1),
   is_draft: z.boolean().optional(),
+  product_id: z.string().uuid().optional().nullable(),
+  campaign_id: z.string().uuid().optional().nullable(),
+  content_objective: z.string().max(200).optional().nullable(),
 }).refine((data) => data.items.length === data.schedule.length, {
   message: "Número de horários deve corresponder aos stories",
   path: ["schedule"],
@@ -67,6 +71,9 @@ export async function POST(request: NextRequest) {
     provider: account.auth_provider ?? "instagram",
   });
 
+  const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
+  const campaignFields = mergeCampaignFields(campaignContext);
+
   const publishBlockReason = capability.autoPublishReady
     ? null
     : capability.message;
@@ -82,7 +89,9 @@ export async function POST(request: NextRequest) {
     story_cta: item.story_cta,
     story_link: item.story_link ?? null,
     story_objective: item.story_objective,
-    content_objective: item.story_objective,
+    content_objective: campaignFields.content_objective ?? item.story_objective,
+    product_id: campaignFields.product_id,
+    campaign_id: campaignFields.campaign_id,
     scheduled_at: sanitizeScheduledAt(parsed.data.schedule[index]),
     status: "pending" as const,
     is_draft: parsed.data.is_draft ?? false,

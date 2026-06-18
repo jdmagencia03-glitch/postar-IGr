@@ -7,6 +7,9 @@ import { ErrorReportPanel } from "@/components/operations/ErrorReportPanel";
 import { ExportReportButton } from "@/components/operations/ExportReportButton";
 import { MetricsPanels } from "@/components/operations/MetricsPanels";
 import { OperationsAlertsPanel } from "@/components/operations/OperationsAlertsPanel";
+import { BulkAccountPausePanel } from "@/components/operations/BulkAccountPausePanel";
+import { CampaignsOperationsPanel } from "@/components/operations/CampaignsOperationsPanel";
+import { PublisherOperationsBanner } from "@/components/operations/PublisherOperationsBanner";
 import { PublicationAuditPanel } from "@/components/operations/PublicationAuditPanel";
 import { PublicationMetricsBar } from "@/components/operations/PublicationMetricsBar";
 import { ReportFiltersBar } from "@/components/operations/ReportFiltersBar";
@@ -30,7 +33,8 @@ import type {
   PublicationMetrics,
 } from "@/lib/operations/metrics";
 import type { PublicationAuditReport } from "@/lib/operations/publication-audit";
-import type { ScheduledPost, SocialPlatform } from "@/lib/types";
+import type { CampaignOperationsRow } from "@/lib/campaigns/operations-stats";
+import type { Campaign, Product, ScheduledPost, SocialPlatform } from "@/lib/types";
 
 interface AccountOption {
   id: string;
@@ -63,6 +67,9 @@ interface Props {
   multiplatformMetrics: MultiplatformGroupMetrics;
   errorReport: ErrorReportSummary;
   publicationAudit: PublicationAuditReport;
+  campaignRows?: CampaignOperationsRow[];
+  filterProducts?: Pick<Product, "id" | "name">[];
+  filterCampaigns?: Pick<Campaign, "id" | "name">[];
 }
 
 function formatSigned(value: number) {
@@ -115,6 +122,9 @@ export function OperationsCenter({
   multiplatformMetrics,
   errorReport,
   publicationAudit,
+  campaignRows = [],
+  filterProducts = [],
+  filterCampaigns = [],
 }: Props) {
   const accountId = selectedAccountId;
   const view = filters.view;
@@ -209,7 +219,15 @@ export function OperationsCenter({
 
   return (
     <div className="space-y-8">
+      <PublisherOperationsBanner />
+
       {operationsAlerts.length > 0 && <OperationsAlertsPanel alerts={operationsAlerts} />}
+
+      {accountsOverview.length > 0 && (
+        <BulkAccountPausePanel accounts={accountsOverview} />
+      )}
+
+      {campaignRows.length > 0 && <CampaignsOperationsPanel rows={campaignRows} />}
 
       {accountsOverview.length > 0 && (
         <section>
@@ -233,7 +251,14 @@ export function OperationsCenter({
 
       <PublicationMetricsBar metrics={publicationMetrics} />
 
-      {view !== "audit" && <ReportFiltersBar filters={filters} accounts={accounts} />}
+      {view !== "audit" && (
+        <ReportFiltersBar
+          filters={filters}
+          accounts={accounts}
+          products={filterProducts}
+          campaigns={filterCampaigns}
+        />
+      )}
 
       <div className="flex flex-wrap gap-2 border-b border-ig-border pb-2">
         {viewTabs.map(([value, label]) => (

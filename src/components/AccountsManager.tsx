@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, RefreshCw, UserRound, Share2, Flame } from "lucide-react";
 import { MetaOAuthAlert } from "@/components/MetaOAuthAlert";
+import { ValidatePermissionsButton } from "@/components/operations/ValidatePermissionsButton";
 import { formatDateTime } from "@/lib/utils";
 
 interface WarmupInfo {
@@ -288,6 +289,10 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                   className="h-4 w-4 rounded border-ig-border bg-ig-secondary text-ig-primary"
                 />
               </label>
+
+              <div className="mt-3">
+                <ValidatePermissionsButton accountId={account.id} platform="instagram" compact />
+              </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <a

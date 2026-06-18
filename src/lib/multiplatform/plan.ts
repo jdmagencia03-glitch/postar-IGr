@@ -51,6 +51,7 @@ export async function buildMultiplatformPlan(params: {
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
   now?: Date;
+  campaignContext?: import("@/lib/types").CampaignContext | null;
 }) {
   const scheduleMode = params.schedule_mode ?? "auto";
   const totalCount = params.total_count ?? params.items.length;
@@ -87,6 +88,8 @@ export async function buildMultiplatformPlan(params: {
       accountId: target.account_id,
       globalOffset: batchOffset,
       platform: target.platform,
+      contentType: contentTypeForPlatform(target.platform),
+      campaignContext: params.campaignContext,
     });
 
     captionsByPlatform.set(target.platform, { captions, source });

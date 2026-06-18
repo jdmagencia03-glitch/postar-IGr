@@ -5,10 +5,11 @@ import {
   resolveNicheFromPlaybook,
   buildPlaybookContext,
 } from "@/lib/ai/playbook";
+import { buildCampaignPromptContext } from "@/lib/campaigns/context";
 import { formatInstagramCaption, formatTikTokCaption } from "@/lib/ai/caption-format";
 import { logCaptionGeneration } from "@/lib/ai/caption-debug";
 import { CAPTION_BATCH_SIZE } from "@/lib/autopilot-constants";
-import type { SocialPlatform } from "@/lib/types";
+import type { CampaignContext, ContentType, SocialPlatform } from "@/lib/types";
 
 function cleanFilename(name: string) {
   return name
@@ -81,6 +82,8 @@ export async function generateBulkCaptions(params: {
   accountId?: string;
   globalOffset?: number;
   platform?: SocialPlatform;
+  contentType?: ContentType;
+  campaignContext?: CampaignContext | null;
 }): Promise<{ captions: string[]; source: "ai" | "fallback"; niche: string; debug?: Record<string, unknown> }> {
   const globalOffset = params.globalOffset ?? 0;
 
@@ -122,9 +125,12 @@ async function generateBulkCaptionsChunk(params: {
   accountId?: string;
   globalOffset?: number;
   platform?: SocialPlatform;
+  contentType?: ContentType;
+  campaignContext?: CampaignContext | null;
 }): Promise<{ captions: string[]; source: "ai" | "fallback"; niche: string; debug?: Record<string, unknown> }> {
   const globalOffset = params.globalOffset ?? 0;
   const platform = params.platform ?? "instagram";
+  const contentType = params.contentType ?? (platform === "tiktok" ? "tiktok_video" : "reel");
 
   const playbook =
     params.ownerId && params.accountId
@@ -132,10 +138,14 @@ async function generateBulkCaptionsChunk(params: {
       : null;
   const niche = resolveNicheFromPlaybook(playbook, params.niche);
 
+  const campaignBlock = params.campaignContext
+    ? `\n\n${buildCampaignPromptContext(params.campaignContext, platform, contentType)}`
+    : "";
+
   const systemPrompt =
-    platform === "tiktok"
+    (platform === "tiktok"
       ? buildTikTokSystemPrompt(playbook, niche)
-      : buildViralSystemPrompt(playbook, niche);
+      : buildViralSystemPrompt(playbook, niche)) + campaignBlock;
   const userPrompt =
     platform === "tiktok"
       ? buildTikTokUserPrompt({

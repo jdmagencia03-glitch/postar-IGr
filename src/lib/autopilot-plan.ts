@@ -65,6 +65,7 @@ export async function buildAutopilotPlan(params: {
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
   platform?: SocialPlatform;
+  campaignContext?: import("@/lib/types").CampaignContext | null;
 }) {
   const scheduleMode = params.schedule_mode ?? "auto";
   const totalCount = params.total_count ?? params.items.length;
@@ -91,6 +92,8 @@ export async function buildAutopilotPlan(params: {
     globalOffset: batchOffset,
     niche: params.niche,
     platform: params.platform ?? "instagram",
+    contentType: params.platform === "tiktok" ? "tiktok_video" : "reel",
+    campaignContext: params.campaignContext,
   });
 
   const preview: AutopilotPreviewEntry[] = params.items.map((item, index) => ({

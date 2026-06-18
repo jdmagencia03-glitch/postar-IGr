@@ -2,8 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Plus, UserRound, X } from "lucide-react";
+import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
 import { MultiplatformPreview } from "@/components/MultiplatformPreview";
+import {
+  ProductCampaignSelector,
+  type ProductCampaignSelection,
+} from "@/components/products/ProductCampaignSelector";
 import { updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
 import type { PublishDestination } from "@/lib/multiplatform/types";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
@@ -11,6 +16,7 @@ import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
 import { formatApiError } from "@/lib/api-errors";
+import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots, countTodayAvailableSlots, buildEvenTimeSlotStrings, DEFAULT_CUSTOM_START_TIME, DEFAULT_CUSTOM_END_TIME, DEFAULT_CUSTOM_POSTS_PER_DAY } from "@/lib/smart-schedule";
 import type { InstagramAccount, SocialPlatform, TikTokAccount, UploadBatch } from "@/lib/types";
 
@@ -254,6 +260,11 @@ export function BulkUploadForm({
     [],
   );
   const [confirmingPreview, setConfirmingPreview] = useState(false);
+  const [campaignSelection, setCampaignSelection] = useState<ProductCampaignSelection>({
+    productId: null,
+    campaignId: null,
+    contentObjective: null,
+  });
   const [activeBatch, setActiveBatch] = useState<UploadBatch | null>(null);
   const restoredBatchIdRef = useRef<string | null>(null);
   const handleScheduleRef = useRef<(partial?: boolean) => Promise<void>>(async () => {});
@@ -298,8 +309,30 @@ export function BulkUploadForm({
         ? canUseTiktok && Boolean(selectedTiktokId)
         : canUseInstagram && canUseTiktok && Boolean(selectedInstagramId) && Boolean(selectedTiktokId);
   const selectedAvatar = selectedAccount?.profile_picture_url ?? null;
-  const completedCount = activeBatch?.completed_files ?? 0;
-  const totalCount = activeBatch?.total_files ?? 0;
+  const uploadSession = useOptionalUploadSession();
+
+  const uploadView = useMemo(() => {
+    if (!uploadSession?.batch) return null;
+    if (activeBatch?.id && uploadSession.batch.id !== activeBatch.id) return null;
+    return deriveUploadSessionView({
+      batch: uploadSession.batch,
+      progress: uploadSession.progress,
+      progressMap: uploadSession.progressMap,
+      running: uploadSession.running,
+      pausedByUser: uploadSession.pausedByUser,
+      retrying: uploadSession.retrying,
+      resuming: uploadSession.resuming,
+      canResumeWithoutPicker: uploadSession.canResumeWithoutPicker,
+      needsFileReselection: uploadSession.needsFileReselection,
+    });
+  }, [uploadSession, activeBatch?.id]);
+
+  const liveBatch =
+    uploadSession?.batch?.id === activeBatch?.id ? uploadSession?.batch ?? activeBatch : activeBatch;
+
+  const completedCount =
+    uploadView?.completedCount ?? liveBatch?.completed_files ?? activeBatch?.completed_files ?? 0;
+  const totalCount = uploadView?.totalCount ?? liveBatch?.total_files ?? activeBatch?.total_files ?? 0;
   const batchReady = activeBatch?.status === "ready";
   const canSchedulePartial = completedCount > 0 && !batchReady;
   const canScheduleAll = batchReady && completedCount > 0;
@@ -467,6 +500,14 @@ export function BulkUploadForm({
     setResult(null);
   }
 
+  function buildCampaignPayload() {
+    return {
+      product_id: campaignSelection.productId,
+      campaign_id: campaignSelection.campaignId,
+      content_objective: campaignSelection.contentObjective,
+    };
+  }
+
   async function confirmAutopilotBatch(params: {
     items: Array<{ media_urls: string[]; filename: string }>;
     captions: string[];
@@ -485,6 +526,7 @@ export function BulkUploadForm({
         captions: params.captions,
         schedule: params.schedule,
         ...buildSchedulePayload(),
+        ...buildCampaignPayload(),
       }),
     });
     const autopilotData = await readJsonResponse(autopilotRes);
@@ -524,6 +566,7 @@ export function BulkUploadForm({
           batch_offset: offset,
           total_count: total,
           ...buildSchedulePayload(),
+          ...buildCampaignPayload(),
         }),
       });
 
@@ -600,6 +643,7 @@ export function BulkUploadForm({
           batch_offset: offset,
           total_count: items.length,
           ...buildSchedulePayload(),
+          ...buildCampaignPayload(),
         }),
       });
 
@@ -643,6 +687,7 @@ export function BulkUploadForm({
               scheduled_at: dest.scheduled_at,
             })),
           })),
+          ...buildCampaignPayload(),
         }),
       });
 
@@ -691,7 +736,7 @@ export function BulkUploadForm({
       return;
     }
 
-    const items = getCompletedUploadItems(activeBatch);
+    const items = getCompletedUploadItems(liveBatch ?? activeBatch);
     if (!items.length) {
       setResult("Envie pelo menos um vídeo antes de agendar.");
       return;
@@ -903,6 +948,8 @@ export function BulkUploadForm({
             <p className="truncate font-semibold text-ig-text">@{selectedUsername}</p>
           </div>
         )}
+
+        <ProductCampaignSelector value={campaignSelection} onChange={setCampaignSelection} />
 
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ig-muted">Upload</p>

@@ -57,6 +57,8 @@ export interface ReportFilters {
   view: ReportViewTab;
   auditPeriod?: AuditPeriod;
   auditDate?: string;
+  productId?: string;
+  campaignId?: string;
 }
 
 const STATUS_VALUES = new Set<string>([
@@ -124,6 +126,8 @@ export function parseReportFilters(
     view: pick(params.view, VIEW_VALUES, "publications"),
     auditPeriod: pick(params.audit_period, AUDIT_PERIOD_VALUES, "today") as AuditPeriod,
     auditDate: params.audit_date,
+    productId: params.product,
+    campaignId: params.campaign,
   };
 }
 
@@ -285,6 +289,14 @@ export function applyReportFilters(
     result = result.filter((post) => postMatchesSearch(post, filters.q!));
   }
 
+  if (filters.productId) {
+    result = result.filter((post) => post.product_id === filters.productId);
+  }
+
+  if (filters.campaignId) {
+    result = result.filter((post) => post.campaign_id === filters.campaignId);
+  }
+
   return result;
 }
 
@@ -352,6 +364,8 @@ export function buildReportQuery(filters: Partial<ReportFilters> & Record<string
     ["view", filters.view && filters.view !== "publications" ? filters.view : undefined],
     ["audit_period", filters.auditPeriod && filters.auditPeriod !== "today" ? filters.auditPeriod : undefined],
     ["audit_date", filters.auditDate],
+    ["product", filters.productId],
+    ["campaign", filters.campaignId],
   ];
 
   for (const [key, value] of entries) {

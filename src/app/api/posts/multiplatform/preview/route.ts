@@ -11,6 +11,7 @@ import type { PublishTarget } from "@/lib/multiplatform/types";
 import { parseCustomSchedulePayload } from "@/lib/smart-schedule";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import type { InstagramAccount, TikTokAccount } from "@/lib/types";
 import { z } from "zod";
@@ -37,6 +38,9 @@ const previewSchema = z
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
+    product_id: z.string().uuid().optional().nullable(),
+    campaign_id: z.string().uuid().optional().nullable(),
+    content_objective: z.string().max(200).optional().nullable(),
     items: z
       .array(
         z.object({
@@ -124,6 +128,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
+
     const plan = await buildMultiplatformPlan({
       items: parsed.data.items,
       targets: parsed.data.targets as PublishTarget[],
@@ -134,6 +140,7 @@ export async function POST(request: NextRequest) {
       total_count: parsed.data.total_count ?? parsed.data.items.length,
       warmup,
       custom,
+      campaignContext,
     });
 
     return NextResponse.json(plan);

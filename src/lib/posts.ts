@@ -10,7 +10,7 @@ import type {
 } from "@/lib/types";
 
 const POST_SELECT_PUBLIC =
-  "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url)";
+  "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url), products(id, name, main_cta), campaigns(id, name, default_cta, objective)";
 
 const POST_SELECT_SECRETS =
   "*, instagram_accounts(ig_username, profile_picture_url, ig_user_id, page_access_token, auth_provider), tiktok_accounts(username, display_name, profile_picture_url)";

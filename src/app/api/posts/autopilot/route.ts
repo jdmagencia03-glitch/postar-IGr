@@ -9,6 +9,7 @@ import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
+import { mergeCampaignFields, resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { z } from "zod";
 
 const autopilotSchema = z
@@ -37,6 +38,9 @@ const autopilotSchema = z
       )
       .min(1)
       .max(API_BATCH_SIZE),
+    product_id: z.string().uuid().optional().nullable(),
+    campaign_id: z.string().uuid().optional().nullable(),
+    content_objective: z.string().max(200).optional().nullable(),
   })
   .refine((data) => Boolean(data.account_ids?.length || data.account_id), {
     message: "Selecione pelo menos uma conta",
@@ -88,6 +92,8 @@ export async function POST(request: NextRequest) {
 
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
     const usePerAccountSchedule = scheduleMode === "warmup" && platform === "instagram";
+    const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
+    const campaignFields = mergeCampaignFields(campaignContext);
 
     const rows = validAccounts.flatMap((account) => {
       const schedule = usePerAccountSchedule
@@ -109,6 +115,9 @@ export async function POST(request: NextRequest) {
         scheduled_at: sanitizeScheduledAt(
           schedule[index]?.toISOString() ?? parsed.data.schedule[index],
         ),
+        product_id: campaignFields.product_id,
+        campaign_id: campaignFields.campaign_id,
+        content_objective: campaignFields.content_objective,
       }));
     });
 
