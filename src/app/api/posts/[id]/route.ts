@@ -9,6 +9,7 @@ import {
   getOwnerPostById,
 } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
 const patchSchema = z.object({
@@ -70,7 +71,7 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    updates.scheduled_at = parsed.data.scheduled_at;
+    updates.scheduled_at = sanitizeScheduledAt(parsed.data.scheduled_at);
   }
 
   if (!Object.keys(updates).length) {

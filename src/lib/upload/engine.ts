@@ -63,6 +63,7 @@ export class UploadEngine {
   }
 
   pause() {
+    console.info("[upload-engine] pause");
     this.paused = true;
     for (const controller of this.abortControllers.values()) {
       controller.abort();
@@ -70,10 +71,12 @@ export class UploadEngine {
   }
 
   resume() {
+    console.info("[upload-engine] resume");
     this.paused = false;
   }
 
   stop() {
+    console.info("[upload-engine] stop");
     this.stopped = true;
     this.pause();
   }

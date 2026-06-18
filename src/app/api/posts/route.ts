@@ -6,6 +6,7 @@ import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logSecurityEvent } from "@/lib/security/audit";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
 const postSchema = z.object({
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       media_type: parsed.data.media_type,
       media_urls: parsed.data.media_urls,
       caption: parsed.data.caption ?? null,
-      scheduled_at: parsed.data.scheduled_at,
+      scheduled_at: sanitizeScheduledAt(parsed.data.scheduled_at),
     })
     .select()
     .single();

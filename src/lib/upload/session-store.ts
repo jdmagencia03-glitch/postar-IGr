@@ -23,7 +23,7 @@ import {
   saveManifestEntries,
 } from "@/lib/upload/manifest-store";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
-import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, ValidationPreview } from "@/lib/upload/session-types";
+import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 import { formatBytes } from "@/lib/upload/validate";
@@ -51,7 +51,8 @@ class UploadSessionStore {
   batch: UploadBatch | null = null;
   initialLoading = true;
   running = false;
-  paused = false;
+  pausedByUser = false;
+  retrying = false;
   resuming = false;
   speedMode: UploadSpeedMode = "normal";
   progress: UploadEngineProgress | null = null;
@@ -66,7 +67,43 @@ class UploadSessionStore {
   private initialized = false;
   private autoRetryPass = 0;
   private engineStarting = false;
+  private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private autoRecoveryScheduled = false;
+  private autoRetryResetTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
+  private static readonly AUTO_RETRY_RESET_MS = 60_000;
+
+  private logUpload(event: string, detail?: Record<string, unknown>) {
+    if (typeof console !== "undefined") {
+      console.info(`[upload-session] ${event}`, detail ?? "");
+    }
+  }
+
+  private derivePhase(): UploadSessionPhase {
+    if (!this.batch) return "idle";
+    if (this.batch.status === "ready") return "completed";
+    if (this.pausedByUser) return "paused_by_user";
+    if (this.retrying) return "retrying";
+    if (this.running) return "uploading";
+    if (this.needsFileReselection()) return "needs_attention";
+    const hasPending = (this.batch.upload_files ?? []).some(
+      (file) => !file.removed && file.status !== "completed",
+    );
+    if (hasPending) return "needs_attention";
+    return "idle";
+  }
+
+  private needsFileReselection() {
+    if (!this.batch || this.batch.status === "ready") return false;
+    const hasPending = (this.batch.upload_files ?? []).some(
+      (file) => !file.removed && file.status !== "completed",
+    );
+    const pendingInSession = (this.batch.upload_files ?? []).filter(
+      (file) =>
+        !file.removed && file.status !== "completed" && this.lastFileMap.has(file.id),
+    );
+    return hasPending && pendingInSession.length === 0;
+  }
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -88,7 +125,10 @@ class UploadSessionStore {
       batch: this.batch,
       initialLoading: this.initialLoading,
       running: this.running,
-      paused: this.paused,
+      pausedByUser: this.pausedByUser,
+      paused: this.pausedByUser,
+      retrying: this.retrying,
+      phase: this.derivePhase(),
       resuming: this.resuming,
       speedMode: this.speedMode,
       progress: this.progress,
@@ -122,8 +162,51 @@ class UploadSessionStore {
   }
 
   private emit() {
+    const wasRunning = this.snapshot.running;
     this.snapshot = this.buildSnapshot();
     for (const listener of this.listeners) listener();
+    if (wasRunning && !this.running) {
+      this.scheduleAutoRecovery("running_stopped");
+    }
+  }
+
+  private scheduleAutoRecovery(reason: string) {
+    if (
+      this.pausedByUser ||
+      this.running ||
+      this.retrying ||
+      this.engineStarting ||
+      this.resuming ||
+      !this.batch ||
+      !this.hasPendingInSession() ||
+      this.lastFileMap.size === 0
+    ) {
+      return;
+    }
+
+    if (this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES) {
+      if (!this.autoRetryResetTimer) {
+        this.logUpload("auto_retry_cooldown", { pass: this.autoRetryPass });
+        this.message = "Aguardando para tentar novamente automaticamente…";
+        this.autoRetryResetTimer = setTimeout(() => {
+          this.autoRetryResetTimer = null;
+          this.autoRetryPass = 0;
+          this.logUpload("auto_retry_cooldown_reset");
+          this.scheduleAutoRecovery("cooldown_reset");
+        }, UploadSessionStore.AUTO_RETRY_RESET_MS);
+      }
+      return;
+    }
+
+    if (this.autoRecoveryScheduled) return;
+    this.autoRecoveryScheduled = true;
+
+    this.autoRecoveryTimer = setTimeout(() => {
+      this.autoRecoveryScheduled = false;
+      this.autoRecoveryTimer = null;
+      if (!this.batch) return;
+      void this.autoContinuePendingIfNeeded(this.batch.id, this.lastFileMap, reason);
+    }, 400);
   }
 
   registerFileInputs(handlers: FileInputHandlers | null) {
@@ -195,7 +278,7 @@ class UploadSessionStore {
       const active = await fetchActiveBatch({ summary: true });
       this.batch = active;
       if (active?.upload_speed_mode) this.speedMode = active.upload_speed_mode;
-      if (active?.paused) this.paused = true;
+      if (active?.paused) this.pausedByUser = true;
       if (active?.upload_files?.length) {
         const initialProgress: Record<string, number> = {};
         for (const file of active.upload_files) {
@@ -233,11 +316,21 @@ class UploadSessionStore {
 
   private async tryAutoRetryAfterRun(batchId: string, fileMap: Map<string, File>) {
     if (
-      this.paused ||
+      this.pausedByUser ||
       this.cancelledBatchIds.has(batchId) ||
       this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES ||
       fileMap.size === 0
     ) {
+      if (this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES && !this.pausedByUser) {
+        this.message = "Aguardando para tentar novamente automaticamente…";
+        this.emit();
+      }
+      this.logUpload("auto_retry_skipped", {
+        pausedByUser: this.pausedByUser,
+        cancelled: this.cancelledBatchIds.has(batchId),
+        pass: this.autoRetryPass,
+        fileMapSize: fileMap.size,
+      });
       return;
     }
 
@@ -264,13 +357,73 @@ class UploadSessionStore {
     }
 
     this.autoRetryPass += 1;
-    let batch = failed.length ? await resetAllFailedUploadFiles(refreshed) : refreshed;
+    const batch = failed.length ? await resetAllFailedUploadFiles(refreshed) : refreshed;
 
     const retryCount = failed.length || pendingInMap.length;
-    this.message = `Retentando ${retryCount} vídeo(s) automaticamente (tentativa ${this.autoRetryPass})…`;
+    const reason = failed.length ? "file_error" : "pending_stalled";
+    this.logUpload("auto_retry_start", { pass: this.autoRetryPass, retryCount, reason });
+
+    this.retrying = true;
+    this.message =
+      failed.length > 0
+        ? `Erro em um vídeo. Tentando reenviar automaticamente… (tentativa ${this.autoRetryPass})`
+        : `Instabilidade detectada. Tentando continuar automaticamente… (tentativa ${this.autoRetryPass})`;
     this.syncBatch(batch);
     await new Promise((resolve) => setTimeout(resolve, 2000 * this.autoRetryPass));
+
+    if (this.pausedByUser || this.cancelledBatchIds.has(batchId)) {
+      this.retrying = false;
+      this.emit();
+      return;
+    }
+
+    this.retrying = false;
     await this.startEngine(batch, fileMap);
+  }
+
+  private async autoContinuePendingIfNeeded(
+    batchId: string,
+    fileMap: Map<string, File>,
+    reason: string,
+  ) {
+    if (
+      this.pausedByUser ||
+      this.running ||
+      this.engineStarting ||
+      this.retrying ||
+      this.cancelledBatchIds.has(batchId) ||
+      fileMap.size === 0
+    ) {
+      return;
+    }
+
+    if (this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES) {
+      this.logUpload("auto_continue_exhausted", { pass: this.autoRetryPass, reason });
+      return;
+    }
+
+    let refreshed = await refreshUploadBatch(batchId);
+    if (refreshed.status === "ready" || refreshed.status === "cancelled") return;
+
+    const failed =
+      refreshed.upload_files?.filter((file) => !file.removed && file.status === "failed") ?? [];
+    const pendingInMap =
+      refreshed.upload_files?.filter(
+        (file) =>
+          !file.removed &&
+          file.status !== "completed" &&
+          fileMap.has(file.id),
+      ) ?? [];
+
+    if (!pendingInMap.length && !failed.length) return;
+
+    this.logUpload("auto_continue", { reason, pending: pendingInMap.length, failed: failed.length });
+
+    if (failed.length) {
+      refreshed = await resetAllFailedUploadFiles(refreshed);
+    }
+    this.syncBatch(refreshed);
+    await this.startEngine(refreshed, fileMap);
   }
 
   setValidationPreview(preview: ValidationPreview | null) {
@@ -283,8 +436,12 @@ class UploadSessionStore {
     fileMap: Map<string, File>,
     onlyFileIds?: string[],
   ) {
-    if (this.engineStarting) return;
+    if (this.engineStarting) {
+      this.logUpload("start_engine_blocked", { batchId: currentBatch.id, reason: "already_starting" });
+      return;
+    }
     this.engineStarting = true;
+    const batchId = currentBatch.id;
 
     try {
       const batchWithFiles = await ensureBatchWithFiles(currentBatch);
@@ -321,6 +478,7 @@ class UploadSessionStore {
           this.emit();
         },
         onError: (errorMessage) => {
+          this.logUpload("file_error", { message: errorMessage });
           this.message = formatUploadErrorMessage(errorMessage);
           this.emit();
         },
@@ -329,15 +487,28 @@ class UploadSessionStore {
       this.engine = engine;
       this.lastFileMap = fileMap;
       this.running = true;
-      this.paused = false;
+      this.pausedByUser = false;
+      this.message = null;
+      this.logUpload("engine_start", { batchId, files: fileMap.size, onlyFileIds });
       this.emit();
 
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
-      await this.tryAutoRetryAfterRun(currentBatch.id, fileMap);
+    } catch (error) {
+      this.logUpload("engine_crash", {
+        batchId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.setUserMessage(error, "Erro durante upload");
     } finally {
       this.running = false;
       this.engineStarting = false;
       this.emit();
+    }
+
+    // Retentativa e continuação automática só após liberar engineStarting (evita deadlock).
+    if (!this.pausedByUser && !this.cancelledBatchIds.has(batchId)) {
+      await this.tryAutoRetryAfterRun(batchId, fileMap);
+      await this.autoContinuePendingIfNeeded(batchId, fileMap, "engine_finished");
     }
   }
 
@@ -485,7 +656,7 @@ class UploadSessionStore {
         return;
       }
 
-      this.paused = false;
+      this.pausedByUser = false;
       await setBatchPaused(this.batch.id, false);
       this.message = `${matchedPending} vídeo(s) reconhecido(s) · ${alreadyDone} já enviados (não serão reenviados).`;
 
@@ -530,7 +701,7 @@ class UploadSessionStore {
       const nextMap = { ...this.progressMap };
       delete nextMap[record.id];
       this.progressMap = nextMap;
-      this.paused = false;
+      this.pausedByUser = false;
       await setBatchPaused(reset.id, false);
       await this.startEngine(reset, new Map([[record.id, file]]), [record.id]);
     } catch (error) {
@@ -558,17 +729,21 @@ class UploadSessionStore {
 
     if (this.resumeInSession()) return;
 
-    this.paused = false;
+    this.pausedByUser = false;
     this.message = null;
     this.resuming = true;
+    this.logUpload("resume_paused_by_user");
     this.emit();
 
     try {
-      this.engine?.stop();
-      this.running = false;
+      if (this.running) {
+        this.engine?.stop();
+        this.running = false;
+      }
       await setBatchPaused(this.batch.id, false);
       const refreshed = await refreshUploadBatch(this.batch.id);
       this.batch = refreshed;
+      this.autoRetryPass = 0;
       await this.startEngine(refreshed, this.lastFileMap);
     } catch (error) {
       this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
@@ -589,7 +764,7 @@ class UploadSessionStore {
     try {
       const refreshed = await refreshUploadBatch(this.batch.id);
 
-      if (this.running) {
+      if (this.running || this.retrying) {
         this.batch = refreshed;
         const nextProgress: Record<string, number> = { ...this.progressMap };
         for (const file of refreshed.upload_files ?? []) {
@@ -607,7 +782,10 @@ class UploadSessionStore {
       }
 
       this.batch = refreshed;
-      if (refreshed.paused) this.paused = true;
+      if (refreshed.paused) {
+        this.pausedByUser = true;
+        this.logUpload("foreground_sync_paused_by_user");
+      }
 
       const incomplete = (refreshed.upload_files ?? []).some(
         (file) => !file.removed && file.status !== "completed",
@@ -615,47 +793,39 @@ class UploadSessionStore {
 
       if (
         incomplete &&
+        !this.pausedByUser &&
         this.lastFileMap.size > 0 &&
-        !this.message?.includes("Continuar upload")
+        this.hasPendingInSession()
+      ) {
+        this.logUpload("foreground_auto_continue");
+        await this.autoContinuePendingIfNeeded(this.batch.id, this.lastFileMap, "foreground");
+        return;
+      }
+
+      if (
+        incomplete &&
+        this.needsFileReselection() &&
+        !this.message?.includes("Selecione novamente")
       ) {
         this.message =
-          "Upload interrompido. Clique em Continuar upload para retomar de onde parou.";
+          "Selecione novamente os vídeos no computador para continuar o envio.";
       }
       this.emit();
-    } catch {
-      // ignore
+    } catch (error) {
+      this.logUpload("foreground_reconcile_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   async continueUpload() {
-    if (this.paused) {
+    if (this.pausedByUser) {
       await this.resumePausedUpload();
       return;
     }
 
-    if (this.resumeInSession()) return;
-
     if (this.batch && this.lastFileMap.size > 0 && this.hasPendingInSession()) {
-      this.message = null;
-      this.resuming = true;
-      this.emit();
-      try {
-        this.engine?.stop();
-        this.running = false;
-        await setBatchPaused(this.batch.id, false);
-        let refreshed = await refreshUploadBatch(this.batch.id);
-        refreshed = await resetAllFailedUploadFiles(refreshed);
-        this.batch = refreshed;
-        this.autoRetryPass = 0;
-        await this.startEngine(refreshed, this.lastFileMap);
-      } catch (error) {
-        this.message = error instanceof Error ? error.message : "Erro ao retomar upload";
-        this.running = false;
-        this.emit();
-      } finally {
-        this.resuming = false;
-        this.emit();
-      }
+      this.scheduleAutoRecovery("continue_upload");
       return;
     }
 
@@ -673,9 +843,10 @@ class UploadSessionStore {
   async togglePause() {
     if (!this.batch) return;
 
-    if (this.running && !this.paused) {
+    if (this.running && !this.pausedByUser) {
+      this.logUpload("paused_by_user");
       this.engine?.pause();
-      this.paused = true;
+      this.pausedByUser = true;
       this.running = false;
       await setBatchPaused(this.batch.id, true);
       this.message = "Upload pausado. Clique em Retomar para continuar de onde parou.";
@@ -683,7 +854,7 @@ class UploadSessionStore {
       return;
     }
 
-    this.paused = false;
+    this.pausedByUser = false;
     await setBatchPaused(this.batch.id, false);
     await this.resumePausedUpload();
   }
@@ -703,7 +874,8 @@ class UploadSessionStore {
       this.progress = null;
       this.progressMap = {};
       this.running = false;
-      this.paused = false;
+      this.pausedByUser = false;
+      this.retrying = false;
       this.message = "Lote cancelado.";
       for (const listener of this.batchListeners) listener(null);
     } catch (error) {

@@ -27,11 +27,26 @@ export type UploadSessionConfig = {
   customSchedule?: UploadBatch["custom_schedule"];
 };
 
+/** Fase visível do upload na sessão (não confundir com status por arquivo). */
+export type UploadSessionPhase =
+  | "idle"
+  | "uploading"
+  | "retrying"
+  | "paused_by_user"
+  | "needs_attention"
+  | "completed";
+
 export type UploadSessionSnapshot = {
   batch: UploadBatch | null;
   initialLoading: boolean;
   running: boolean;
+  /** Pausa iniciada manualmente pelo usuário (botão Pausar). */
+  pausedByUser: boolean;
+  /** @deprecated Use pausedByUser — mantido para compatibilidade. */
   paused: boolean;
+  /** Retentativa automática após falha temporária. */
+  retrying: boolean;
+  phase: UploadSessionPhase;
   resuming: boolean;
   speedMode: UploadSpeedMode;
   progress: UploadEngineProgress | null;

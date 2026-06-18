@@ -13,6 +13,7 @@ create table if not exists ai_playbooks (
   example_captions text,
   avoid_rules text,
   extra_knowledge text,
+  playbooks_by_account jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

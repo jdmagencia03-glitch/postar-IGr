@@ -58,13 +58,13 @@ export async function buildAutopilotPlan(params: {
   niche?: string;
   username?: string;
   ownerId: string;
+  accountId: string;
   schedule_mode?: ScheduleMode;
   batch_offset?: number;
   total_count?: number;
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
 }) {
-  const niche = params.niche?.trim() || "fitness e lifestyle";
   const scheduleMode = params.schedule_mode ?? "auto";
   const totalCount = params.total_count ?? params.items.length;
   const batchOffset = params.batch_offset ?? 0;
@@ -81,13 +81,14 @@ export async function buildAutopilotPlan(params: {
     custom: params.custom,
   });
 
-  const { captions, source } = await generateBulkCaptions({
+  const { captions, source, niche, debug } = await generateBulkCaptions({
     count: params.items.length,
     filenames,
-    niche,
     username: params.username ?? "perfil",
     ownerId: params.ownerId,
+    accountId: params.accountId,
     globalOffset: batchOffset,
+    niche: params.niche,
   });
 
   const preview: AutopilotPreviewEntry[] = params.items.map((item, index) => ({
@@ -102,6 +103,7 @@ export async function buildAutopilotPlan(params: {
     schedule_mode: scheduleMode,
     posts_per_day: postsPerDay,
     caption_source: source,
+    caption_debug: debug,
     schedule_summary,
     duration,
     schedule: schedule.map((slot) => slot.toISOString()),

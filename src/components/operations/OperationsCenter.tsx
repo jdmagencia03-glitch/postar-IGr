@@ -11,7 +11,7 @@ import {
   hoursUntilNextPost,
   type computeOperationsSnapshot,
 } from "@/lib/operations/compute";
-import type { ScheduledPost, SocialPlatform } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform, ContentType } from "@/lib/types";
 
 interface AccountOption {
   id: string;
@@ -33,6 +33,7 @@ interface Props {
   accounts: AccountOption[];
   selectedAccountId: string;
   selectedPlatform?: SocialPlatform | "all";
+  selectedContentType?: ContentType | "all";
   posts: ScheduledPost[];
   snapshot: ReturnType<typeof computeOperationsSnapshot>;
   statusFilter: string;
@@ -78,6 +79,7 @@ export function OperationsCenter({
   accounts,
   selectedAccountId,
   selectedPlatform = "all",
+  selectedContentType = "all",
   posts,
   snapshot,
   statusFilter,
@@ -174,6 +176,7 @@ export function OperationsCenter({
   function buildHref(params: Record<string, string | undefined>) {
     const query = new URLSearchParams();
     if (params.platform && params.platform !== "all") query.set("platform", params.platform);
+    if (params.content_type && params.content_type !== "all") query.set("content_type", params.content_type);
     if (params.account) query.set("account", params.account);
     if (params.status && params.status !== "all") query.set("status", params.status);
     if (params.period && params.period !== "all") query.set("period", params.period);
@@ -185,6 +188,13 @@ export function OperationsCenter({
     ["all", "Todas"],
     ["instagram", "Instagram"],
     ["tiktok", "TikTok"],
+  ] as const;
+
+  const contentTypeTabs = [
+    ["all", "Todos"],
+    ["reel", "Reels"],
+    ["story", "Stories"],
+    ["post", "Posts"],
   ] as const;
 
   const visibleAccounts = accounts.filter(
@@ -215,6 +225,7 @@ export function OperationsCenter({
             key={value}
             href={buildHref({
               platform: value,
+              content_type: selectedContentType,
               status: statusFilter,
               period: periodFilter,
             })}
@@ -229,11 +240,34 @@ export function OperationsCenter({
         ))}
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        {contentTypeTabs.map(([value, label]) => (
+          <a
+            key={value}
+            href={buildHref({
+              platform: selectedPlatform === "all" ? undefined : selectedPlatform,
+              content_type: value,
+              account: accountId || undefined,
+              status: statusFilter,
+              period: periodFilter,
+            })}
+            className={`rounded-full px-4 py-2 text-sm transition ${
+              selectedContentType === value
+                ? "bg-ig-primary text-ig-on-primary"
+                : "border border-ig-border bg-ig-elevated text-ig-text hover:bg-ig-secondary"
+            }`}
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+
       {visibleAccounts.length > 1 && (
         <div className="flex flex-wrap gap-2">
           <a
             href={buildHref({
               platform: selectedPlatform === "all" ? undefined : selectedPlatform,
+              content_type: selectedContentType === "all" ? undefined : selectedContentType,
               status: statusFilter,
               period: periodFilter,
             })}
@@ -250,6 +284,7 @@ export function OperationsCenter({
               key={account.id}
               href={buildHref({
                 platform: account.platform,
+                content_type: selectedContentType === "all" ? undefined : selectedContentType,
                 account: account.id,
                 status: statusFilter,
                 period: periodFilter,
@@ -301,7 +336,10 @@ export function OperationsCenter({
         </div>
 
         <div className="mt-6 flex flex-wrap gap-3">
-          <a href="/dashboard/bulk" className="ig-btn px-5 py-3 text-sm font-semibold">
+          <a href="/dashboard/stories" className="ig-btn px-5 py-3 text-sm font-semibold">
+            Programar Stories
+          </a>
+          <a href="/dashboard/bulk" className="ig-btn-secondary px-5 py-3 text-sm font-semibold">
             Agendar mais vídeos
           </a>
           <a href="/dashboard/calendar" className="ig-btn-secondary px-5 py-3 text-sm font-semibold">
@@ -549,7 +587,13 @@ export function OperationsCenter({
           {statusFilters.map(([value, label]) => (
             <a
               key={value}
-              href={buildHref({ account: accountId, status: value, period: periodFilter })}
+              href={buildHref({
+                platform: selectedPlatform === "all" ? undefined : selectedPlatform,
+                content_type: selectedContentType === "all" ? undefined : selectedContentType,
+                account: accountId,
+                status: value,
+                period: periodFilter,
+              })}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 statusFilter === value
                   ? "bg-ig-primary text-ig-on-primary"
@@ -565,7 +609,13 @@ export function OperationsCenter({
           {periodFilters.map(([value, label]) => (
             <a
               key={value}
-              href={buildHref({ account: accountId, status: statusFilter, period: value })}
+              href={buildHref({
+                platform: selectedPlatform === "all" ? undefined : selectedPlatform,
+                content_type: selectedContentType === "all" ? undefined : selectedContentType,
+                account: accountId,
+                status: statusFilter,
+                period: value,
+              })}
               className={`rounded-full px-4 py-2 text-sm transition ${
                 periodFilter === value
                   ? "bg-ig-primary text-ig-on-primary"
@@ -582,6 +632,10 @@ export function OperationsCenter({
         {!posts.length && (
           <div className="rounded-xl border border-dashed border-ig-border p-12 text-center text-ig-muted">
             Nenhum post neste filtro.{" "}
+            <a href="/dashboard/stories" className="text-ig-primary hover:underline">
+              Programar Stories
+            </a>
+            {" · "}
             <a href="/dashboard/bulk" className="text-ig-primary hover:underline">
               Agendar mais vídeos
             </a>

@@ -17,8 +17,11 @@ export function DashboardUploadCard() {
       progress: session.progress,
       progressMap: session.progressMap,
       running: session.running,
-      paused: session.paused,
+      pausedByUser: session.pausedByUser,
+      retrying: session.retrying,
       resuming: session.resuming,
+      canResumeWithoutPicker: session.canResumeWithoutPicker,
+      needsFileReselection: session.needsFileReselection,
     });
   }, [session]);
 
@@ -58,13 +61,15 @@ export function DashboardUploadCard() {
       (activeFile.status === "completed" ? 100 : activeFile.status === "uploading" ? 5 : 0))
     : view.overallPercent;
 
-  const statusLabel = session.running
-    ? "ENVIANDO"
-    : session.paused
-      ? "PAUSADO"
-      : view.failedCount > 0
-        ? "COM ERRO"
-        : "AGUARDANDO";
+  const statusLabel = session.retrying || view.awaitingAutoRecovery
+    ? "RECONECTANDO"
+    : session.running
+      ? "ENVIANDO"
+      : session.pausedByUser
+        ? "PAUSADO"
+        : view.failedCount > 0
+          ? "COM ERRO"
+          : "AGUARDANDO";
 
   return (
     <div className="ig-panel flex h-full min-h-[220px] flex-col p-5">

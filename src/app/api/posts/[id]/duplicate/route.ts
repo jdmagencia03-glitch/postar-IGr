@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerPostById } from "@/lib/posts";
+import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(
@@ -32,7 +33,7 @@ export async function POST(
       media_type: post.media_type,
       media_urls: post.media_urls,
       caption: post.caption,
-      scheduled_at: duplicateAt.toISOString(),
+      scheduled_at: sanitizeScheduledAt(duplicateAt.toISOString()),
       status: "pending",
     })
     .select("*, instagram_accounts(ig_username, profile_picture_url)")

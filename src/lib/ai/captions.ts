@@ -1,27 +1,12 @@
 import {
   buildViralSystemPrompt,
   buildViralUserPrompt,
-  getPlaybookForOwner,
+  getPlaybookForAccount,
+  resolveNicheFromPlaybook,
 } from "@/lib/ai/playbook";
 import { formatInstagramCaption } from "@/lib/ai/caption-format";
+import { logCaptionGeneration } from "@/lib/ai/caption-debug";
 import { CAPTION_BATCH_SIZE } from "@/lib/autopilot-constants";
-
-const HOOKS = [
-  "Esse treino mudou meu dia 🔥",
-  "Resultado de verdade, sem enrolação 💪",
-  "Salva esse Reel e treina hoje 🚀",
-  "Dica rápida que faz diferença no shape ✨",
-  "Mais um passo rumo ao seu objetivo 🎯",
-  "Conteúdo direto ao ponto pra você evoluir 📈",
-  "Rotina simples, resultado consistente ⚡",
-  "Bora manter o foco no processo 🔁",
-];
-
-const HASHTAG_SETS = [
-  "#fitness #treino #reels #fyp #viral #academia #saude #motivacao #lifestyle #workout",
-  "#fitnessbrasil #treinoemcasa #reeducacaoalimentar #deolhonoshape #hipertrofia #reelsbrasil",
-  "#musculacao #fitnessmotivation #gym #treinohoje #disciplina #foco #metas #corpoemente",
-];
 
 function cleanFilename(name: string) {
   return name
@@ -31,14 +16,29 @@ function cleanFilename(name: string) {
     .trim();
 }
 
+function nicheTag(niche: string) {
+  const slug = niche
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+  return slug ? `#${slug}` : "#reels";
+}
+
 function buildFallbackCaption(index: number, filename: string, niche: string) {
-  const hook = HOOKS[index % HOOKS.length];
-  const tags = HASHTAG_SETS[index % HASHTAG_SETS.length];
+  const hooks = [
+    `Conteúdo sobre ${niche} que você precisa ver`,
+    `Dica rápida de ${niche} para salvar agora`,
+    `Mais um Reel de ${niche} no feed`,
+    `Isso aqui é puro ${niche} — assiste até o fim`,
+  ];
+  const hook = hooks[index % hooks.length];
   const fileHint = cleanFilename(filename);
   const context = fileHint ? ` | tema: ${fileHint}` : "";
+  const tags = `${nicheTag(niche)} #reels #fyp #viral #brasil`;
 
   return formatInstagramCaption(
-    `${hook}\n\nConteúdo sobre ${niche}${context}.\n💪 Comenta o que achou e salva pra treinar depois.\n\n${tags}`,
+    `${hook}${context}.\n\nComenta o que achou e salva pra ver depois.\n\n${tags}`,
   );
 }
 
@@ -56,11 +56,12 @@ export function generateFallbackCaptions(params: {
 export async function generateBulkCaptions(params: {
   count: number;
   filenames: string[];
-  niche: string;
+  niche?: string;
   username?: string;
   ownerId?: string;
+  accountId?: string;
   globalOffset?: number;
-}): Promise<{ captions: string[]; source: "ai" | "fallback" }> {
+}): Promise<{ captions: string[]; source: "ai" | "fallback"; niche: string; debug?: Record<string, unknown> }> {
   const globalOffset = params.globalOffset ?? 0;
 
   if (params.count <= CAPTION_BATCH_SIZE) {
@@ -69,6 +70,7 @@ export async function generateBulkCaptions(params: {
 
   const captions: string[] = [];
   let source: "ai" | "fallback" = "ai";
+  let niche = "conteúdo digital";
 
   for (let i = 0; i < params.count; i += CAPTION_BATCH_SIZE) {
     const chunkFilenames = params.filenames.slice(i, i + CAPTION_BATCH_SIZE);
@@ -78,43 +80,73 @@ export async function generateBulkCaptions(params: {
       niche: params.niche,
       username: params.username,
       ownerId: params.ownerId,
+      accountId: params.accountId,
       globalOffset: globalOffset + i,
     });
 
     captions.push(...chunk.captions);
+    niche = chunk.niche;
     if (chunk.source === "fallback") source = "fallback";
   }
 
-  return { captions, source };
+  return { captions, source, niche };
 }
 
 async function generateBulkCaptionsChunk(params: {
   count: number;
   filenames: string[];
-  niche: string;
+  niche?: string;
   username?: string;
   ownerId?: string;
+  accountId?: string;
   globalOffset?: number;
-}): Promise<{ captions: string[]; source: "ai" | "fallback" }> {
+}): Promise<{ captions: string[]; source: "ai" | "fallback"; niche: string; debug?: Record<string, unknown> }> {
   const globalOffset = params.globalOffset ?? 0;
+
+  const playbook =
+    params.ownerId && params.accountId
+      ? await getPlaybookForAccount(params.ownerId, params.accountId)
+      : null;
+  const niche = resolveNicheFromPlaybook(playbook, params.niche);
+
+  const systemPrompt = buildViralSystemPrompt(playbook, niche);
+  const userPrompt = buildViralUserPrompt({
+    count: params.count,
+    filenames: params.filenames,
+    niche,
+    username: params.username,
+  });
+
+  const debugBase = {
+    accountId: params.accountId ?? null,
+    accountName: params.username ?? null,
+    niche,
+    ownerId: params.ownerId ?? null,
+    count: params.count,
+    playbookLoaded: Boolean(playbook),
+    playbookNiche: playbook?.niche ?? null,
+    playbookBrand: playbook?.brand_name ?? null,
+  };
+
+  logCaptionGeneration("start", {
+    ...debugBase,
+    systemPromptPreview: systemPrompt.slice(0, 500),
+    userPromptPreview: userPrompt.slice(0, 500),
+  });
+
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    const niche = params.niche?.trim() || "fitness e lifestyle";
+    logCaptionGeneration("fallback_no_api_key", debugBase);
     return {
       captions: Array.from({ length: params.count }, (_, index) =>
-        buildFallbackCaption(
-          globalOffset + index,
-          params.filenames[index] ?? "",
-          niche,
-        ),
+        buildFallbackCaption(globalOffset + index, params.filenames[index] ?? "", niche),
       ),
       source: "fallback",
+      niche,
+      debug: debugBase,
     };
   }
-
-  const playbook = params.ownerId ? await getPlaybookForOwner(params.ownerId) : null;
-  const niche = params.niche?.trim() || playbook?.niche?.trim() || "fitness e lifestyle";
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -128,19 +160,8 @@ async function generateBulkCaptionsChunk(params: {
         temperature: 0.9,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content: buildViralSystemPrompt(playbook, niche),
-          },
-          {
-            role: "user",
-            content: buildViralUserPrompt({
-              count: params.count,
-              filenames: params.filenames,
-              niche,
-              username: params.username,
-            }),
-          },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
       }),
     });
@@ -167,17 +188,26 @@ async function generateBulkCaptionsChunk(params: {
       );
     }
 
-    return { captions, source: "ai" };
-  } catch {
+    logCaptionGeneration("success", {
+      ...debugBase,
+      generatedCount: captions.length,
+      finalPromptUser: userPrompt,
+      finalPromptSystem: systemPrompt,
+    });
+
+    return { captions, source: "ai", niche, debug: debugBase };
+  } catch (error) {
+    logCaptionGeneration("fallback_error", {
+      ...debugBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       captions: Array.from({ length: params.count }, (_, index) =>
-        buildFallbackCaption(
-          globalOffset + index,
-          params.filenames[index] ?? "",
-          niche,
-        ),
+        buildFallbackCaption(globalOffset + index, params.filenames[index] ?? "", niche),
       ),
       source: "fallback",
+      niche,
+      debug: debugBase,
     };
   }
 }

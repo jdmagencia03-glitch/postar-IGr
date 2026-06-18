@@ -13,13 +13,9 @@ import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import { uploadSessionStore } from "@/lib/upload/session-store";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
-import type { UploadSessionSnapshot } from "@/lib/upload/session-types";
 
-function resumeButtonLabel(session: UploadSessionSnapshot, paused: boolean) {
-  if (session.canResumeWithoutPicker) {
-    return paused ? "Retomar" : "Continuar upload";
-  }
-  return "Selecionar arquivos novamente";
+function resumeButtonLabel() {
+  return "Retomar upload";
 }
 
 interface Props {
@@ -113,9 +109,23 @@ export function SupremeUploadManager({
         progress: session.progress,
         progressMap: session.progressMap,
         running: session.running,
-        paused: session.paused,
+        pausedByUser: session.pausedByUser,
+        retrying: session.retrying,
+        resuming: session.resuming,
+        canResumeWithoutPicker: session.canResumeWithoutPicker,
+        needsFileReselection: session.needsFileReselection,
       }),
-    [session.batch, session.progress, session.progressMap, session.running, session.paused],
+    [
+      session.batch,
+      session.progress,
+      session.progressMap,
+      session.running,
+      session.pausedByUser,
+      session.retrying,
+      session.resuming,
+      session.canResumeWithoutPicker,
+      session.needsFileReselection,
+    ],
   );
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
@@ -151,43 +161,56 @@ export function SupremeUploadManager({
         Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
       </p>
 
-      {view.canContinue && (
+      {view.canResume && (
         <div className="space-y-3 rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
           <div>
-            <p className="font-semibold text-ig-text">
-              {view.uploadPaused
-                ? "Upload pausado"
-                : view.failedCount > 0
-                  ? "Upload interrompido com erros"
-                  : "Falta enviar alguns vídeos"}
-            </p>
+            <p className="font-semibold text-ig-text">Upload pausado</p>
             <p className="mt-1 text-sm text-ig-muted">
-              {view.completedCount} de {view.totalCount} já enviados
-              {view.failedCount > 0 ? ` · ${view.failedCount} com erro` : ""}
-              {session.canResumeWithoutPicker
-                ? " · seus arquivos ainda estão nesta sessão"
-                : " · selecione os vídeos no computador para continuar"}
+              {view.completedCount} de {view.totalCount} já enviados · seus arquivos ainda estão nesta sessão
             </p>
           </div>
           <button
             type="button"
             className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
             disabled={session.resuming}
-            onClick={() =>
-              void (session.paused
-                ? uploadSessionStore.resumePausedUpload()
-                : uploadSessionStore.continueUpload())
-            }
+            onClick={() => void uploadSessionStore.resumePausedUpload()}
           >
             {session.resuming ? (
               <Loader2 size={16} className="animate-spin" />
-            ) : session.canResumeWithoutPicker ? (
-              <Play size={16} />
             ) : (
-              <Upload size={16} />
+              <Play size={16} />
             )}
-            {resumeButtonLabel(session, session.paused)}
+            {resumeButtonLabel()}
           </button>
+        </div>
+      )}
+
+      {view.canSelectFiles && (
+        <div className="space-y-3 rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">
+          <div>
+            <p className="font-semibold text-ig-text">Falta enviar alguns vídeos</p>
+            <p className="mt-1 text-sm text-ig-muted">
+              {view.completedCount} de {view.totalCount} já enviados
+              {view.failedCount > 0 ? ` · ${view.failedCount} com erro` : ""}
+              {" · "}selecione os vídeos no computador para continuar
+            </p>
+          </div>
+          <button
+            type="button"
+            className="ig-btn inline-flex items-center gap-2 px-5 py-2.5 text-sm"
+            disabled={session.resuming}
+            onClick={() => uploadSessionStore.openChooseVideos()}
+          >
+            <Upload size={16} />
+            Selecionar arquivos novamente
+          </button>
+        </div>
+      )}
+
+      {view.awaitingAutoRecovery && (
+        <div className="flex items-center gap-2 rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
+          <Loader2 size={16} className="animate-spin text-ig-primary" />
+          {session.message ?? "Instabilidade detectada. Tentando continuar automaticamente…"}
         </div>
       )}
 
@@ -265,12 +288,12 @@ export function SupremeUploadManager({
             <p className="text-lg font-semibold text-ig-text">
               {session.batch.status === "ready"
                 ? "Upload concluído"
-                : session.running
-                  ? "Enviando vídeos"
-                  : view.uploadPaused
-                    ? "Upload pausado"
-                    : view.uploadInterrupted
-                      ? "Upload incompleto"
+                : session.retrying || view.awaitingAutoRecovery
+                  ? "Reconectando…"
+                  : session.running
+                    ? "Enviando vídeos"
+                    : view.canResume
+                      ? "Upload pausado"
                       : "Upload em andamento"}
             </p>
             <p className="mt-1 text-sm text-ig-muted">
@@ -307,24 +330,24 @@ export function SupremeUploadManager({
                   <Pause size={14} /> Pausar
                 </button>
               )}
-              {view.uploadPaused && !session.running && (
+              {view.canResume && !session.running && (
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
                   disabled={session.resuming}
                   onClick={() => void uploadSessionStore.resumePausedUpload()}
                 >
-                  <Play size={14} /> {resumeButtonLabel(session, true)}
+                  <Play size={14} /> {resumeButtonLabel()}
                 </button>
               )}
-              {view.uploadInterrupted && !session.running && !view.uploadPaused && (
+              {view.canSelectFiles && !session.running && (
                 <button
                   type="button"
                   className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
                   disabled={session.resuming}
-                  onClick={() => void uploadSessionStore.continueUpload()}
+                  onClick={() => uploadSessionStore.openChooseVideos()}
                 >
-                  <Play size={14} /> {resumeButtonLabel(session, false)}
+                  <Upload size={14} /> Selecionar arquivos
                 </button>
               )}
               {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
@@ -359,10 +382,14 @@ export function SupremeUploadManager({
         </>
       )}
 
-      {(session.running || session.resuming) && (
+      {(session.running || session.resuming || session.retrying) && (
         <div className="flex items-center gap-2 text-sm text-ig-primary">
           <Loader2 size={16} className="animate-spin" />
-          {session.resuming ? "Reconhecendo arquivos..." : `Enviando (${speedPresets[session.speedMode].label})…`}
+          {session.retrying
+            ? session.message ?? "Tentando continuar automaticamente…"
+            : session.resuming
+              ? "Reconhecendo arquivos..."
+              : `Enviando (${speedPresets[session.speedMode].label})…`}
         </div>
       )}
 

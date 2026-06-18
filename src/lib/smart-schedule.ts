@@ -1,4 +1,3 @@
-import { addDays } from "date-fns";
 import {
   DEFAULT_WARMUP_DAYS,
   describeWarmupPlan,
@@ -10,12 +9,66 @@ import {
   atHourInAppTz,
   atHourOnDayOffsetInAppTz,
   endOfPostingDayInAppTz,
+  getAppDateParts,
 } from "@/lib/timezone";
-import { generateBulkSchedule } from "@/lib/utils";
 
 const PEAK_HOURS_BR = [7, 9, 11, 12, 14, 16, 18, 19, 20, 21];
 const MIN_GAP_MINUTES = 25;
 const BUFFER_MINUTES = 15;
+
+export { BUFFER_MINUTES as SCHEDULE_BUFFER_MINUTES };
+
+/** Primeiro instante permitido para agendamento (agora + buffer de segurança). */
+export function earliestScheduleInstant(now = new Date()): Date {
+  return new Date(now.getTime() + BUFFER_MINUTES * 60_000);
+}
+
+/**
+ * Garante horário de parede (APP_TIMEZONE) em dia futuro válido.
+ * Se o slot já passou hoje, avança para o próximo dia com o mesmo horário.
+ */
+export function rollSlotToFuture(
+  base: Date,
+  dayOffset: number,
+  hour: number,
+  minute: number,
+  now = new Date(),
+): Date {
+  const earliest = earliestScheduleInstant(now);
+  let offset = dayOffset;
+
+  for (let attempt = 0; attempt < 366; attempt++) {
+    const candidate = atHourOnDayOffsetInAppTz(base, offset, hour, minute);
+    if (candidate > earliest) return candidate;
+    offset++;
+  }
+
+  throw new Error("Não foi possível encontrar horário futuro para agendamento.");
+}
+
+/** Move um instante agendado para o futuro, preservando hora/minuto em São Paulo. */
+export function ensureFutureScheduleSlot(date: Date, now = new Date()): Date {
+  const earliest = earliestScheduleInstant(now);
+  if (date > earliest) return date;
+
+  const parts = getAppDateParts(date);
+  const nowParts = getAppDateParts(now);
+  const dayDiff = Math.floor(
+    (Date.UTC(parts.year, parts.month - 1, parts.day) -
+      Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day)) /
+      86_400_000,
+  );
+
+  return rollSlotToFuture(now, Math.max(0, dayDiff), parts.hour, parts.minute, now);
+}
+
+export function sanitizeScheduleDates(schedule: Date[], now = new Date()): Date[] {
+  return schedule.map((slot) => ensureFutureScheduleSlot(slot, now));
+}
+
+export function sanitizeScheduledAt(value: string | Date, now = new Date()): string {
+  return ensureFutureScheduleSlot(new Date(value), now).toISOString();
+}
 
 const HOURS_BY_POSTS_PER_DAY: Record<number, number[]> = {
   1: [18],
@@ -191,19 +244,6 @@ export function generateCustomSchedule(
     return { schedule: [] as Date[], postsPerDay };
   }
 
-  const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
-  let anchorDay = 0;
-
-  for (let probeDay = 0; probeDay < 366; probeDay++) {
-    const hasFuture = timeSlots.some(
-      ({ hour, minute }) => atHourOnDayOffsetInAppTz(now, probeDay, hour, minute) >= earliest,
-    );
-    if (hasFuture) {
-      anchorDay = probeDay;
-      break;
-    }
-  }
-
   const schedule: Date[] = [];
 
   for (let index = 0; index < count; index++) {
@@ -211,7 +251,7 @@ export function generateCustomSchedule(
     const slotInDay = index % postsPerDay;
     const slot = timeSlots[slotInDay];
     if (!slot) break;
-    schedule.push(atHourOnDayOffsetInAppTz(now, anchorDay + dayIndex, slot.hour, slot.minute));
+    schedule.push(rollSlotToFuture(now, dayIndex, slot.hour, slot.minute, now));
   }
 
   return { schedule, postsPerDay };
@@ -278,7 +318,7 @@ export function generateSmartScheduleToday(count: number, now = new Date()): Dat
 export function generateSmartScheduleAuto(count: number, now = new Date()) {
   const postsPerDay = resolveAutoPostsPerDay(count);
   const hours = HOURS_BY_POSTS_PER_DAY[postsPerDay] ?? HOURS_BY_POSTS_PER_DAY[2];
-  const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
+  const earliest = earliestScheduleInstant(now);
 
   const hasSlotToday = PEAK_HOURS_BR.some((hour) => {
     const slot = atHour(now, hour);
@@ -288,9 +328,36 @@ export function generateSmartScheduleAuto(count: number, now = new Date()) {
   const startDate = hasSlotToday
     ? earliest
     : atHourOnDayOffsetInAppTz(now, 1, PEAK_HOURS_BR[0]);
-  const schedule = generateBulkSchedule({ count, startDate, postsPerDay, hours });
+  const schedule = generateBulkSchedule({ count, startDate, postsPerDay, hours, now });
 
   return { schedule, postsPerDay };
+}
+
+export function generateBulkSchedule(params: {
+  count: number;
+  startDate: Date;
+  postsPerDay: number;
+  hours: number[];
+  now?: Date;
+}): Date[] {
+  const { count, startDate, postsPerDay, hours } = params;
+  const now = params.now ?? new Date();
+  const schedule: Date[] = [];
+  let dayOffset = 0;
+  let slot = 0;
+
+  for (let i = 0; i < count; i++) {
+    const hour = hours[slot % hours.length];
+    schedule.push(rollSlotToFuture(startDate, dayOffset, hour, 0, now));
+
+    slot++;
+    if (slot % postsPerDay === 0) {
+      dayOffset++;
+      slot = 0;
+    }
+  }
+
+  return schedule;
 }
 
 export function buildSmartSchedule(
@@ -301,12 +368,15 @@ export function buildSmartSchedule(
   custom?: CustomScheduleOptions,
 ) {
   if (mode === "warmup") {
-    const schedule = generateWarmupSchedule({
-      count,
-      warmupDays: warmup?.warmupDays ?? DEFAULT_WARMUP_DAYS,
-      warmupDayOffset: warmup?.warmupDayOffset ?? 0,
+    const schedule = sanitizeScheduleDates(
+      generateWarmupSchedule({
+        count,
+        warmupDays: warmup?.warmupDays ?? DEFAULT_WARMUP_DAYS,
+        warmupDayOffset: warmup?.warmupDayOffset ?? 0,
+        now,
+      }),
       now,
-    });
+    );
     return {
       schedule,
       postsPerDay: 1,
@@ -315,7 +385,7 @@ export function buildSmartSchedule(
   }
 
   if (mode === "today") {
-    const schedule = generateSmartScheduleToday(count, now);
+    const schedule = sanitizeScheduleDates(generateSmartScheduleToday(count, now), now);
     return {
       schedule,
       postsPerDay: count,
@@ -328,11 +398,11 @@ export function buildSmartSchedule(
       throw new Error("Configure posts por dia e horários no modo personalizado.");
     }
     const { schedule, postsPerDay } = generateCustomSchedule(count, custom, now);
-    return { schedule, postsPerDay, mode };
+    return { schedule: sanitizeScheduleDates(schedule, now), postsPerDay, mode };
   }
 
   const { schedule, postsPerDay } = generateSmartScheduleAuto(count, now);
-  return { schedule, postsPerDay, mode };
+  return { schedule: sanitizeScheduleDates(schedule, now), postsPerDay, mode };
 }
 
 export interface ScheduleDurationEstimate {

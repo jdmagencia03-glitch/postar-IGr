@@ -5,7 +5,7 @@ import { DashboardUploadCard } from "@/components/dashboard/DashboardUploadCard"
 import { DashboardWelcomeBanner } from "@/components/dashboard/DashboardWelcomeBanner";
 import { OnboardingSteps } from "@/components/OnboardingSteps";
 import { PublisherHealthBanner } from "@/components/PublisherHealthBanner";
-import { getPlaybookForOwner, playbookHasContent } from "@/lib/ai/playbook";
+import { ownerHasConfiguredPlaybook } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -32,8 +32,7 @@ export default async function DashboardPage({
 
   const supabase = createAdminClient();
 
-  const playbook = await getPlaybookForOwner(ownerId);
-  const playbookReady = playbookHasContent(playbook);
+  const playbookReady = await ownerHasConfiguredPlaybook(ownerId);
 
   const postFilters = {
     platform: platformFilter,

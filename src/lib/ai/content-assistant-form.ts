@@ -103,10 +103,10 @@ const META_PREFIX = "__meta_v2__:";
 export const DEFAULT_CONTENT_FORM: ContentAssistantForm = {
   pageName: "",
   selectedAccountId: "",
-  niche: "Fitness",
+  niche: "Beleza",
   customNiche: "",
   primaryGoal: "Ganhar seguidores",
-  tones: ["Direto", "Motivacional"],
+  tones: ["Direto", "Profissional"],
   emojiLevel: "Médio",
   captionLength: "Média",
   examples: ["", "", "", "", ""],
@@ -199,7 +199,7 @@ export function playbookToContentForm(playbook: Partial<AiPlaybook> | null): Con
 
   return {
     pageName: playbook.brand_name?.trim() || "",
-    niche: exactNiche ?? (customNiche ? "Outro" : "Fitness"),
+    niche: exactNiche ?? (customNiche ? "Outro" : DEFAULT_CONTENT_FORM.niche),
     customNiche,
     primaryGoal:
       (GOAL_OPTIONS.find((g) => (playbook.cta_style ?? playbook.target_audience ?? "").includes(g)) as GoalOption) ||
@@ -364,11 +364,15 @@ export function resolveSelectedAccountId(
 export function syncFormWithAccount(
   form: ContentAssistantForm,
   account: ConnectedAccountOption,
+  options?: { preservePageName?: boolean },
 ): ContentAssistantForm {
   return {
     ...form,
     selectedAccountId: account.id,
-    pageName: accountPageLabel(account),
+    pageName:
+      options?.preservePageName && form.pageName.trim()
+        ? form.pageName
+        : accountPageLabel(account),
   };
 }
 

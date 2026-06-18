@@ -16,8 +16,11 @@ export function UploadMainPadding({ children }: { children: React.ReactNode }) {
       progress: session.progress,
       progressMap: session.progressMap,
       running: session.running,
-      paused: session.paused,
+      pausedByUser: session.pausedByUser,
+      retrying: session.retrying,
       resuming: session.resuming,
+      canResumeWithoutPicker: session.canResumeWithoutPicker,
+      needsFileReselection: session.needsFileReselection,
     }).showGlobalBar;
   }, [pathname, session]);
 

@@ -19,6 +19,7 @@ import {
   Users,
   X,
   Brain,
+  CircleDot,
 } from "lucide-react";
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 import { BrandLogo } from "@/components/BrandLogo";
@@ -29,6 +30,7 @@ import { APP_NAME } from "@/lib/brand";
 const links = [
   { href: "/dashboard", label: "Início", icon: LayoutGrid, exact: true },
   { href: "/dashboard/bulk", label: "Agendar posts", icon: Upload },
+  { href: "/dashboard/stories", label: "Programar Stories", icon: CircleDot },
   { href: "/dashboard/comment-dm", label: "Automação DM", icon: MessageSquare },
   { href: "/dashboard/tiktok", label: "TikTok", icon: Music2 },
   { href: "/dashboard/ai", label: "Assistente de conteúdo", icon: Brain },

@@ -1,11 +1,15 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
-import { EMPTY_PLAYBOOK, playbookHasContent } from "@/lib/ai/playbook";
+import {
+  EMPTY_PLAYBOOK,
+  getPlaybookForAccount,
+  playbookHasContent,
+  savePlaybookForAccount,
+} from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
-const playbookSchema = z.object({
+const playbookFieldsSchema = z.object({
   brand_name: z.string().max(200).optional(),
   niche: z.string().max(500).optional(),
   target_audience: z.string().max(3000).optional(),
@@ -18,27 +22,26 @@ const playbookSchema = z.object({
   extra_knowledge: z.string().max(15000).optional(),
 });
 
-export async function GET() {
+const putSchema = playbookFieldsSchema.extend({
+  account_id: z.string().uuid(),
+});
+
+export async function GET(request: NextRequest) {
   const ownerId = await getSessionUserId();
   if (!ownerId) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
-  const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("ai_playbooks")
-    .select("*")
-    .eq("owner_id", ownerId)
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const accountId = request.nextUrl.searchParams.get("accountId");
+  if (!accountId) {
+    return NextResponse.json({ error: "Informe accountId na query string" }, { status: 400 });
   }
 
-  const playbook = { ...EMPTY_PLAYBOOK, ...(data ?? {}), owner_id: ownerId };
+  const playbook = await getPlaybookForAccount(ownerId, accountId);
+  const merged = { ...EMPTY_PLAYBOOK, ...(playbook ?? {}), owner_id: ownerId, account_id: accountId };
 
   return NextResponse.json({
-    ...playbook,
+    ...merged,
     configured: playbookHasContent(playbook),
     ai_ready: true,
   });
@@ -51,41 +54,32 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await request.json();
-  const parsed = playbookSchema.safeParse(body);
+  const parsed = putSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ error: formatZodError(parsed.error) }, { status: 400 });
   }
 
-  const supabase = createAdminClient();
+  const { account_id: accountId, ...fields } = parsed.data;
   const payload = {
-    owner_id: ownerId,
-    brand_name: parsed.data.brand_name?.trim() || null,
-    niche: parsed.data.niche?.trim() || null,
-    target_audience: parsed.data.target_audience?.trim() || null,
-    tone_voice: parsed.data.tone_voice?.trim() || null,
-    viral_hooks: parsed.data.viral_hooks?.trim() || null,
-    hashtag_strategy: parsed.data.hashtag_strategy?.trim() || null,
-    cta_style: parsed.data.cta_style?.trim() || null,
-    example_captions: parsed.data.example_captions?.trim() || null,
-    avoid_rules: parsed.data.avoid_rules?.trim() || null,
-    extra_knowledge: parsed.data.extra_knowledge?.trim() || null,
-    updated_at: new Date().toISOString(),
+    brand_name: fields.brand_name?.trim() || null,
+    niche: fields.niche?.trim() || null,
+    target_audience: fields.target_audience?.trim() || null,
+    tone_voice: fields.tone_voice?.trim() || null,
+    viral_hooks: fields.viral_hooks?.trim() || null,
+    hashtag_strategy: fields.hashtag_strategy?.trim() || null,
+    cta_style: fields.cta_style?.trim() || null,
+    example_captions: fields.example_captions?.trim() || null,
+    avoid_rules: fields.avoid_rules?.trim() || null,
+    extra_knowledge: fields.extra_knowledge?.trim() || null,
   };
 
-  const { data, error } = await supabase
-    .from("ai_playbooks")
-    .upsert(payload, { onConflict: "owner_id" })
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const saved = await savePlaybookForAccount(ownerId, accountId, payload);
 
   return NextResponse.json({
-    ...data,
-    configured: playbookHasContent(data),
+    ...saved,
+    account_id: accountId,
+    configured: playbookHasContent(saved),
     ai_ready: true,
   });
 }

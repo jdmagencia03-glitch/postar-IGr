@@ -9,6 +9,7 @@ import {
   getOwnerPostById,
 } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ensureFutureScheduleSlot, sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
 const actionsSchema = z.object({
@@ -43,7 +44,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Informe caption para alterar legenda" }, { status: 400 });
   }
 
-  const baseTime = scheduled_at ? new Date(scheduled_at).getTime() : 0;
+  const baseTime = scheduled_at
+    ? new Date(sanitizeScheduledAt(scheduled_at)).getTime()
+    : 0;
 
   for (let index = 0; index < post_ids.length; index++) {
     const postId = post_ids[index];
@@ -99,7 +102,7 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const nextTime = new Date(baseTime + index * 60_000).toISOString();
+      const nextTime = sanitizeScheduledAt(new Date(baseTime + index * 60_000).toISOString());
       const { error } = await supabase
         .from("scheduled_posts")
         .update({ scheduled_at: nextTime })
@@ -109,17 +112,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "duplicate") {
-      const duplicateAt = new Date(post.scheduled_at);
+      const duplicateAt = ensureFutureScheduleSlot(
+        new Date(post.scheduled_at),
+      );
       duplicateAt.setDate(duplicateAt.getDate() + 1 + index);
 
       const { error } = await supabase.from("scheduled_posts").insert({
         platform: post.platform ?? "instagram",
         account_id: post.account_id,
         tiktok_account_id: post.tiktok_account_id,
+        content_type: post.content_type ?? "reel",
         media_type: post.media_type,
         media_urls: post.media_urls,
         caption: post.caption,
-        scheduled_at: duplicateAt.toISOString(),
+        scheduled_at: sanitizeScheduledAt(duplicateAt.toISOString()),
         status: "pending",
       });
 

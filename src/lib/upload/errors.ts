@@ -102,7 +102,7 @@ export function formatUploadErrorMessage(
     if (/429|muitas requisições/i.test(trimmed)) {
       return "Servidor ocupado — aguarde alguns segundos. O upload vai retomar automaticamente.";
     }
-    return "Falha de conexão — o sistema vai tentar de novo automaticamente. Se persistir, clique em Continuar upload.";
+    return "Falha de conexão — o sistema vai tentar de novo automaticamente.";
   }
 
   if (/unauthorized|403|401|signature|token|jwt|expired/i.test(trimmed)) {

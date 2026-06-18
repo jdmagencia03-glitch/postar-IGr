@@ -6,6 +6,7 @@ import type {
   ScheduledPost,
   ScheduledPostWithAccountSecrets,
   SocialPlatform,
+  ContentType,
 } from "@/lib/types";
 
 const POST_SELECT_PUBLIC =
@@ -17,6 +18,7 @@ const POST_SELECT_SECRETS =
 export interface OwnerPostFilters {
   platform?: SocialPlatform | "all";
   accountId?: string;
+  contentType?: ContentType | "all";
   status?: PostStatus;
   hiddenFromReport?: boolean;
   limit?: number;
@@ -137,11 +139,18 @@ export async function getOwnerScheduledPosts(
 
   const merged = mergePosts([...igPosts, ...ttPosts], order);
 
-  if (filters.limit && filters.limit > 0) {
-    return merged.slice(0, filters.limit);
+  let filtered = merged;
+  if (filters.contentType && filters.contentType !== "all") {
+    filtered = filtered.filter(
+      (post) => (post.content_type ?? "reel") === filters.contentType,
+    );
   }
 
-  return merged;
+  if (filters.limit && filters.limit > 0) {
+    return filtered.slice(0, filters.limit);
+  }
+
+  return filtered;
 }
 
 export async function getOwnerPostById(

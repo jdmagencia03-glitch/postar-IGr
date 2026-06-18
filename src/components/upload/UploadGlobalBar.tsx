@@ -25,10 +25,14 @@ function statusBadge(label: string) {
   switch (label) {
     case "enviando":
       return "bg-ig-primary/15 text-ig-primary";
+    case "reconectando":
+      return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
     case "concluído":
       return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
     case "erro":
       return "bg-ig-danger/15 text-ig-danger";
+    case "pausado":
+      return "bg-ig-secondary text-ig-muted";
     default:
       return "bg-ig-secondary text-ig-muted";
   }
@@ -38,10 +42,14 @@ function statusText(label: string) {
   switch (label) {
     case "enviando":
       return "Enviando";
+    case "reconectando":
+      return "Reconectando";
     case "concluído":
       return "Concluído";
     case "erro":
       return "Com erro";
+    case "pausado":
+      return "Pausado";
     default:
       return "Aguardando";
   }
@@ -92,8 +100,11 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
       progress: session.progress,
       progressMap: session.progressMap,
       running: session.running,
-      paused: session.paused,
+      pausedByUser: session.pausedByUser,
+      retrying: session.retrying,
       resuming: session.resuming,
+      canResumeWithoutPicker: session.canResumeWithoutPicker,
+      needsFileReselection: session.needsFileReselection,
     });
   }, [session]);
 
@@ -124,9 +135,11 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                 </span>
               </div>
               <p className="mt-1 truncate text-xs text-ig-muted">
-                {view.currentUploadName
-                  ? `Enviando: ${view.currentUploadName}`
-                  : `@${username} · ${speedPresets[session.speedMode].label}`}
+                {session.retrying || view.awaitingAutoRecovery
+                  ? session.message ?? "Tentando continuar automaticamente…"
+                  : view.currentUploadName
+                    ? `Enviando: ${view.currentUploadName}`
+                    : `@${username} · ${speedPresets[session.speedMode].label}`}
               </p>
               <p className="mt-1 text-xs text-ig-muted">
                 {view.completedCount} enviados · {view.remainingCount} faltando · {view.overallPercent}%
@@ -144,22 +157,24 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                   <Pause size={14} />
                 </button>
               )}
-              {view.canContinue && !session.running && (
+              {view.canResume && !session.running && !session.retrying && (
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
-                  onClick={() =>
-                    void (session.paused
-                      ? uploadSessionStore.resumePausedUpload()
-                      : uploadSessionStore.continueUpload())
-                  }
+                  onClick={() => void uploadSessionStore.resumePausedUpload()}
                 >
                   <Play size={14} />
-                  {session.canResumeWithoutPicker
-                    ? session.paused
-                      ? "Retomar"
-                      : "Continuar"
-                    : "Selecionar"}
+                  Retomar
+                </button>
+              )}
+              {view.canSelectFiles && !session.running && !session.retrying && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
+                  onClick={() => uploadSessionStore.openChooseVideos()}
+                >
+                  <Upload size={14} />
+                  Selecionar
                 </button>
               )}
               <Link
@@ -187,7 +202,7 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
             />
           </div>
 
-          {session.progress && session.running && (
+          {session.progress && (session.running || session.retrying) && (
             <p className="mt-2 text-[11px] text-ig-muted">
               {formatSpeed(session.progress.speedBps)} · restam {formatEta(session.progress.etaSeconds)} ·{" "}
               {formatBytes(session.progress.bytesUploaded)} / {formatBytes(session.progress.bytesTotal)}

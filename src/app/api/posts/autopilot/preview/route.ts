@@ -121,6 +121,7 @@ export async function POST(request: NextRequest) {
       niche: parsed.data.niche,
       username: primaryUsername,
       ownerId,
+      accountId: primaryAccount.id,
       schedule_mode: scheduleMode,
       batch_offset: parsed.data.batch_offset,
       total_count: parsed.data.total_count ?? parsed.data.items.length,

@@ -10,10 +10,25 @@ export function deriveUploadSessionView(params: {
   progress: UploadEngineProgress | null;
   progressMap: Record<string, number>;
   running: boolean;
-  paused: boolean;
+  pausedByUser: boolean;
+  /** @deprecated use pausedByUser */
+  paused?: boolean;
+  retrying?: boolean;
   resuming?: boolean;
+  canResumeWithoutPicker?: boolean;
+  needsFileReselection?: boolean;
 }) {
-  const { batch, progress, progressMap, running, paused, resuming = false } = params;
+  const {
+    batch,
+    progress,
+    progressMap,
+    running,
+    pausedByUser = params.paused ?? false,
+    retrying = false,
+    resuming = false,
+    canResumeWithoutPicker = false,
+    needsFileReselection = false,
+  } = params;
   const files = getUploadFiles(batch);
   const pendingFiles = files
     .filter((file) => file.status !== "completed")
@@ -22,9 +37,29 @@ export function deriveUploadSessionView(params: {
   const totalCount = progress?.total ?? batch?.total_files ?? files.length;
   const failedCount = progress?.failed ?? batch?.failed_files ?? 0;
   const pendingCount = pendingFiles.length;
-  const canContinue = Boolean(batch && batch.status !== "ready" && !running && pendingCount > 0);
-  const uploadInterrupted = canContinue && !paused;
-  const uploadPaused = canContinue && paused;
+  /** Botão Retomar — somente após pausa manual do usuário. */
+  const canResume = Boolean(
+    batch && batch.status !== "ready" && !running && !retrying && pausedByUser && pendingCount > 0,
+  );
+  /** Seletor de arquivos — sessão perdeu referência aos File objects no navegador. */
+  const canSelectFiles = Boolean(
+    batch && batch.status !== "ready" && !running && !retrying && needsFileReselection && pendingCount > 0,
+  );
+  /** Sistema recuperando sozinho (arquivos ainda na sessão, sem pausa manual). */
+  const awaitingAutoRecovery = Boolean(
+    batch &&
+      batch.status !== "ready" &&
+      !pausedByUser &&
+      !needsFileReselection &&
+      canResumeWithoutPicker &&
+      pendingCount > 0 &&
+      !running &&
+      !retrying &&
+      !resuming,
+  );
+  const autoRecovering = Boolean(
+    awaitingAutoRecovery || retrying || (running && !pausedByUser && canResumeWithoutPicker),
+  );
   const overallPercent =
     progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
 
@@ -63,22 +98,26 @@ export function deriveUploadSessionView(params: {
     pendingFiles.find((file) => file.status === "uploading")?.filename ??
     null;
 
-  const statusLabel = running
-    ? "enviando"
-    : batch?.status === "ready"
-      ? "concluído"
-      : failedCount > 0 && !running
-        ? "erro"
-        : canContinue
-          ? "aguardando"
-          : "enviando";
+  const statusLabel = retrying || awaitingAutoRecovery
+    ? "reconectando"
+    : running
+      ? "enviando"
+      : batch?.status === "ready"
+        ? "concluído"
+        : failedCount > 0 && !running && !retrying && !autoRecovering
+          ? "erro"
+          : pausedByUser
+            ? "pausado"
+            : canSelectFiles
+              ? "aguardando"
+              : "enviando";
 
   const hasIncomplete =
     Boolean(batch) &&
     batch!.status !== "ready" &&
     files.some((file) => file.status !== "completed");
 
-  const showGlobalBar = Boolean(batch && (running || resuming || hasIncomplete));
+  const showGlobalBar = Boolean(batch && (running || retrying || resuming || hasIncomplete));
 
   return {
     files,
@@ -87,14 +126,23 @@ export function deriveUploadSessionView(params: {
     totalCount,
     failedCount,
     pendingCount,
-    canContinue,
-    uploadInterrupted,
-    uploadPaused,
+    canResume,
+    canSelectFiles,
+    autoRecovering,
+    awaitingAutoRecovery,
+    /** @deprecated use canResume */
+    canContinue: canResume || canSelectFiles,
+    /** @deprecated */
+    uploadInterrupted: false,
+    /** @deprecated use canResume */
+    uploadPaused: canResume,
     overallPercent,
     listFiles,
     currentUploadName,
     statusLabel,
     showGlobalBar,
     remainingCount: Math.max(0, totalCount - completedCount),
+    retrying,
+    pausedByUser,
   };
 }

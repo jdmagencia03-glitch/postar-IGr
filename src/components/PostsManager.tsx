@@ -16,7 +16,15 @@ interface Props {
   rich?: boolean;
 }
 
-type BulkDialog = "reschedule" | "caption" | "delete" | "duplicate" | null;
+type BulkDialog = "reschedule" | "caption" | "delete" | "duplicate" | "regenerate" | null;
+
+type RegeneratePreviewItem = {
+  post_id: string;
+  filename: string;
+  scheduled_at: string;
+  old_caption: string;
+  new_caption: string;
+};
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
   const response = await fetch(input, { ...init, credentials: "include" });
@@ -45,6 +53,12 @@ export function PostsManager({
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [scheduleDraft, setScheduleDraft] = useState("");
   const [captionDraft, setCaptionDraft] = useState("");
+  const [regeneratePreview, setRegeneratePreview] = useState<RegeneratePreviewItem[]>([]);
+  const [regenerateMeta, setRegenerateMeta] = useState<{
+    niche: string;
+    accountName: string;
+    source: string;
+  } | null>(null);
 
   const bulkPosts = bulkScopePosts ?? posts;
 
@@ -83,6 +97,86 @@ export function PostsManager({
         .map((post) => post.id),
     [bulkPosts],
   );
+
+  async function regenerateCaptionsPreview() {
+    const targetIds = selectedIds.length
+      ? selectedIds.filter((id) => editablePostIds.includes(id))
+      : editablePostIds;
+
+    if (!targetIds.length) {
+      setBulkMessage("Nenhum post pendente ou com falha para regenerar legendas.");
+      return;
+    }
+
+    setBulkLoading(true);
+    setBulkMessage(null);
+
+    try {
+      const response = await apiFetch("/api/posts/regenerate-captions/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ post_ids: targetIds }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(String(data.error ?? "Falha ao gerar prévia das legendas"));
+      }
+
+      const preview = (data.preview ?? []) as RegeneratePreviewItem[];
+      if (!preview.length) {
+        throw new Error("Nenhuma legenda foi gerada na prévia.");
+      }
+
+      setRegeneratePreview(preview);
+      setRegenerateMeta({
+        niche: String(data.niche ?? ""),
+        accountName: String(data.accountName ?? "conta"),
+        source: String(data.source ?? "ai"),
+      });
+      setBulkDialog("regenerate");
+    } catch (error) {
+      setBulkMessage(error instanceof Error ? error.message : "Erro ao regenerar legendas");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function applyRegeneratedCaptions() {
+    if (!regeneratePreview.length) return;
+
+    setBulkLoading(true);
+    setBulkMessage(null);
+
+    try {
+      const response = await apiFetch("/api/posts/regenerate-captions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updates: regeneratePreview.map((item) => ({
+            post_id: item.post_id,
+            caption: item.new_caption,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(String(data.error ?? "Falha ao salvar legendas"));
+      }
+
+      setBulkDialog(null);
+      setRegeneratePreview([]);
+      setRegenerateMeta(null);
+      setSelectedIds([]);
+      setBulkMessage(String(data.message ?? `${data.updated ?? 0} legenda(s) atualizada(s)`));
+      router.refresh();
+    } catch (error) {
+      setBulkMessage(error instanceof Error ? error.message : "Erro ao salvar legendas");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
 
   async function formatCaptions() {
     const targetIds = selectedIds.length
@@ -185,10 +279,18 @@ export function PostsManager({
               <button
                 type="button"
                 disabled={!editablePostIds.length || bulkLoading}
-                onClick={() => void formatCaptions()}
+                onClick={() => void regenerateCaptionsPreview()}
                 className="rounded-lg border border-ig-primary/40 bg-ig-primary/10 px-3 py-2 text-sm text-ig-primary disabled:opacity-50"
               >
-                ✨ {selectedIds.length ? "Formatar selecionados" : "Formatar todas as legendas"}
+                ✨ {selectedIds.length ? "Corrigir legendas selecionadas" : "Corrigir todas as legendas"}
+              </button>
+              <button
+                type="button"
+                disabled={!editablePostIds.length || bulkLoading}
+                onClick={() => void formatCaptions()}
+                className="rounded-lg border border-ig-border px-3 py-2 text-sm disabled:opacity-50"
+              >
+                📝 {selectedIds.length ? "Formatar selecionados" : "Formatar todas as legendas"}
               </button>
               <button
                 type="button"
@@ -347,6 +449,70 @@ export function PostsManager({
           </div>
         </div>
       )}
+      {bulkDialog === "regenerate" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Fechar"
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              setBulkDialog(null);
+              setRegeneratePreview([]);
+              setRegenerateMeta(null);
+            }}
+          />
+          <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl border border-ig-border bg-ig-elevated shadow-xl">
+            <div className="border-b border-ig-border px-5 py-4">
+              <h3 className="text-lg font-semibold text-ig-text">Corrigir legendas em lote</h3>
+              <p className="mt-1 text-sm text-ig-muted">
+                @{regenerateMeta?.accountName} · nicho: {regenerateMeta?.niche || "—"} ·{" "}
+                {regeneratePreview.length} legenda(s) · vídeos e horários não serão alterados
+              </p>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+              {regeneratePreview.map((item) => (
+                <div key={item.post_id} className="rounded-xl border border-ig-border bg-ig-secondary p-3">
+                  <p className="text-xs font-medium text-ig-text">
+                    {item.filename} · {formatDateTime(item.scheduled_at)}
+                  </p>
+                  <div className="mt-2 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase text-ig-muted">Antes</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-ig-muted">{item.old_caption || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase text-ig-primary">Nova</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-ig-text">{item.new_caption}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-ig-border px-5 py-4">
+              <button
+                type="button"
+                className="rounded-lg border border-ig-border px-4 py-2 text-sm"
+                onClick={() => {
+                  setBulkDialog(null);
+                  setRegeneratePreview([]);
+                  setRegenerateMeta(null);
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="ig-btn px-4 py-2 text-sm"
+                disabled={bulkLoading}
+                onClick={() => void applyRegeneratedCaptions()}
+              >
+                {bulkLoading ? "Salvando..." : "Confirmar e substituir legendas"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {bulkDialog === "duplicate" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" aria-label="Fechar" className="absolute inset-0 bg-black/50" onClick={() => setBulkDialog(null)} />

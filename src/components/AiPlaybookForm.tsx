@@ -174,38 +174,58 @@ export function AiPlaybookForm() {
     }
   }, []);
 
+  const fetchPlaybookForAccount = useCallback(
+    async (accountId: string, accountList: ConnectedAccountOption[]) => {
+      const res = await fetch(`/api/ai/playbook?accountId=${encodeURIComponent(accountId)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Falha ao carregar");
+
+      const loaded = playbookToContentForm(data);
+      const selectedAccount = accountList.find((account) => account.id === accountId);
+      const synced = selectedAccount
+        ? syncFormWithAccount(loaded, selectedAccount, { preservePageName: Boolean(loaded.pageName.trim()) })
+        : { ...loaded, selectedAccountId: accountId };
+
+      setForm(synced);
+      setConfigured(Boolean(data.configured));
+      await generatePreview(synced, 0);
+      return synced;
+    },
+    [generatePreview],
+  );
+
   const fetchPlaybook = useCallback(async () => {
     setLoading(true);
     setAccountsLoading(true);
     try {
-      const [playbookRes, accountsRes] = await Promise.all([
-        fetch("/api/ai/playbook", { credentials: "include", cache: "no-store" }),
-        fetch("/api/accounts", { credentials: "include", cache: "no-store" }),
-      ]);
-
-      const data = await playbookRes.json();
-      if (!playbookRes.ok) throw new Error(data.error ?? "Falha ao carregar");
-
+      const accountsRes = await fetch("/api/accounts", { credentials: "include", cache: "no-store" });
       const accountList = accountsRes.ok
         ? ((await accountsRes.json()) as ConnectedAccountOption[])
         : [];
 
-      const loaded = playbookToContentForm(data);
-      const selectedId = resolveSelectedAccountId(loaded, accountList);
-      const selectedAccount = accountList.find((account) => account.id === selectedId);
-      const synced = selectedAccount ? syncFormWithAccount(loaded, selectedAccount) : loaded;
+      if (!accountList.length) {
+        setAccounts(accountList);
+        setForm({ ...DEFAULT_CONTENT_FORM, examples: [...DEFAULT_CONTENT_FORM.examples] });
+        setConfigured(false);
+        return;
+      }
 
+      const selectedId = resolveSelectedAccountId(
+        { selectedAccountId: "", pageName: "" },
+        accountList,
+      );
       setAccounts(accountList);
-      setForm(synced);
-      setConfigured(Boolean(data.configured));
-      await generatePreview(synced, 0);
+      await fetchPlaybookForAccount(selectedId, accountList);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Erro ao carregar configuração");
     } finally {
       setLoading(false);
       setAccountsLoading(false);
     }
-  }, [generatePreview]);
+  }, [fetchPlaybookForAccount]);
 
   useEffect(() => {
     fetchPlaybook();
@@ -245,9 +265,25 @@ export function AiPlaybookForm() {
     setSaved(false);
   }
 
-  function selectAccount(account: ConnectedAccountOption) {
-    setForm((current) => syncFormWithAccount(current, account));
+  async function selectAccount(account: ConnectedAccountOption) {
+    if (account.id === form.selectedAccountId) return;
+    if (!saved && configured) {
+      const proceed = window.confirm(
+        "Você tem alterações não salvas nesta conta. Trocar de conta sem salvar?",
+      );
+      if (!proceed) return;
+    }
+
+    setLoading(true);
+    setMessage(null);
     setSaved(false);
+    try {
+      await fetchPlaybookForAccount(account.id, accounts);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Erro ao carregar conta");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleImportProfile() {
@@ -310,6 +346,10 @@ export function AiPlaybookForm() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!form.selectedAccountId) {
+      setMessage("Selecione uma conta antes de salvar.");
+      return;
+    }
     if (form.niche === "Outro" && !form.customNiche.trim()) {
       setMessage("Descreva seu nicho ao selecionar Outro.");
       return;
@@ -323,7 +363,10 @@ export function AiPlaybookForm() {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(contentFormToPlaybook(form)),
+        body: JSON.stringify({
+          account_id: form.selectedAccountId,
+          ...contentFormToPlaybook(form),
+        }),
       });
 
       const data = await res.json();
@@ -331,7 +374,7 @@ export function AiPlaybookForm() {
 
       setConfigured(Boolean(data.configured));
       setSaved(true);
-      setMessage("✓ Configuração salva com sucesso");
+      setMessage(`✓ Configuração salva para ${form.pageName || "esta conta"}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Erro ao salvar");
     } finally {

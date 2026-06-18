@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publishPost } from "@/lib/meta/instagram";
+import { publishInstagramStory } from "@/lib/meta/instagram-stories";
 import {
   assertSafeToPublish,
   claimPostForProcessing,
@@ -17,6 +18,7 @@ import { getCronSecret } from "@/lib/security/secrets";
 import { logSecurityEvent } from "@/lib/security/audit";
 import { cleanupPublishedMedia } from "@/lib/storage/cleanup";
 import { pickPostsForCronRun } from "@/lib/publish/queue";
+import { ensureFutureScheduleSlot } from "@/lib/smart-schedule";
 import type { TikTokAccount } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -24,6 +26,7 @@ export const maxDuration = 300;
 const STALE_PROCESSING_MS = 15 * 60_000;
 const POSTS_PER_RUN = 10;
 const POSTS_FETCH_LIMIT = 50;
+const RECENTLY_CREATED_GRACE_MS = 5 * 60_000;
 
 type PublishResult = {
   containerId?: string;
@@ -66,6 +69,41 @@ export async function GET(request: NextRequest) {
 
     if (post.media_id) {
       results.push({ id: post.id, status: post.status, skipped: true });
+      continue;
+    }
+
+    const contentType = post.content_type ?? "reel";
+    if (contentType === "story" && post.publish_block_reason) {
+      results.push({
+        id: post.id,
+        status: "blocked",
+        skipped: true,
+        error: post.publish_block_reason,
+      });
+      continue;
+    }
+
+    const createdAtMs = post.created_at ? new Date(post.created_at).getTime() : 0;
+    const scheduledAtMs = new Date(post.scheduled_at).getTime();
+    const nowMs = Date.now();
+
+    if (
+      createdAtMs > 0 &&
+      nowMs - createdAtMs < RECENTLY_CREATED_GRACE_MS &&
+      scheduledAtMs <= nowMs
+    ) {
+      const fixed = ensureFutureScheduleSlot(new Date(post.scheduled_at));
+      await supabase
+        .from("scheduled_posts")
+        .update({ scheduled_at: fixed.toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", post.id);
+      await logPublishEvent(
+        supabase,
+        post.id,
+        "info",
+        `Horário no passado corrigido automaticamente: ${fixed.toISOString()}`,
+      );
+      results.push({ id: post.id, status: "rescheduled", skipped: true });
       continue;
     }
 
@@ -155,13 +193,50 @@ export async function GET(request: NextRequest) {
         throw new Error("Token da conta indisponível");
       }
 
+      const provider = account.auth_provider === "facebook" ? "facebook" : "instagram";
+
+      if (contentType === "story") {
+        const mediaUrl = post.media_urls[0];
+        if (!mediaUrl) {
+          throw new Error("Story sem mídia");
+        }
+
+        const result = await publishInstagramStory({
+          igUserId: account.ig_user_id,
+          token: accessToken,
+          mediaUrl,
+          provider,
+        });
+
+        publishResult = {
+          containerId: result.containerId,
+          mediaId: result.mediaId,
+          permalink: result.permalink,
+        };
+
+        await markPostPublished(supabase, post.id, {
+          container_id: publishResult.containerId,
+          media_id: publishResult.mediaId,
+          permalink: publishResult.permalink,
+        });
+
+        await logPublishEvent(
+          supabase,
+          post.id,
+          "success",
+          `Story publicado: ${publishResult.mediaId}`,
+        );
+        results.push({ id: post.id, status: "published" });
+        continue;
+      }
+
       const result = await publishPost({
         igUserId: account.ig_user_id,
         token: accessToken,
         mediaType: post.media_type,
         mediaUrls: post.media_urls,
         caption: post.caption ?? undefined,
-        provider: account.auth_provider === "facebook" ? "facebook" : "instagram",
+        provider,
       });
 
       publishResult = {

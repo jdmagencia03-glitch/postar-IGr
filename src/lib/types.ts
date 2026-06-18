@@ -1,4 +1,5 @@
 export type MediaType = "IMAGE" | "REELS" | "CAROUSEL";
+export type ContentType = "reel" | "post" | "story" | "tiktok_video" | "youtube_short";
 export type PostStatus = "pending" | "processing" | "published" | "failed";
 export type LogLevel = "info" | "error" | "success";
 export type SocialPlatform = "instagram" | "tiktok";
@@ -41,9 +42,25 @@ export interface ScheduledPost {
   account_id: string | null;
   platform?: SocialPlatform;
   tiktok_account_id?: string | null;
+  youtube_account_id?: string | null;
+  content_type?: ContentType | null;
   media_type: MediaType;
   media_urls: string[];
   caption: string | null;
+  title?: string | null;
+  description?: string | null;
+  hashtags?: string | null;
+  story_cta?: string | null;
+  story_link?: string | null;
+  story_objective?: string | null;
+  content_objective?: string | null;
+  campaign_id?: string | null;
+  product_id?: string | null;
+  upload_batch_id?: string | null;
+  parent_publish_group_id?: string | null;
+  retry_count?: number;
+  is_draft?: boolean;
+  publish_block_reason?: string | null;
   scheduled_at: string;
   status: PostStatus;
   container_id: string | null;
@@ -85,9 +102,15 @@ export interface AiPlaybook {
   example_captions: string | null;
   avoid_rules: string | null;
   extra_knowledge: string | null;
+  playbooks_by_account?: Record<string, AccountPlaybookPayload> | null;
   created_at: string;
   updated_at: string;
 }
+
+export type AccountPlaybookPayload = Omit<
+  AiPlaybook,
+  "owner_id" | "created_at" | "updated_at" | "playbooks_by_account"
+>;
 
 export type UploadBatchStatus = "uploading" | "ready" | "scheduling" | "scheduled" | "cancelled";
 export type UploadFileStatus = "pending" | "uploading" | "completed" | "failed";

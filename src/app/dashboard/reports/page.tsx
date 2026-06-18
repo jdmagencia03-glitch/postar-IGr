@@ -7,7 +7,7 @@ import {
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost, SocialPlatform } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform, ContentType } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -34,10 +34,28 @@ function isPlatformFilter(value: string | undefined): value is SocialPlatform | 
   return value === "instagram" || value === "tiktok" || value === "all" || value === undefined;
 }
 
+function isContentTypeFilter(value: string | undefined): value is ContentType | "all" {
+  return (
+    value === "reel" ||
+    value === "post" ||
+    value === "story" ||
+    value === "tiktok_video" ||
+    value === "youtube_short" ||
+    value === "all" ||
+    value === undefined
+  );
+}
+
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; account?: string; period?: string; platform?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    account?: string;
+    period?: string;
+    platform?: string;
+    content_type?: string;
+  }>;
 }) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard/reports");
@@ -47,6 +65,9 @@ export default async function ReportsPage({
   const period: PeriodFilter = isPeriodFilter(params.period) ? params.period : "all";
   const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
     ? params.platform ?? "all"
+    : "all";
+  const contentTypeFilter: ContentType | "all" = isContentTypeFilter(params.content_type)
+    ? params.content_type ?? "all"
     : "all";
 
   const supabase = createAdminClient();
@@ -62,6 +83,7 @@ export default async function ReportsPage({
   const allPosts = await getOwnerScheduledPosts(supabase, ownerId, {
     platform: platformFilter,
     accountId: selectedAccountId,
+    contentType: contentTypeFilter,
     hiddenFromReport: false,
     order: "asc",
     limit: 2000,
@@ -95,6 +117,7 @@ export default async function ReportsPage({
           }))}
           selectedAccountId={selectedAccountId ?? ""}
           selectedPlatform={platformFilter}
+          selectedContentType={contentTypeFilter}
           posts={visiblePosts as ScheduledPost[]}
           snapshot={snapshot}
           statusFilter={filter}

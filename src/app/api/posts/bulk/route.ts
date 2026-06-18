@@ -4,7 +4,8 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
-import { generateBulkSchedule } from "@/lib/utils";
+import { contentTypeFromMediaType } from "@/lib/content-types";
+import { generateBulkSchedule, sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
 const bulkSchema = z
@@ -64,20 +65,23 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const now = new Date();
   const schedule = generateBulkSchedule({
     count: parsed.data.items.length,
     startDate: new Date(parsed.data.start_date),
     postsPerDay: parsed.data.posts_per_day,
     hours: parsed.data.hours,
+    now,
   });
 
   const rows = validAccounts.flatMap((account) =>
     parsed.data.items.map((item, index) => ({
       account_id: account.id,
+      content_type: contentTypeFromMediaType(parsed.data.media_type),
       media_type: parsed.data.media_type,
       media_urls: item.media_urls,
       caption: item.caption ?? null,
-      scheduled_at: schedule[index].toISOString(),
+      scheduled_at: sanitizeScheduledAt(schedule[index].toISOString(), now),
     })),
   );
 
