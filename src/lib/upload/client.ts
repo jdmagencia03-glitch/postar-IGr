@@ -134,10 +134,24 @@ export async function uploadBatchFile(params: {
     }
 
     if (attempt > 0) {
+      console.info("[upload-retry] retry_attempt", {
+        batchId: batch.id,
+        fileId: record.id,
+        filename: file.name,
+        attempt: attempt + 1,
+        maxAttempts: RETRY_DELAYS.length,
+      });
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt]));
     }
 
     try {
+      console.info("[upload-worker] upload_start", {
+        batchId: batch.id,
+        fileId: record.id,
+        filename: file.name,
+        attempt: attempt + 1,
+        previousStatus: record.status,
+      });
       const prepareRes = await apiFetch("/api/upload/files/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -436,12 +450,17 @@ export function getCompletedUploadItems(batch: UploadBatch) {
     }));
 }
 
-export function fileStatusLabel(status: UploadBatchFile["status"]) {
+export function fileStatusLabel(
+  status: UploadBatchFile["status"],
+  options?: { stalled?: boolean; retrying?: boolean },
+) {
+  if (options?.retrying && status !== "completed") return "Tentando novamente…";
+  if (options?.stalled && status === "uploading") return "Travado";
   switch (status) {
     case "completed":
       return "Enviado";
     case "uploading":
-      return "Enviando";
+      return "Enviando…";
     case "failed":
       return "Erro";
     default:

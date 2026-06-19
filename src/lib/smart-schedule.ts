@@ -3,6 +3,8 @@ import {
   describeWarmupPlan,
   estimateWarmupDuration,
   generateWarmupSchedule,
+  groupWarmupScheduleByDay,
+  type AutoAccountProfile,
 } from "@/lib/account-warmup";
 import {
   APP_TIMEZONE,
@@ -206,6 +208,53 @@ export interface WarmupScheduleOptions {
   warmupDayOffset?: number;
 }
 
+export interface AutoScheduleOptions {
+  profile?: AutoAccountProfile;
+  warmup?: WarmupScheduleOptions;
+}
+
+export function buildAutoTimeSlots(postsPerDay: number) {
+  if (postsPerDay <= 0) return [] as Array<{ hour: number; minute: number }>;
+  if (postsPerDay <= 3) {
+    const hours = HOURS_BY_POSTS_PER_DAY[postsPerDay] ?? HOURS_BY_POSTS_PER_DAY[2];
+    return hours.map((hour) => ({ hour, minute: 0 }));
+  }
+
+  const morningCount = Math.ceil(postsPerDay / 3);
+  const afternoonCount = Math.ceil((postsPerDay - morningCount) / 2);
+  const eveningCount = Math.max(1, postsPerDay - morningCount - afternoonCount);
+
+  const morning = buildEvenTimeSlotsBetween({ hour: 7, minute: 0 }, { hour: 11, minute: 0 }, morningCount);
+  const afternoon = buildEvenTimeSlotsBetween(
+    { hour: 12, minute: 0 },
+    { hour: 17, minute: 0 },
+    afternoonCount,
+  );
+  const evening = buildEvenTimeSlotsBetween(
+    { hour: 18, minute: 0 },
+    { hour: 23, minute: 0 },
+    eveningCount,
+  );
+
+  return [...morning, ...afternoon, ...evening].slice(0, postsPerDay);
+}
+
+export function resolveAutoPostsPerDay(videoCount: number, profile: AutoAccountProfile = "growing") {
+  if (profile === "new") {
+    return 7;
+  }
+  if (profile === "growing") {
+    if (videoCount <= 14) return 7;
+    if (videoCount <= 40) return 8;
+    if (videoCount <= 80) return 9;
+    return 10;
+  }
+  if (videoCount <= 20) return 10;
+  if (videoCount <= 50) return 12;
+  if (videoCount <= 100) return 14;
+  return 15;
+}
+
 function atHour(base: Date, hour: number, minute = 0) {
   return atHourInAppTz(base, hour, minute);
 }
@@ -255,12 +304,6 @@ export function generateCustomSchedule(
   }
 
   return { schedule, postsPerDay };
-}
-
-export function resolveAutoPostsPerDay(videoCount: number) {
-  if (videoCount <= 7) return 1;
-  if (videoCount <= 30) return 2;
-  return 3;
 }
 
 export function countTodayAvailableSlots(now = new Date()) {
@@ -315,22 +358,70 @@ export function generateSmartScheduleToday(count: number, now = new Date()): Dat
   return schedule.slice(0, count);
 }
 
-export function generateSmartScheduleAuto(count: number, now = new Date()) {
-  const postsPerDay = resolveAutoPostsPerDay(count);
-  const hours = HOURS_BY_POSTS_PER_DAY[postsPerDay] ?? HOURS_BY_POSTS_PER_DAY[2];
+export function generateSmartScheduleAuto(
+  count: number,
+  now = new Date(),
+  auto?: AutoScheduleOptions,
+) {
+  const profile = auto?.profile ?? "growing";
+
+  if (profile === "new") {
+    const schedule = generateWarmupSchedule({
+      count,
+      warmupDays: auto?.warmup?.warmupDays ?? DEFAULT_WARMUP_DAYS,
+      warmupDayOffset: auto?.warmup?.warmupDayOffset ?? 0,
+      now,
+    });
+    return { schedule, postsPerDay: resolveAutoPostsPerDay(count, "new") };
+  }
+
+  const postsPerDay = resolveAutoPostsPerDay(count, profile);
+  const timeSlots = buildAutoTimeSlots(postsPerDay);
   const earliest = earliestScheduleInstant(now);
 
-  const hasSlotToday = PEAK_HOURS_BR.some((hour) => {
-    const slot = atHour(now, hour);
-    return slot >= earliest && slot <= endOfPostingDay(now);
+  const firstSlotToday = timeSlots.length
+    ? rollSlotToFuture(now, 0, timeSlots[0].hour, timeSlots[0].minute, now)
+    : earliest;
+
+  const startDate = firstSlotToday >= earliest ? now : atHourOnDayOffsetInAppTz(now, 1, 7, 0);
+  const schedule = generateBulkScheduleFromSlots({
+    count,
+    startDate,
+    postsPerDay,
+    timeSlots,
+    now,
   });
 
-  const startDate = hasSlotToday
-    ? earliest
-    : atHourOnDayOffsetInAppTz(now, 1, PEAK_HOURS_BR[0]);
-  const schedule = generateBulkSchedule({ count, startDate, postsPerDay, hours, now });
-
   return { schedule, postsPerDay };
+}
+
+export function generateBulkScheduleFromSlots(params: {
+  count: number;
+  startDate: Date;
+  postsPerDay: number;
+  timeSlots: Array<{ hour: number; minute: number }>;
+  now?: Date;
+}): Date[] {
+  const { count, startDate, postsPerDay, timeSlots } = params;
+  const now = params.now ?? new Date();
+  if (!timeSlots.length) return [];
+
+  const schedule: Date[] = [];
+  let dayOffset = 0;
+  let slotIndex = 0;
+
+  for (let i = 0; i < count; i++) {
+    const slot = timeSlots[slotIndex % timeSlots.length];
+    schedule.push(rollSlotToFuture(startDate, dayOffset, slot.hour, slot.minute, now));
+
+    slotIndex++;
+    if (slotIndex % postsPerDay === 0) {
+      dayOffset++;
+      slotIndex = 0;
+    }
+  }
+
+  return schedule;
 }
 
 export function generateBulkSchedule(params: {
@@ -366,6 +457,7 @@ export function buildSmartSchedule(
   now = new Date(),
   warmup?: WarmupScheduleOptions,
   custom?: CustomScheduleOptions,
+  auto?: AutoScheduleOptions,
 ) {
   if (mode === "warmup") {
     const schedule = sanitizeScheduleDates(
@@ -401,7 +493,7 @@ export function buildSmartSchedule(
     return { schedule: sanitizeScheduleDates(schedule, now), postsPerDay, mode };
   }
 
-  const { schedule, postsPerDay } = generateSmartScheduleAuto(count, now);
+  const { schedule, postsPerDay } = generateSmartScheduleAuto(count, now, auto);
   return { schedule: sanitizeScheduleDates(schedule, now), postsPerDay, mode };
 }
 
@@ -418,6 +510,7 @@ export function estimateScheduleDuration(
   mode: ScheduleMode = "auto",
   warmupDays = DEFAULT_WARMUP_DAYS,
   custom?: CustomScheduleOptions,
+  auto?: AutoScheduleOptions,
 ): ScheduleDurationEstimate {
   if (count <= 0) {
     return { days: 0, months: 0, postsPerDay: 0, label: "", shortLabel: "" };
@@ -457,7 +550,18 @@ export function estimateScheduleDuration(
     };
   }
 
-  const postsPerDay = resolveAutoPostsPerDay(count);
+  if (mode === "auto" && auto?.profile === "new") {
+    const est = estimateWarmupDuration(count, auto.warmup?.warmupDays ?? warmupDays);
+    return {
+      days: est.days,
+      months: est.months,
+      postsPerDay: 7,
+      label: est.label,
+      shortLabel: est.shortLabel,
+    };
+  }
+
+  const postsPerDay = resolveAutoPostsPerDay(count, auto?.profile ?? "growing");
   const days = Math.ceil(count / postsPerDay);
   const months = Math.round((days / 30) * 10) / 10;
 
@@ -491,6 +595,7 @@ export function buildSmartScheduleSlice(params: {
   now?: Date;
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
+  auto?: AutoScheduleOptions;
 }) {
   const full = buildSmartSchedule(
     params.mode,
@@ -498,6 +603,7 @@ export function buildSmartScheduleSlice(params: {
     params.now,
     params.warmup,
     params.custom,
+    params.auto,
   );
   const schedule = full.schedule.slice(params.offset, params.offset + params.count);
 
@@ -515,14 +621,30 @@ export function buildSmartScheduleSlice(params: {
       ? estimateScheduleDuration(params.totalCount, "warmup", params.warmup?.warmupDays)
       : params.mode === "custom"
         ? estimateScheduleDuration(params.totalCount, "custom", DEFAULT_WARMUP_DAYS, params.custom)
-        : estimateScheduleDuration(params.totalCount, params.mode);
+        : estimateScheduleDuration(params.totalCount, "auto", DEFAULT_WARMUP_DAYS, undefined, params.auto);
+
+  const autoProfileLabel =
+    params.auto?.profile === "new"
+      ? "Conta nova · aquecimento 3→3→4→4→7"
+      : params.auto?.profile === "strong"
+        ? `${full.postsPerDay} posts/dia (conta forte)`
+        : params.auto?.profile === "growing"
+          ? `${full.postsPerDay} posts/dia (conta em crescimento)`
+          : `${full.postsPerDay} posts/dia`;
 
   const schedule_summary =
     params.mode === "warmup"
       ? `${describeWarmupPlan(params.warmup?.warmupDays)} · ${describeSmartSchedule(full.schedule, "auto")}`
       : params.mode === "custom"
         ? `${full.postsPerDay} posts/dia · ${describeSmartSchedule(full.schedule, "auto")}`
-        : describeSmartSchedule(full.schedule, params.mode);
+        : params.mode === "auto"
+          ? `${autoProfileLabel} · ${describeSmartSchedule(full.schedule, "auto")}`
+          : describeSmartSchedule(full.schedule, params.mode);
+
+  const warmup_breakdown =
+    params.mode === "warmup" || params.mode === "auto"
+      ? groupWarmupScheduleByDay(full.schedule)
+      : undefined;
 
   return {
     schedule,
@@ -530,6 +652,7 @@ export function buildSmartScheduleSlice(params: {
     mode: params.mode,
     duration,
     schedule_summary,
+    warmup_breakdown,
   };
 }
 

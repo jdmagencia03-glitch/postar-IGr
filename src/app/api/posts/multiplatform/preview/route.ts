@@ -4,6 +4,8 @@ import { getOwnerAccountById } from "@/lib/accounts";
 import {
   DEFAULT_WARMUP_DAYS,
   getWarmupDayOffset,
+  resolveAutoScheduleOptions,
+  type AutoAccountProfile,
 } from "@/lib/account-warmup";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { buildMultiplatformPlan } from "@/lib/multiplatform/plan";
@@ -35,6 +37,7 @@ const previewSchema = z
       .min(1)
       .max(2),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+    auto_profile: z.enum(["new", "growing", "strong"]).optional(),
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
@@ -73,12 +76,6 @@ export async function POST(request: NextRequest) {
   }
 
   const scheduleMode = parsed.data.schedule_mode ?? "auto";
-  if (scheduleMode === "warmup" && parsed.data.targets.some((t) => t.platform === "tiktok")) {
-    return NextResponse.json(
-      { error: "Modo aquecimento disponível apenas para Instagram." },
-      { status: 400 },
-    );
-  }
 
   const supabase = createAdminClient();
   const accounts = new Map<string, InstagramAccount | TikTokAccount>();
@@ -117,15 +114,31 @@ export async function POST(request: NextRequest) {
 
   let warmup: { warmupDays?: number; warmupDayOffset?: number } | undefined;
   const igTarget = parsed.data.targets.find((t) => t.platform === "instagram");
-  if (scheduleMode === "warmup" && igTarget) {
-    const igAccount = accounts.get(igTarget.account_id) as InstagramAccount;
-    warmup = {
-      warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
-      warmupDayOffset: getWarmupDayOffset(
-        igAccount.warmup_started_at ?? igAccount.created_at,
-      ),
-    };
+  const igAccount = igTarget ? (accounts.get(igTarget.account_id) as InstagramAccount) : null;
+
+  if (scheduleMode === "warmup") {
+    if (igAccount) {
+      warmup = {
+        warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
+        warmupDayOffset: getWarmupDayOffset(
+          igAccount.warmup_started_at ?? igAccount.created_at,
+        ),
+      };
+    } else {
+      warmup = {
+        warmupDays: DEFAULT_WARMUP_DAYS,
+        warmupDayOffset: 0,
+      };
+    }
   }
+
+  const auto =
+    scheduleMode === "auto"
+      ? resolveAutoScheduleOptions({
+          profile: parsed.data.auto_profile as AutoAccountProfile | undefined,
+          igAccount,
+        })
+      : undefined;
 
   try {
     const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
@@ -140,6 +153,7 @@ export async function POST(request: NextRequest) {
       total_count: parsed.data.total_count ?? parsed.data.items.length,
       warmup,
       custom,
+      auto,
       campaignContext,
     });
 

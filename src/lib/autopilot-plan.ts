@@ -6,7 +6,7 @@ import {
 } from "@/lib/account-warmup";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
-import { buildSmartScheduleSlice, type CustomScheduleOptions, type ScheduleMode, type WarmupScheduleOptions } from "@/lib/smart-schedule";
+import { buildSmartScheduleSlice, type AutoScheduleOptions, type CustomScheduleOptions, type ScheduleMode, type WarmupScheduleOptions } from "@/lib/smart-schedule";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { InstagramAccount, SocialPlatform, TikTokAccount } from "@/lib/types";
 
@@ -64,6 +64,7 @@ export async function buildAutopilotPlan(params: {
   total_count?: number;
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
+  auto?: AutoScheduleOptions;
   platform?: SocialPlatform;
   campaignContext?: import("@/lib/types").CampaignContext | null;
 }) {
@@ -74,13 +75,15 @@ export async function buildAutopilotPlan(params: {
     (item, index) => item.filename ?? `video-${batchOffset + index + 1}.mp4`,
   );
 
-  const { schedule, postsPerDay, duration, schedule_summary } = buildSmartScheduleSlice({
+  const { schedule, postsPerDay, duration, schedule_summary, warmup_breakdown } =
+    buildSmartScheduleSlice({
     mode: scheduleMode,
     offset: batchOffset,
     count: params.items.length,
     totalCount,
     warmup: params.warmup,
     custom: params.custom,
+    auto: params.auto,
   });
 
   const { captions, source, niche, debug } = await generateBulkCaptions({
@@ -112,6 +115,7 @@ export async function buildAutopilotPlan(params: {
     schedule_summary,
     duration,
     schedule: schedule.map((slot) => slot.toISOString()),
+    warmup_breakdown,
     preview,
     batch_offset: batchOffset,
     total_count: totalCount,

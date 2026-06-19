@@ -168,7 +168,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
 
       <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-xs text-ig-muted">
         <strong className="text-ig-muted">Aquecimento de contas:</strong> contas novas começam com
-        rampa gradual (1→1→2→2→3 posts/dia nos primeiros 5 dias) para reduzir risco de bloqueio.
+        rampa gradual (3→3→4→4→7 posts nos primeiros 5 dias, depois 7/dia) para reduzir risco de bloqueio.
         Use o modo <strong>Aquecimento</strong> ao agendar em massa.
       </div>
 
@@ -278,7 +278,7 @@ export function AccountsManager({ oauthError, connected, facebookEnabled = true 
                 <div>
                   <p className="text-xs font-medium text-ig-text">Aquecimento automático</p>
                   <p className="text-[10px] text-ig-muted">
-                    Rampa gradual nos primeiros {account.warmup_days ?? 5} dias
+                    Rampa 3→3→4→4→7 nos primeiros {account.warmup_days ?? 5} dias
                   </p>
                 </div>
                 <input

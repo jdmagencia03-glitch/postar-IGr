@@ -117,8 +117,12 @@ class UploadSessionStore {
     if (!this.running || this.pausedByUser || this.recoveringFromStall || !this.batch) return;
 
     this.recoveringFromStall = true;
-    this.logUpload("stall_detected", { idleMs, completed: this.progress?.completed });
-    this.message = "Upload parou de responder. Reconectando automaticamente…";
+    this.logUpload("stall_detected", {
+      batchId: this.batch.id,
+      idleMs,
+      completed: this.progress?.completed,
+    });
+    this.message = "Upload travado detectado. Tentando recuperar…";
     this.stopStallWatchdog();
 
     const batchId = this.batch.id;
@@ -128,12 +132,45 @@ class UploadSessionStore {
     this.engine = null;
     this.running = false;
     this.engineStarting = false;
-    this.recoveringFromStall = false;
     this.emit();
 
-    if (fileMap.size > 0 && !this.pausedByUser) {
-      await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
+    try {
+      if (fileMap.size > 0 && !this.pausedByUser) {
+        await this.resetStalledUploadingFiles(batchId);
+        this.message = "Reconectando…";
+        this.emit();
+        await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
+      }
+    } finally {
+      this.recoveringFromStall = false;
+      this.emit();
     }
+  }
+
+  private async resetStalledUploadingFiles(batchId: string) {
+    const refreshed = await refreshUploadBatch(batchId);
+    const stuck =
+      refreshed.upload_files?.filter(
+        (file) => !file.removed && file.status === "uploading",
+      ) ?? [];
+    if (!stuck.length) return;
+
+    this.logUpload("reset_stalled_uploading", {
+      batchId,
+      count: stuck.length,
+      fileIds: stuck.map((file) => file.id),
+    });
+
+    await Promise.all(
+      stuck.map((file) =>
+        fetch(`/api/upload/batches/${batchId}/files/${file.id}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "pending" }),
+        }).catch(() => undefined),
+      ),
+    );
   }
 
   private async persistManifest(batch: UploadBatch, fileMap: Map<string, File>) {
@@ -460,8 +497,8 @@ class UploadSessionStore {
     this.retrying = true;
     this.message =
       failed.length > 0
-        ? `Erro em um vídeo. Tentando reenviar automaticamente… (tentativa ${this.autoRetryPass})`
-        : `Instabilidade detectada. Tentando continuar automaticamente… (tentativa ${this.autoRetryPass})`;
+        ? `Erro em ${failed.length} vídeo(s). Continuando lote… (tentativa ${this.autoRetryPass})`
+        : `Tentando novamente… (tentativa ${this.autoRetryPass})`;
     this.syncBatch(batch);
     await new Promise((resolve) => setTimeout(resolve, 2000 * this.autoRetryPass));
 
@@ -532,6 +569,11 @@ class UploadSessionStore {
   ) {
     if (this.engineStarting) {
       this.logUpload("start_engine_blocked", { batchId: currentBatch.id, reason: "already_starting" });
+      setTimeout(() => {
+        if (!this.running && !this.pausedByUser && this.batch?.id === currentBatch.id) {
+          void this.startEngine(currentBatch, fileMap, onlyFileIds);
+        }
+      }, 500);
       return;
     }
     this.engineStarting = true;
@@ -554,7 +596,6 @@ class UploadSessionStore {
           this.emit();
         },
         onFileProgress: (fileId, loaded, total) => {
-          this.touchProgress();
           const percent = Math.round((loaded / total) * 100);
           if (this.progressMap[fileId] !== percent) {
             this.progressMap = { ...this.progressMap, [fileId]: percent };

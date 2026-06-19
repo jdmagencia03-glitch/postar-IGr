@@ -6,6 +6,8 @@ import {
   DEFAULT_WARMUP_DAYS,
   getWarmupDayOffset,
   getWarmupStatus,
+  resolveAutoScheduleOptions,
+  type AutoAccountProfile,
 } from "@/lib/account-warmup";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { parseCustomSchedulePayload, parseTimeSlots } from "@/lib/smart-schedule";
@@ -27,6 +29,7 @@ const previewSchema = z
     account_ids: z.array(z.string().uuid()).min(1).optional(),
     niche: z.string().max(120).optional(),
     schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
+    auto_profile: z.enum(["new", "growing", "strong"]).optional(),
     platform: z.enum(["instagram", "tiktok"]).optional(),
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
@@ -98,15 +101,31 @@ export async function POST(request: NextRequest) {
         }
       | undefined;
 
-    if (scheduleMode === "warmup" && primaryAccount && platform === "instagram") {
-      const igAccount = primaryAccount as InstagramAccount;
-      warmup = {
-        warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
-        warmupDayOffset: getWarmupDayOffset(
-          igAccount.warmup_started_at ?? igAccount.created_at,
-        ),
-      };
+    if (scheduleMode === "warmup" && primaryAccount) {
+      if (platform === "instagram") {
+        const igAccount = primaryAccount as InstagramAccount;
+        warmup = {
+          warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
+          warmupDayOffset: getWarmupDayOffset(
+            igAccount.warmup_started_at ?? igAccount.created_at,
+          ),
+        };
+      } else {
+        warmup = {
+          warmupDays: DEFAULT_WARMUP_DAYS,
+          warmupDayOffset: 0,
+        };
+      }
     }
+
+    const auto =
+      scheduleMode === "auto"
+        ? resolveAutoScheduleOptions({
+            profile: parsed.data.auto_profile as AutoAccountProfile | undefined,
+            igAccount:
+              platform === "instagram" ? (primaryAccount as InstagramAccount) : null,
+          })
+        : undefined;
 
     const custom =
       scheduleMode === "custom" && parsed.data.custom_schedule
@@ -131,6 +150,7 @@ export async function POST(request: NextRequest) {
       total_count: parsed.data.total_count ?? parsed.data.items.length,
       warmup,
       custom,
+      auto,
       platform,
       campaignContext: await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data),
     });

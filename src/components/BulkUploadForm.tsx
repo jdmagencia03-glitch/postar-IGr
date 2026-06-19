@@ -5,6 +5,7 @@ import { Check, Loader2, Plus, UserRound, X } from "lucide-react";
 import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
 import { MultiplatformPreview } from "@/components/MultiplatformPreview";
+import { WarmupScheduleOverview } from "@/components/WarmupScheduleOverview";
 import {
   ProductCampaignSelector,
   type ProductCampaignSelection,
@@ -14,7 +15,15 @@ import type { PublishDestination } from "@/lib/multiplatform/types";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
 import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
-import { DEFAULT_WARMUP_DAYS } from "@/lib/account-warmup";
+import {
+  AUTO_MODE_SHORT_DESCRIPTION,
+  AUTO_PROFILE_DESCRIPTIONS,
+  AUTO_PROFILE_LABELS,
+  DEFAULT_WARMUP_DAYS,
+  inferAutoAccountProfile,
+  WARMUP_MODE_SHORT_DESCRIPTION,
+  type AutoAccountProfile,
+} from "@/lib/account-warmup";
 import { formatApiError } from "@/lib/api-errors";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots, countTodayAvailableSlots, buildEvenTimeSlotStrings, DEFAULT_CUSTOM_START_TIME, DEFAULT_CUSTOM_END_TIME, DEFAULT_CUSTOM_POSTS_PER_DAY } from "@/lib/smart-schedule";
@@ -101,6 +110,7 @@ function formatDurationPreview(
   warmupDays = DEFAULT_WARMUP_DAYS,
   customPostsPerDay = 15,
   customTimeSlots: string[] = buildDefaultCustomTimeSlots(),
+  autoProfile: AutoAccountProfile = "growing",
 ) {
   if (!count) return { days: "", summary: "" };
   if (mode === "today") return { days: "Publicação ainda hoje", summary: "Hoje" };
@@ -117,6 +127,12 @@ function formatDurationPreview(
       days: estimate.label || `≈ ${Math.ceil(count / customPostsPerDay)} dias de conteúdo`,
       summary: estimate.shortLabel || `~${Math.ceil(count / customPostsPerDay)} dias`,
     };
+  }
+  if (mode === "auto") {
+    const estimate = estimateScheduleDuration(count, "auto", warmupDays, undefined, {
+      profile: autoProfile,
+    });
+    return { days: estimate.label, summary: estimate.shortLabel };
   }
   const minDays = Math.ceil(count / 2);
   const maxDays = count;
@@ -234,6 +250,7 @@ export function BulkUploadForm({
   );
 
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(draft?.scheduleMode ?? "auto");
+  const [autoProfile, setAutoProfile] = useState<AutoAccountProfile>("growing");
   const [customPostsPerDay, setCustomPostsPerDay] = useState(
     draft?.customPostsPerDay ?? DEFAULT_CUSTOM_POSTS_PER_DAY,
   );
@@ -259,6 +276,9 @@ export function BulkUploadForm({
   const [previewItems, setPreviewItems] = useState<Array<{ media_urls: string[]; filename: string }>>(
     [],
   );
+  const [previewWarmupBreakdown, setPreviewWarmupBreakdown] = useState<
+    Array<{ day: number; dateLabel: string; posts: number; times: string[] }> | null
+  >(null);
   const [confirmingPreview, setConfirmingPreview] = useState(false);
   const [campaignSelection, setCampaignSelection] = useState<ProductCampaignSelection>({
     productId: null,
@@ -280,12 +300,6 @@ export function BulkUploadForm({
     setSelectedAccountId(uploadAccountId);
   }, [uploadAccountId]);
 
-  useEffect(() => {
-    if (destinationMode === "tiktok" && scheduleMode === "warmup") {
-      setScheduleMode("auto");
-    }
-  }, [destinationMode, scheduleMode]);
-
   const selectedAccount =
     activeAccounts.find((account) => account.id === selectedAccountId) ?? activeAccounts[0];
   const selectedUsername =
@@ -299,6 +313,15 @@ export function BulkUploadForm({
       ? ((accounts.find((a) => a.id === selectedInstagramId) as InstagramAccount | undefined)
           ?.warmup_days ?? DEFAULT_WARMUP_DAYS)
       : DEFAULT_WARMUP_DAYS;
+
+  const selectedIgAccount =
+    (accounts.find((a) => a.id === selectedInstagramId) as InstagramAccount | undefined) ?? null;
+
+  useEffect(() => {
+    if (selectedIgAccount) {
+      setAutoProfile(inferAutoAccountProfile(selectedIgAccount));
+    }
+  }, [selectedIgAccount?.id]);
 
   const canUseInstagram = accounts.length > 0;
   const canUseTiktok = tiktokAccounts.length > 0;
@@ -351,6 +374,7 @@ export function BulkUploadForm({
     warmupDays,
     effectiveCustomPostsPerDay,
     effectiveCustomTimeSlots,
+    autoProfile,
   );
 
   const customSchedulePayload = useMemo(
@@ -473,15 +497,20 @@ export function BulkUploadForm({
   }
 
   function buildSchedulePayload(mode = effectiveScheduleMode) {
-    if (mode !== "custom") return {};
-    return {
-      custom_schedule: buildCustomSchedulePayload(
-        effectiveCustomPostsPerDay,
-        activeBatch?.custom_schedule?.start_time ?? customStartTime,
-        activeBatch?.custom_schedule?.end_time ?? customEndTime,
-        effectiveCustomTimeSlots,
-      ),
-    };
+    if (mode === "custom") {
+      return {
+        custom_schedule: buildCustomSchedulePayload(
+          effectiveCustomPostsPerDay,
+          activeBatch?.custom_schedule?.start_time ?? customStartTime,
+          activeBatch?.custom_schedule?.end_time ?? customEndTime,
+          effectiveCustomTimeSlots,
+        ),
+      };
+    }
+    if (mode === "auto") {
+      return { auto_profile: autoProfile };
+    }
+    return {};
   }
 
   function addCustomTime() {
@@ -655,6 +684,16 @@ export function BulkUploadForm({
       if (previewData.caption_source === "fallback") source = "fallback";
       allVideos.push(...((previewData.preview as MultiplatformVideoPreview[]) ?? []));
       lastScheduleSummary = String(previewData.schedule_summary ?? "");
+      if (previewData.warmup_breakdown) {
+        setPreviewWarmupBreakdown(
+          previewData.warmup_breakdown as Array<{
+            day: number;
+            dateLabel: string;
+            posts: number;
+            times: string[];
+          }>,
+        );
+      }
     }
 
     setCaptionSource(source);
@@ -664,6 +703,9 @@ export function BulkUploadForm({
       allVideos.reduce((sum, video) => sum + video.destinations.length, 0),
     );
     setPreviewItems(items);
+    if (effectiveScheduleMode !== "warmup" && effectiveScheduleMode !== "auto") {
+      setPreviewWarmupBreakdown(null);
+    }
     setProgress(100);
   }
 
@@ -770,7 +812,12 @@ export function BulkUploadForm({
     markStep("videos");
 
     try {
-      if (destinationMode === "both") {
+      if (
+        destinationMode === "both" ||
+        destinationMode === "tiktok" ||
+        effectiveScheduleMode === "warmup" ||
+        effectiveScheduleMode === "auto"
+      ) {
         await runMultiplatformPreview(items);
         setScheduling(false);
         setLoadingStep("");
@@ -825,23 +872,18 @@ export function BulkUploadForm({
   }> = [
     {
       id: "auto",
-      badge: "Recomendado ⭐",
+      badge: destinationMode !== "tiktok" ? "Recomendado ⭐" : undefined,
       title: "Automático",
       emoji: "🤖",
-      description:
-        "A IA escolhe quantos posts por dia, os melhores horários e a distribuição no calendário.",
+      description: AUTO_MODE_SHORT_DESCRIPTION,
     },
-    ...(destinationMode !== "tiktok"
-      ? [
-          {
-            id: "warmup" as ScheduleMode,
-            badge: "Conta nova",
-            title: "Aquecimento",
-            emoji: "🛡️",
-            description: "Ideal para contas recém-criadas. Começa devagar e aumenta gradualmente.",
-          },
-        ]
-      : []),
+    {
+      id: "warmup",
+      badge: destinationMode === "tiktok" ? "Recomendado ⭐" : "Conta nova",
+      title: "Aquecimento",
+      emoji: "🛡️",
+      description: WARMUP_MODE_SHORT_DESCRIPTION,
+    },
     {
       id: "today",
       badge: "Urgente",
@@ -1025,6 +1067,37 @@ export function BulkUploadForm({
             );
           })}
         </div>
+
+        {scheduleMode === "auto" && (
+          <div className="space-y-3 rounded-2xl border border-ig-border bg-ig-secondary p-4">
+            <p className="text-sm font-medium text-ig-text">Perfil da conta</p>
+            <p className="text-xs text-ig-muted">
+              Define quantos posts por dia e a distribuição de horários no modo automático.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {(["new", "growing", "strong"] as AutoAccountProfile[]).map((profile) => {
+                const selected = autoProfile === profile;
+                return (
+                  <button
+                    key={profile}
+                    type="button"
+                    onClick={() => setAutoProfile(profile)}
+                    className={`rounded-xl border px-3 py-3 text-left text-sm transition ${
+                      selected
+                        ? "border-ig-primary bg-ig-primary/10"
+                        : "border-ig-border bg-ig-elevated hover:bg-ig-secondary"
+                    }`}
+                  >
+                    <p className="font-semibold text-ig-text">{AUTO_PROFILE_LABELS[profile]}</p>
+                    <p className="mt-1 text-xs text-ig-muted">{AUTO_PROFILE_DESCRIPTIONS[profile]}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {scheduleMode === "warmup" && <WarmupScheduleOverview />}
 
         {scheduleMode === "custom" && (
           <div className="space-y-4 rounded-2xl border border-ig-border bg-ig-secondary p-4">
@@ -1220,19 +1293,34 @@ export function BulkUploadForm({
           totalPosts={previewTotalPosts}
           loading={confirmingPreview}
           onCaptionChange={handlePreviewCaptionChange}
+          warmupBreakdown={previewWarmupBreakdown}
           onCancel={() => {
             setPreviewVideos(null);
             setPreviewItems([]);
+            setPreviewWarmupBreakdown(null);
           }}
           onConfirm={async () => {
             try {
               const totalCreated = await confirmMultiplatformPreview();
               setPreviewVideos(null);
-              setResult(
-                `${totalCreated} publicações agendadas em múltiplas plataformas. ${previewSummary}`,
-              );
+              setPreviewWarmupBreakdown(null);
+              const destLabel =
+                destinationMode === "both"
+                  ? "em múltiplas plataformas"
+                  : destinationMode === "tiktok"
+                    ? "no TikTok"
+                    : "no Instagram";
+              setResult(`${totalCreated} publicações agendadas ${destLabel}. ${previewSummary}`);
               window.setTimeout(() => {
-                window.location.href = "/dashboard/reports";
+                const query = new URLSearchParams({
+                  platform: uploadPlatform,
+                  account:
+                    uploadPlatform === "tiktok" ? selectedTiktokId : selectedInstagramId,
+                });
+                window.location.href =
+                  uploadPlatform === "tiktok"
+                    ? `/dashboard/tiktok?${query.toString()}`
+                    : `/dashboard/reports?${query.toString()}`;
               }, 1200);
             } catch (error) {
               setResult(error instanceof Error ? error.message : "Erro ao confirmar");

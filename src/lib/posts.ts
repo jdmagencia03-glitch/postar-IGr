@@ -12,6 +12,10 @@ import type {
 const POST_SELECT_PUBLIC =
   "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url), products(id, name, main_cta), campaigns(id, name, default_cta, objective)";
 
+/** Consulta leve para logs — evita joins que quebram se migrations opcionais não foram aplicadas. */
+const POST_SELECT_LOGS =
+  "id, platform, account_id, tiktok_account_id, caption, scheduled_at, content_type, media_type, instagram_accounts(ig_username), tiktok_accounts(username, display_name)";
+
 const POST_SELECT_SECRETS =
   "*, instagram_accounts(ig_username, profile_picture_url, ig_user_id, page_access_token, auth_provider), tiktok_accounts(username, display_name, profile_picture_url)";
 
@@ -151,6 +155,68 @@ export async function getOwnerScheduledPosts(
   }
 
   return filtered;
+}
+
+/** Posts enxutos para a aba de Logs — select leve e limite para evitar timeout. */
+export async function getOwnerPostsForLogs(
+  supabase: SupabaseClient,
+  ownerId: string,
+  filters: OwnerPostFilters = {},
+  limit = 2000,
+): Promise<{ posts: ScheduledPost[]; error: string | null }> {
+  const platform = filters.platform ?? "all";
+  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+
+  let igIds = accountRefs.filter((a) => a.platform === "instagram").map((a) => a.id);
+  let ttIds = accountRefs.filter((a) => a.platform === "tiktok").map((a) => a.id);
+
+  if (filters.accountId) {
+    const selected = accountRefs.find((a) => a.id === filters.accountId);
+    if (!selected) return { posts: [], error: null };
+    if (selected.platform === "instagram") {
+      igIds = [selected.id];
+      ttIds = [];
+    } else {
+      ttIds = [selected.id];
+      igIds = [];
+    }
+  } else if (platform === "instagram") {
+    ttIds = [];
+  } else if (platform === "tiktok") {
+    igIds = [];
+  }
+
+  const posts: ScheduledPost[] = [];
+  const errors: string[] = [];
+
+  if (igIds.length && platform !== "tiktok") {
+    const { data, error } = await supabase
+      .from("scheduled_posts")
+      .select(POST_SELECT_LOGS)
+      .eq("platform", "instagram")
+      .in("account_id", igIds)
+      .order("scheduled_at", { ascending: false })
+      .limit(limit);
+    if (error) errors.push(error.message);
+    else posts.push(...((data ?? []) as unknown as ScheduledPost[]));
+  }
+
+  if (ttIds.length && platform !== "instagram") {
+    const { data, error } = await supabase
+      .from("scheduled_posts")
+      .select(POST_SELECT_LOGS)
+      .eq("platform", "tiktok")
+      .in("tiktok_account_id", ttIds)
+      .order("scheduled_at", { ascending: false })
+      .limit(limit);
+    if (error) errors.push(error.message);
+    else posts.push(...((data ?? []) as unknown as ScheduledPost[]));
+  }
+
+  return {
+    posts: mergePosts(posts, "desc").slice(0, limit),
+    error: errors.length ? errors.join("; ") : null,
+  };
 }
 
 export async function getOwnerPostById(

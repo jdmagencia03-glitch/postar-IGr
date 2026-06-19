@@ -29,6 +29,17 @@ export function uploadFileWithTus(params: {
   /** Retoma chunk parcial salvo no navegador. Desligue após falha para reenviar do zero. */
   resumePrevious?: boolean;
 }) {
+  const logTus = (event: string, detail?: Record<string, unknown>) => {
+    if (typeof console !== "undefined") {
+      console.info(`[upload-tus] ${event}`, {
+        batchId: params.batchId,
+        fileId: params.recordId,
+        filename: params.file.name,
+        ...detail,
+      });
+    }
+  };
+
   let uploadRef: tus.Upload | null = null;
   let abortedByUser = false;
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,6 +59,7 @@ export function uploadFileWithTus(params: {
   const resetStallTimer = (reject: (error: Error) => void) => {
     if (stallTimer) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
+      logTus("stall_timeout", { timeoutMs: UPLOAD_STALL_TIMEOUT_MS });
       uploadRef?.abort(true);
       reject(new Error("Upload sem progresso — reconectando automaticamente…"));
     }, UPLOAD_STALL_TIMEOUT_MS);
@@ -91,18 +103,22 @@ export function uploadFileWithTus(params: {
         const status = (error as { originalResponse?: { getStatus?: () => number } }).originalResponse
           ?.getStatus?.();
         if (status === 403 || status === 404) return false;
+        logTus("retry", { status, resumePrevious: params.resumePrevious });
         return true;
       },
       onError: (error) => {
         clearTimers();
         if (abortedByUser) {
+          logTus("aborted_by_user");
           reject(new DOMException("Upload pausado", "AbortError"));
           return;
         }
+        logTus("error", { message: error instanceof Error ? error.message : String(error) });
         reject(error);
       },
       onSuccess: () => {
         clearTimers();
+        logTus("completed", { size: params.file.size });
         resolve();
       },
     });
@@ -110,6 +126,7 @@ export function uploadFileWithTus(params: {
     uploadRef = upload;
 
     absoluteTimer = setTimeout(() => {
+      logTus("absolute_timeout", { timeoutMs: UPLOAD_FILE_TIMEOUT_MS });
       upload.abort(true);
       reject(new Error("Tempo máximo de upload excedido — tentando novamente…"));
     }, UPLOAD_FILE_TIMEOUT_MS);
@@ -120,23 +137,28 @@ export function uploadFileWithTus(params: {
         () => {
           abortedByUser = true;
           clearTimers();
+          logTus("abort_signal");
           upload.abort(false);
         },
         { once: true },
       );
     }
 
+    resetStallTimer(reject);
+    logTus("start", { resumePrevious: params.resumePrevious, size: params.file.size });
+
     upload
       .findPreviousUploads()
       .then((previousUploads) => {
         if (params.resumePrevious !== false && previousUploads.length > 0) {
+          logTus("resume_previous", { count: previousUploads.length });
           upload.resumeFromPreviousUpload(previousUploads[0]);
         }
-        resetStallTimer(reject);
         upload.start();
       })
       .catch((error) => {
         clearTimers();
+        logTus("start_failed", { message: error instanceof Error ? error.message : String(error) });
         reject(error);
       });
   });

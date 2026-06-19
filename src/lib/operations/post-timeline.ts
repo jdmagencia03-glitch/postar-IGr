@@ -136,7 +136,7 @@ export function buildPostTimeline(
 }
 
 export function inferOperationalEventType(message: string) {
-  const lower = message.toLowerCase();
+  const lower = (message ?? "").toLowerCase();
   if (lower.includes("criad")) return "publication_created";
   if (lower.includes("editad") || lower.includes("legenda")) return "publication_edited";
   if (lower.includes("cancelad")) return "publication_cancelled";

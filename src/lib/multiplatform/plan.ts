@@ -9,6 +9,7 @@ import {
 import {
   buildSmartScheduleSlice,
   ensureFutureScheduleSlot,
+  type AutoScheduleOptions,
   type CustomScheduleOptions,
   type ScheduleMode,
   type WarmupScheduleOptions,
@@ -50,6 +51,7 @@ export async function buildMultiplatformPlan(params: {
   total_count?: number;
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
+  auto?: AutoScheduleOptions;
   now?: Date;
   campaignContext?: import("@/lib/types").CampaignContext | null;
 }) {
@@ -62,13 +64,15 @@ export async function buildMultiplatformPlan(params: {
     (item, index) => item.filename ?? `video-${batchOffset + index + 1}.mp4`,
   );
 
-  const { schedule, postsPerDay, duration, schedule_summary } = buildSmartScheduleSlice({
+  const { schedule, postsPerDay, duration, schedule_summary, warmup_breakdown } =
+    buildSmartScheduleSlice({
     mode: scheduleMode,
     offset: batchOffset,
     count: params.items.length,
     totalCount,
     warmup: params.warmup,
     custom: params.custom,
+    auto: params.auto,
     now,
   });
 
@@ -134,6 +138,7 @@ export async function buildMultiplatformPlan(params: {
     schedule_summary,
     duration,
     schedule: schedule.map((slot) => slot.toISOString()),
+    warmup_breakdown,
     batch_offset: batchOffset,
     total_count: totalCount,
     total_posts: preview.reduce((sum, video) => sum + video.destinations.length, 0),

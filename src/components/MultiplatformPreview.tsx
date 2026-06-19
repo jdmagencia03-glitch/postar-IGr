@@ -3,13 +3,22 @@
 import { formatDateTime } from "@/lib/utils";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
+import { WarmupScheduleOverview } from "@/components/WarmupScheduleOverview";
 import { Clock, FileVideo, X } from "lucide-react";
+
+interface WarmupDayPreview {
+  day: number;
+  dateLabel: string;
+  posts: number;
+  times: string[];
+}
 
 interface Props {
   videos: MultiplatformVideoPreview[];
   scheduleSummary: string;
   captionSource: "ai" | "fallback";
   totalPosts: number;
+  warmupBreakdown?: WarmupDayPreview[] | null;
   loading?: boolean;
   onCaptionChange: (videoIndex: number, platform: "instagram" | "tiktok", caption: string) => void;
   onConfirm: () => void;
@@ -25,6 +34,7 @@ export function MultiplatformPreview({
   scheduleSummary,
   captionSource,
   totalPosts,
+  warmupBreakdown,
   loading,
   onCaptionChange,
   onConfirm,
@@ -55,6 +65,13 @@ export function MultiplatformPreview({
         </div>
 
         <div className="space-y-4 overflow-y-auto px-5 py-4">
+          {warmupBreakdown?.length ? (
+            <WarmupScheduleOverview
+              scheduledDays={warmupBreakdown}
+              title="📅 Cronograma previsto"
+              showExpandedDescription={false}
+            />
+          ) : null}
           {videos.map((video) => (
             <article
               key={video.parent_publish_group_id}

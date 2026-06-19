@@ -33,11 +33,15 @@ const FileStatusRow = memo(function FileStatusRow({
   percent,
   maxUploadBytes,
   onRetry,
+  isStalled,
+  isRetrying,
 }: {
   file: UploadBatchFile;
   percent: number;
   maxUploadBytes: number;
   onRetry: (file: UploadBatchFile) => void;
+  isStalled?: boolean;
+  isRetrying?: boolean;
 }) {
   const errorText = displayUploadErrorMessage(
     file.error_message,
@@ -50,7 +54,8 @@ const FileStatusRow = memo(function FileStatusRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="truncate text-ig-text">{file.filename}</span>
         <span className="text-xs text-ig-muted">
-          {formatBytes(Number(file.file_size))} · {fileStatusLabel(file.status)}
+          {formatBytes(Number(file.file_size))} ·{" "}
+          {fileStatusLabel(file.status, { stalled: isStalled, retrying: isRetrying })}
         </span>
       </div>
       {(file.status === "uploading" || percent > 0) && file.status !== "completed" && (
@@ -289,12 +294,16 @@ export function SupremeUploadManager({
               {session.batch.status === "ready"
                 ? "Upload concluído"
                 : session.retrying || view.awaitingAutoRecovery
-                  ? "Reconectando…"
+                  ? session.message?.includes("travado")
+                    ? "Upload travado detectado. Tentando recuperar…"
+                    : "Reconectando…"
                   : session.running
-                    ? "Enviando vídeos"
+                    ? "Enviando…"
                     : view.canResume
-                      ? "Upload pausado"
-                      : "Upload em andamento"}
+                      ? "Upload pausado pelo usuário."
+                      : view.awaitingAutoRecovery
+                        ? "Reconectando…"
+                        : "Upload em andamento"}
             </p>
             <p className="mt-1 text-sm text-ig-muted">
               {view.completedCount} de {view.totalCount} vídeos · Lote #{session.batch.batch_number} · @
@@ -374,6 +383,13 @@ export function SupremeUploadManager({
                   file={file}
                   percent={session.progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
                   maxUploadBytes={maxUploadBytes}
+                  isStalled={
+                    file.status === "uploading" &&
+                    !session.running &&
+                    !session.retrying &&
+                    view.awaitingAutoRecovery
+                  }
+                  isRetrying={session.retrying && file.status !== "completed"}
                   onRetry={(record) => uploadSessionStore.retryFile(record)}
                 />
               ))}

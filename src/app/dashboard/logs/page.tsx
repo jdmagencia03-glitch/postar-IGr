@@ -5,7 +5,7 @@ import {
   OperationalLogsList,
 } from "@/components/operations/OperationalLogsList";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
+import { getOwnerAccountRefs, getOwnerPostsForLogs } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PublishLog, ScheduledPost, SocialPlatform } from "@/lib/types";
 
@@ -38,28 +38,35 @@ export default async function LogsPage({
       ? params.account
       : undefined;
 
-  const posts = await getOwnerScheduledPosts(supabase, ownerId, {
+  const { posts, error: postsError } = await getOwnerPostsForLogs(supabase, ownerId, {
     platform: platformFilter,
     accountId: selectedAccountId,
   });
   const postIds = posts.map((post) => post.id);
   const postsById = new Map(posts.map((post) => [post.id, post as ScheduledPost]));
 
-  let query = supabase
-    .from("publish_logs")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(300);
+  let logsError: string | null = postsError;
+  let logs: PublishLog[] = [];
 
   if (postIds.length) {
-    query = query.in("post_id", postIds);
-  } else {
-    query = query.limit(0);
+    const { data, error } = await supabase
+      .from("publish_logs")
+      .select("*")
+      .in("post_id", postIds)
+      .order("created_at", { ascending: false })
+      .limit(300);
+
+    if (error) {
+      logsError = logsError ? `${logsError}; ${error.message}` : error.message;
+      if (typeof console !== "undefined") {
+        console.error("[logs-page] publish_logs query failed:", error.message);
+      }
+    } else {
+      logs = (data ?? []) as PublishLog[];
+    }
   }
 
-  const { data: logs } = await query;
-
-  let rows = buildOperationalLogRows((logs ?? []) as PublishLog[], postsById);
+  let rows = buildOperationalLogRows(logs, postsById);
 
   if (params.level && params.level !== "all") {
     rows = rows.filter((row) => row.level === params.level);
@@ -69,11 +76,15 @@ export default async function LogsPage({
     const needle = params.q.trim().toLowerCase();
     rows = rows.filter(
       (row) =>
-        row.message.toLowerCase().includes(needle) ||
-        row.accountUsername.toLowerCase().includes(needle) ||
-        row.eventLabel.toLowerCase().includes(needle),
+        (row.message ?? "").toLowerCase().includes(needle) ||
+        (row.accountUsername ?? "").toLowerCase().includes(needle) ||
+        (row.eventLabel ?? "").toLowerCase().includes(needle),
     );
   }
+
+  const errorMessage = logsError
+    ? "Não foi possível carregar os logs agora. Tente novamente."
+    : undefined;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -109,7 +120,7 @@ export default async function LogsPage({
         </button>
       </form>
 
-      <OperationalLogsList rows={rows} />
+      <OperationalLogsList rows={rows} errorMessage={errorMessage} />
     </div>
   );
 }
