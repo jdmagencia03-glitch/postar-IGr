@@ -17,14 +17,14 @@ import { parseCustomSchedulePayload } from "@/lib/smart-schedule";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
-  SCHEDULE_JOB_INSERT_CHUNK,
   SCHEDULE_JOB_MAX_ATTEMPTS,
-  SCHEDULE_JOB_PLAN_CHUNK,
 } from "@/lib/schedule-jobs/constants";
 import {
-  buildJobStatus,
-  getScheduleJob,
-  refreshJobStatusFromItems,
+  buildJobStatusFromJob,
+  finalizeJobStatusFromDb,
+  getScheduleJobHeader,
+  loadInsertPendingItems,
+  loadPlanPendingItems,
   updateJobCounters,
   updateJobItem,
 } from "@/lib/schedule-jobs/repository";
@@ -79,18 +79,12 @@ async function processPlanChunk(
   supabase: SupabaseClient,
   ownerId: string,
   job: ScheduleJobRow,
-  items: ScheduleJobItemRow[],
+  pending: ScheduleJobItemRow[],
 ) {
   const config = job.config as ScheduleJobConfig;
   const targets = config.targets ?? [];
   if (!targets.length) throw new Error("Nenhum destino configurado no job");
-
-  const pending = items
-    .filter((item) => !item.destinations?.length && item.status !== "failed")
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .slice(0, SCHEDULE_JOB_PLAN_CHUNK);
-
-  if (!pending.length) return items;
+  if (!pending.length) return;
 
   const accounts = await loadAccountsMap(supabase, ownerId, targets);
   const insertionTarget = targets[0]!;
@@ -119,7 +113,7 @@ async function processPlanChunk(
     content_objective: config.content_objective,
   });
 
-  const batchOffset = pending[0]!.sort_order;
+  const batchOffset = job.processed_items;
   const planItems = pending.map((item) => ({
     media_urls: item.media_urls,
     filename: item.filename,
@@ -132,7 +126,7 @@ async function processPlanChunk(
     ownerId,
     schedule_mode: scheduleMode,
     batch_offset: batchOffset,
-    total_count: items.length,
+    total_count: job.total_items,
     warmup: resolveWarmup(scheduleMode, insertionTarget.platform, primaryAccount),
     custom,
     auto,
@@ -165,16 +159,6 @@ async function processPlanChunk(
       scheduled_at: destinations[0]?.scheduled_at ?? null,
       caption: destinations[0]?.caption ?? null,
     });
-
-    const itemIndex = items.findIndex((row) => row.id === item.id);
-    if (itemIndex >= 0) {
-      items[itemIndex] = {
-        ...items[itemIndex]!,
-        destinations,
-        status: "processing",
-        parent_publish_group_id: preview.parent_publish_group_id,
-      };
-    }
   }
 
   if (!job.schedule_summary && plan.schedule_summary) {
@@ -184,15 +168,13 @@ async function processPlanChunk(
       current_step: "captions",
     } as Partial<ScheduleJobRow>);
   }
-
-  return items;
 }
 
 async function processInsertChunk(
   supabase: SupabaseClient,
   ownerId: string,
   job: ScheduleJobRow,
-  items: ScheduleJobItemRow[],
+  pending: ScheduleJobItemRow[],
 ) {
   const config = job.config as ScheduleJobConfig;
   const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, {
@@ -201,17 +183,6 @@ async function processInsertChunk(
     content_objective: config.content_objective,
   });
   const campaignFields = mergeCampaignFields(campaignContext);
-
-  const pending = items
-    .filter(
-      (item) =>
-        item.destinations?.length &&
-        item.status !== "completed" &&
-        item.status !== "failed",
-    )
-    .filter((item) => !item.destinations!.every((d) => d.created_post_id))
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .slice(0, SCHEDULE_JOB_INSERT_CHUNK);
 
   const scheduledUrls: string[] = [];
 
@@ -280,15 +251,6 @@ async function processInsertChunk(
       });
 
       scheduledUrls.push(...item.media_urls);
-
-      const itemIndex = items.findIndex((row) => row.id === item.id);
-      if (itemIndex >= 0) {
-        items[itemIndex] = {
-          ...items[itemIndex]!,
-          status: "completed",
-          destinations: updatedDestinations,
-        };
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao inserir post";
       const attempts = item.attempt_count + 1;
@@ -321,8 +283,6 @@ async function processInsertChunk(
       () => undefined,
     );
   }
-
-  return items;
 }
 
 async function markUploadFilesScheduled(
@@ -356,45 +316,29 @@ export async function advanceScheduleJob(
   ownerId: string,
   jobId: string,
 ) {
-  const loaded = await getScheduleJob(supabase, ownerId, jobId);
-  if (!loaded) throw new Error("Job não encontrado");
-
-  let { job, items } = loaded;
+  let job = await getScheduleJobHeader(supabase, ownerId, jobId);
+  if (!job) throw new Error("Job não encontrado");
 
   if (job.status === "completed" || job.status === "cancelled") {
-    return buildJobStatus(job, items);
+    return buildJobStatusFromJob(job);
   }
+
+  const planPending = await loadPlanPendingItems(supabase, jobId);
+  const insertPending = planPending.length ? [] : await loadInsertPendingItems(supabase, jobId);
 
   await updateJobCounters(supabase, job.id, {
     status: "processing",
-    current_step: items.some((i) => i.destinations?.length) ? "inserting" : "captions",
+    current_step: planPending.length ? "captions" : "inserting",
   } as Partial<ScheduleJobRow>);
 
-  const needsPlan = items.some((item) => !item.destinations?.length && item.status !== "failed");
-
-  if (needsPlan) {
-    await updateJobCounters(supabase, job.id, { current_step: "captions" } as Partial<ScheduleJobRow>);
-    items = await processPlanChunk(supabase, ownerId, job, items);
+  if (planPending.length) {
+    await processPlanChunk(supabase, ownerId, job, planPending);
+    job = await finalizeJobStatusFromDb(supabase, job);
+  } else if (insertPending.length) {
+    await processInsertChunk(supabase, ownerId, job, insertPending);
+    job = await finalizeJobStatusFromDb(supabase, job);
   } else {
-    await updateJobCounters(supabase, job.id, { current_step: "inserting" } as Partial<ScheduleJobRow>);
-    items = await processInsertChunk(supabase, ownerId, job, items);
-  }
-
-  job = await refreshJobStatusFromItems(supabase, job, items);
-
-  const stillNeedsPlan = items.some((item) => !item.destinations?.length && item.status !== "failed");
-  const stillNeedsInsert = items.some(
-    (item) =>
-      item.destinations?.length &&
-      item.status !== "completed" &&
-      item.status !== "failed" &&
-      !item.destinations.every((d) => d.created_post_id),
-  );
-
-  if (!stillNeedsPlan && stillNeedsInsert && job.current_step !== "inserting") {
-    await updateJobCounters(supabase, job.id, { current_step: "inserting" } as Partial<ScheduleJobRow>);
-    items = await processInsertChunk(supabase, ownerId, job, items);
-    job = await refreshJobStatusFromItems(supabase, job, items);
+    job = await finalizeJobStatusFromDb(supabase, job);
   }
 
   if (job.status === "completed" || job.status === "partial_failed") {
@@ -417,7 +361,7 @@ export async function advanceScheduleJob(
     }
   }
 
-  return buildJobStatus(job, items);
+  return buildJobStatusFromJob(job);
 }
 
 export async function resumeScheduleJob(
@@ -425,16 +369,21 @@ export async function resumeScheduleJob(
   ownerId: string,
   jobId: string,
 ) {
-  const loaded = await getScheduleJob(supabase, ownerId, jobId);
-  if (!loaded) throw new Error("Job não encontrado");
+  const job = await getScheduleJobHeader(supabase, ownerId, jobId);
+  if (!job) throw new Error("Job não encontrado");
 
-  const retryItems = loaded.items.filter(
-    (item) => item.status === "failed" || item.status === "retrying",
-  );
+  const { data: retryItems, error } = await supabase
+    .from("schedule_job_items")
+    .select("id, destinations")
+    .eq("schedule_job_id", jobId)
+    .in("status", ["failed", "retrying"]);
 
-  for (const item of retryItems) {
+  if (error) throw new Error(error.message);
+
+  for (const item of retryItems ?? []) {
+    const destinations = item.destinations as ScheduleJobDestination[] | null;
     await updateJobItem(supabase, item.id, {
-      status: item.destinations?.length ? "processing" : "queued",
+      status: destinations?.length ? "processing" : "queued",
       error_message: null,
     });
   }

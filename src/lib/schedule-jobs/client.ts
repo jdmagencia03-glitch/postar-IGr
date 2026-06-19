@@ -11,10 +11,29 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
 
 async function readJsonResponse(response: Response) {
   const text = await response.text();
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    if (response.status === 504 || response.status === 502) {
+      throw new Error(
+        "O servidor demorou demais. O progresso foi salvo — recarregue a página para continuar.",
+      );
+    }
+    throw new Error("Resposta vazia do servidor.");
+  }
+
+  if (trimmed.startsWith("<")) {
+    throw new Error(
+      response.status === 504 || response.status === 502
+        ? "O servidor demorou demais. O agendamento continua em segundo plano — recarregue a página."
+        : "Erro temporário do servidor. Tente novamente em alguns segundos.",
+    );
+  }
+
   try {
-    return JSON.parse(text) as Record<string, unknown>;
+    return JSON.parse(trimmed) as Record<string, unknown>;
   } catch {
-    throw new Error(text.slice(0, 120) || "Resposta inválida do servidor");
+    throw new Error(trimmed.slice(0, 160) || "Resposta inválida do servidor");
   }
 }
 

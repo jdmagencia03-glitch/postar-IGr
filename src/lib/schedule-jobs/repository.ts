@@ -6,6 +6,7 @@ import type {
   ScheduleJobStatusResponse,
 } from "@/lib/schedule-jobs/types";
 import {
+  SCHEDULE_JOB_CREATE_CHUNK,
   SCHEDULE_JOB_INSERT_CHUNK,
   SCHEDULE_JOB_PLAN_CHUNK,
 } from "@/lib/schedule-jobs/constants";
@@ -37,6 +38,22 @@ export async function findActiveJobForBatch(
   return data as ScheduleJobRow | null;
 }
 
+export async function getScheduleJobHeader(
+  supabase: SupabaseClient,
+  ownerId: string,
+  jobId: string,
+) {
+  const { data, error } = await supabase
+    .from("schedule_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as ScheduleJobRow | null) ?? null;
+}
+
 export async function getScheduleJob(
   supabase: SupabaseClient,
   ownerId: string,
@@ -66,6 +83,85 @@ export async function getScheduleJob(
   };
 }
 
+export async function loadPlanPendingItems(
+  supabase: SupabaseClient,
+  jobId: string,
+  limit = SCHEDULE_JOB_PLAN_CHUNK,
+) {
+  const { data, error } = await supabase
+    .from("schedule_job_items")
+    .select("*")
+    .eq("schedule_job_id", jobId)
+    .is("destinations", null)
+    .neq("status", "failed")
+    .order("sort_order", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapItem(row as Record<string, unknown>));
+}
+
+export async function loadInsertPendingItems(
+  supabase: SupabaseClient,
+  jobId: string,
+  limit = SCHEDULE_JOB_INSERT_CHUNK,
+) {
+  const { data, error } = await supabase
+    .from("schedule_job_items")
+    .select("*")
+    .eq("schedule_job_id", jobId)
+    .not("destinations", "is", null)
+    .in("status", ["queued", "processing", "retrying"])
+    .order("sort_order", { ascending: true })
+    .limit(limit * 2);
+
+  if (error) throw new Error(error.message);
+
+  const items = (data ?? []).map((row) => mapItem(row as Record<string, unknown>));
+  return items
+    .filter(
+      (item) =>
+        item.destinations?.length &&
+        !item.destinations.every((dest) => dest.created_post_id),
+    )
+    .slice(0, limit);
+}
+
+export async function syncJobCountersFromDb(supabase: SupabaseClient, jobId: string) {
+  const base = () =>
+    supabase.from("schedule_job_items").select("id", { count: "exact", head: true }).eq("schedule_job_id", jobId);
+
+  const [totalRes, completedRes, failedRes, processedRes] = await Promise.all([
+    base(),
+    base().eq("status", "completed"),
+    base().eq("status", "failed"),
+    base().not("destinations", "is", null),
+  ]);
+
+  if (totalRes.error) throw new Error(totalRes.error.message);
+  if (completedRes.error) throw new Error(completedRes.error.message);
+  if (failedRes.error) throw new Error(failedRes.error.message);
+  if (processedRes.error) throw new Error(processedRes.error.message);
+
+  return {
+    total: totalRes.count ?? 0,
+    completed: completedRes.count ?? 0,
+    failed: failedRes.count ?? 0,
+    processed: processedRes.count ?? 0,
+  };
+}
+
+async function insertJobItemsChunked(
+  supabase: SupabaseClient,
+  itemRows: Array<Record<string, unknown>>,
+) {
+  for (let offset = 0; offset < itemRows.length; offset += SCHEDULE_JOB_CREATE_CHUNK) {
+    const chunk = itemRows.slice(offset, offset + SCHEDULE_JOB_CREATE_CHUNK);
+    const { error } = await supabase.from("schedule_job_items").insert(chunk);
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function createScheduleJob(
   supabase: SupabaseClient,
   params: {
@@ -88,8 +184,7 @@ export async function createScheduleJob(
     : null;
 
   if (existing) {
-    const loaded = await getScheduleJob(supabase, params.ownerId, existing.id);
-    if (loaded) return loaded;
+    return { job: existing, items: [] as ScheduleJobItemRow[] };
   }
 
   const { data: job, error: jobError } = await supabase
@@ -121,13 +216,14 @@ export async function createScheduleJob(
     status: "queued",
   }));
 
-  const { error: itemsError } = await supabase.from("schedule_job_items").insert(itemRows);
-  if (itemsError) {
+  try {
+    await insertJobItemsChunked(supabase, itemRows);
+  } catch (itemsError) {
     await supabase.from("schedule_jobs").delete().eq("id", job.id);
-    throw new Error(itemsError.message);
+    throw itemsError;
   }
 
-  return getScheduleJob(supabase, params.ownerId, job.id);
+  return { job: job as ScheduleJobRow, items: [] as ScheduleJobItemRow[] };
 }
 
 export async function updateJobCounters(
@@ -154,6 +250,49 @@ export async function updateJobItem(
     .eq("id", itemId);
 
   if (error) throw new Error(error.message);
+}
+
+export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusResponse {
+  const total = job.total_items;
+  const completed = job.completed_items;
+  const failed = job.failed_items;
+  const processed = job.processed_items;
+  const pending = Math.max(0, total - completed - failed);
+
+  const planChunksTotal = Math.ceil(total / SCHEDULE_JOB_PLAN_CHUNK);
+  const planChunksDone = Math.ceil(processed / SCHEDULE_JOB_PLAN_CHUNK);
+  const insertChunksTotal = Math.ceil(total / SCHEDULE_JOB_INSERT_CHUNK);
+  const insertChunksDone = Math.ceil(completed / SCHEDULE_JOB_INSERT_CHUNK);
+
+  const stepLabels: Record<string, string> = {
+    queued: "Preparando agendamento",
+    planning: "Montando calendário",
+    captions: "Criando legendas e hashtags",
+    inserting: "Salvando posts",
+    completed: "Concluído",
+  };
+
+  const isActive = job.status === "queued" || job.status === "processing";
+
+  return {
+    jobId: job.id,
+    status: job.status,
+    currentStep: job.current_step,
+    total,
+    processed,
+    completed,
+    failed,
+    pending,
+    planChunksTotal,
+    planChunksDone,
+    insertChunksTotal,
+    insertChunksDone,
+    scheduleSummary: job.schedule_summary,
+    errorMessage: job.error_message,
+    isActive,
+    canResume: job.status === "partial_failed" || failed > 0,
+    stepLabel: stepLabels[job.current_step] ?? job.current_step,
+  };
 }
 
 export function buildJobStatus(
@@ -202,6 +341,53 @@ export function buildJobStatus(
     isActive,
     canResume: job.status === "partial_failed" || failed > 0,
     stepLabel: stepLabels[job.current_step] ?? job.current_step,
+  };
+}
+
+export async function finalizeJobStatusFromDb(
+  supabase: SupabaseClient,
+  job: ScheduleJobRow,
+) {
+  const counts = await syncJobCountersFromDb(supabase, job.id);
+
+  let status = job.status;
+  let currentStep = job.current_step;
+  let completedAt = job.completed_at;
+
+  if (counts.completed + counts.failed === counts.total && counts.total > 0) {
+    status =
+      counts.failed > 0 && counts.completed > 0
+        ? "partial_failed"
+        : counts.failed === counts.total
+          ? "failed"
+          : "completed";
+    currentStep = "completed";
+    completedAt = new Date().toISOString();
+  } else if (counts.processed < counts.total) {
+    status = "processing";
+    currentStep = "captions";
+  } else if (counts.completed < counts.total) {
+    status = "processing";
+    currentStep = "inserting";
+  }
+
+  await updateJobCounters(supabase, job.id, {
+    completed_items: counts.completed,
+    failed_items: counts.failed,
+    processed_items: counts.processed,
+    status,
+    current_step: currentStep,
+    completed_at: completedAt,
+  } as Partial<ScheduleJobRow>);
+
+  return {
+    ...job,
+    completed_items: counts.completed,
+    failed_items: counts.failed,
+    processed_items: counts.processed,
+    status,
+    current_step: currentStep,
+    completed_at: completedAt,
   };
 }
 
