@@ -295,12 +295,69 @@ export async function resetAllFailedUploadFiles(batch: UploadBatch) {
   return next;
 }
 
-export async function fetchActiveBatch(options?: { summary?: boolean }) {
-  const url = options?.summary ? "/api/upload/batches?summary=1" : "/api/upload/batches";
+export async function fetchActiveBatch(options?: {
+  summary?: boolean;
+  platform?: UploadBatch["platform"];
+  accountId?: string;
+}) {
+  const params = new URLSearchParams();
+  if (options?.summary) params.set("summary", "1");
+  if (options?.platform) params.set("platform", options.platform);
+  if (options?.accountId) params.set("account_id", options.accountId);
+  const query = params.toString();
+  const url = query ? `/api/upload/batches?${query}` : "/api/upload/batches";
   const res = await apiFetch(url, { cache: "no-store" });
   const data = await res.json();
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao carregar lote"));
   return (data.batch as UploadBatch | null) ?? null;
+}
+
+export async function clearAccountUploadedVideosClient(params: {
+  platform: UploadBatch["platform"];
+  accountId: string;
+}) {
+  const res = await apiFetch("/api/upload/account/clear-videos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      platform: params.platform ?? "instagram",
+      account_id: params.accountId,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(String(data.error ?? "Falha ao apagar vídeos enviados"));
+  }
+  return data as {
+    batchesCleared: number;
+    filesCleared: number;
+    storagePathsRemoved: number;
+    message: string;
+  };
+}
+
+export async function deleteAccountUploadBatchesClient(params: {
+  platform: UploadBatch["platform"];
+  accountId: string;
+}) {
+  const res = await apiFetch("/api/upload/account/clear-batches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      platform: params.platform ?? "instagram",
+      account_id: params.accountId,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(String(data.error ?? "Falha ao apagar lotes"));
+  }
+  return data as {
+    batchesDeleted: number;
+    filesDeleted: number;
+    storagePathsRemoved: number;
+    message: string;
+  };
 }
 
 export async function ensureBatchWithFiles(batch: UploadBatch) {

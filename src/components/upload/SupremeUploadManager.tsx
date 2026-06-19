@@ -20,6 +20,7 @@ function resumeButtonLabel() {
 
 interface Props {
   accountId: string;
+  accountLabel?: string;
   platform?: UploadBatch["platform"];
   scheduleMode: UploadBatch["schedule_mode"];
   customSchedule?: UploadBatch["custom_schedule"];
@@ -81,6 +82,7 @@ const FileStatusRow = memo(function FileStatusRow({
 
 export function SupremeUploadManager({
   accountId,
+  accountLabel,
   platform = "instagram",
   scheduleMode,
   customSchedule,
@@ -140,7 +142,12 @@ export function SupremeUploadManager({
     session.uploadLimits?.max_upload_mb && session.uploadLimits.max_upload_mb >= 1024
       ? `${session.uploadLimits.max_upload_mb / 1024}GB`
       : `${session.uploadLimits?.max_upload_mb ?? 500}MB`;
-  const username = session.batch?.instagram_accounts?.ig_username;
+  const username =
+    accountLabel ??
+    (session.batch?.platform === "tiktok"
+      ? session.batch.tiktok_accounts?.username ??
+        session.batch.tiktok_accounts?.display_name
+      : session.batch?.instagram_accounts?.ig_username);
 
   if (session.initialLoading) {
     return (
@@ -165,6 +172,30 @@ export function SupremeUploadManager({
         <strong className="text-ig-text">continua em segundo plano</strong>.
         Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
       </p>
+
+      {!session.initialLoading && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
+          <span className="text-xs text-ig-muted">
+            Limpeza · @{username ?? "conta"} ({platform === "tiktok" ? "TikTok" : "Instagram"})
+          </span>
+          <button
+            type="button"
+            className="rounded-lg border border-ig-danger/40 px-3 py-1.5 text-xs text-ig-danger hover:bg-ig-danger/10"
+            disabled={session.running}
+            onClick={() => void uploadSessionStore.clearAccountVideos(username ?? "conta")}
+          >
+            Apagar vídeos enviados
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-ig-danger/40 px-3 py-1.5 text-xs text-ig-danger hover:bg-ig-danger/10"
+            disabled={session.running}
+            onClick={() => void uploadSessionStore.clearAccountBatches(username ?? "conta")}
+          >
+            Apagar lotes desta conta
+          </button>
+        </div>
+      )}
 
       {view.canResume && (
         <div className="space-y-3 rounded-2xl border border-ig-info-border bg-ig-info-bg p-4">

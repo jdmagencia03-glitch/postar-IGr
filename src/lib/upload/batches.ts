@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DB_INSERT_CHUNK_SIZE } from "@/lib/upload/storage-config";
-import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
+import type { SocialPlatform, UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
 
 export interface UploadFileInput {
   filename: string;
@@ -84,42 +84,299 @@ export async function getBatchUploadFiles(supabase: SupabaseClient, batchId: str
   return files;
 }
 
-export async function getUploadingBatchForOwner(supabase: SupabaseClient, ownerId: string) {
-  const { data } = await supabase
+export async function getUploadingBatchForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+  accountScope?: { platform: SocialPlatform; accountId: string },
+) {
+  let query = supabase
     .from("upload_batches")
     .select("id")
     .eq("owner_id", ownerId)
-    .eq("status", "uploading")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .eq("status", "uploading");
+
+  if (accountScope) {
+    query = query.eq("platform", accountScope.platform);
+    if (accountScope.platform === "tiktok") {
+      query = query.eq("tiktok_account_id", accountScope.accountId);
+    } else {
+      query = query.eq("account_id", accountScope.accountId);
+    }
+  }
+
+  const { data } = await query.order("created_at", { ascending: false }).limit(1).maybeSingle();
 
   if (!data) return null;
   return getBatchForOwner(supabase, ownerId, data.id);
 }
 
-export async function getActiveBatchSummaryForOwner(supabase: SupabaseClient, ownerId: string) {
-  const { data } = await supabase
+export async function getActiveBatchSummaryForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+  accountScope?: { platform: SocialPlatform; accountId: string },
+) {
+  let query = supabase
     .from("upload_batches")
-    .select("*, instagram_accounts(ig_username)")
+    .select("*, instagram_accounts(ig_username), tiktok_accounts(username, display_name)")
     .eq("owner_id", ownerId)
-    .in("status", ["uploading", "ready"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .in("status", ["uploading", "ready"]);
+
+  if (accountScope) {
+    query = query.eq("platform", accountScope.platform);
+    if (accountScope.platform === "tiktok") {
+      query = query.eq("tiktok_account_id", accountScope.accountId);
+    } else {
+      query = query.eq("account_id", accountScope.accountId);
+    }
+  }
+
+  const { data } = await query.order("created_at", { ascending: false }).limit(1).maybeSingle();
 
   if (!data) return null;
 
   return { ...(data as UploadBatch), upload_files: [] as UploadBatchFile[] };
 }
 
-export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: string) {
-  const summary = await getActiveBatchSummaryForOwner(supabase, ownerId);
+export async function getActiveBatchForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+  accountScope?: { platform: SocialPlatform; accountId: string },
+) {
+  const summary = await getActiveBatchSummaryForOwner(supabase, ownerId, accountScope);
   if (!summary) return null;
 
   await resetStaleUploadingFiles(supabase, summary.id);
   const upload_files = await getBatchUploadFiles(supabase, summary.id);
   return { ...summary, upload_files };
+}
+
+export async function countAccountUploadedVideos(
+  supabase: SupabaseClient,
+  ownerId: string,
+  platform: SocialPlatform,
+  accountId: string,
+) {
+  let batchQuery = supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("platform", platform)
+    .in("status", ["uploading", "ready", "scheduling"]);
+
+  batchQuery =
+    platform === "tiktok"
+      ? batchQuery.eq("tiktok_account_id", accountId)
+      : batchQuery.eq("account_id", accountId);
+
+  const { data: batches, error } = await batchQuery;
+  if (error) throw new Error(error.message);
+  if (!batches?.length) return { batches: 0, files: 0 };
+
+  const batchIds = batches.map((batch) => batch.id);
+  const { count, error: filesError } = await supabase
+    .from("upload_files")
+    .select("id", { count: "exact", head: true })
+    .in("batch_id", batchIds)
+    .eq("status", "completed")
+    .or("removed.is.null,removed.eq.false");
+
+  if (filesError) throw new Error(filesError.message);
+
+  return { batches: batches.length, files: count ?? 0 };
+}
+
+export async function clearAccountUploadedVideos(
+  supabase: SupabaseClient,
+  ownerId: string,
+  platform: SocialPlatform,
+  accountId: string,
+) {
+  let batchQuery = supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("platform", platform)
+    .in("status", ["uploading", "ready", "scheduling"]);
+
+  batchQuery =
+    platform === "tiktok"
+      ? batchQuery.eq("tiktok_account_id", accountId)
+      : batchQuery.eq("account_id", accountId);
+
+  const { data: batches, error } = await batchQuery;
+  if (error) throw new Error(error.message);
+  if (!batches?.length) {
+    return { batchesCleared: 0, filesCleared: 0, storagePathsRemoved: 0 };
+  }
+
+  const batchIds = batches.map((batch) => batch.id);
+  const files = await getBatchUploadFilesForIds(supabase, batchIds);
+  const activeFiles = files.filter((file) => !file.removed);
+  const storagePaths = [
+    ...new Set(activeFiles.map((file) => file.storage_path).filter(Boolean)),
+  ];
+
+  if (storagePaths.length) {
+    for (let offset = 0; offset < storagePaths.length; offset += 100) {
+      const chunk = storagePaths.slice(offset, offset + 100);
+      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
+      if (storageError) {
+        console.warn("[upload-clear] storage_remove_error", {
+          platform,
+          accountId,
+          error: storageError.message,
+        });
+      }
+    }
+  }
+
+  const now = new Date().toISOString();
+  if (activeFiles.length) {
+    const { error: filesError } = await supabase
+      .from("upload_files")
+      .update({
+        removed: true,
+        public_url: null,
+        updated_at: now,
+      })
+      .in(
+        "id",
+        activeFiles.map((file) => file.id),
+      );
+
+    if (filesError) throw new Error(filesError.message);
+  }
+
+  const { error: batchError } = await supabase
+    .from("upload_batches")
+    .update({
+      status: "cancelled",
+      updated_at: now,
+    })
+    .in("id", batchIds);
+
+  if (batchError) throw new Error(batchError.message);
+
+  console.info("[upload-clear] account_videos_cleared", {
+    ownerId,
+    platform,
+    accountId,
+    batchesCleared: batchIds.length,
+    filesCleared: activeFiles.length,
+    storagePathsRemoved: storagePaths.length,
+  });
+
+  return {
+    batchesCleared: batchIds.length,
+    filesCleared: activeFiles.length,
+    storagePathsRemoved: storagePaths.length,
+  };
+}
+
+export async function countAccountUploadBatches(
+  supabase: SupabaseClient,
+  ownerId: string,
+  platform: SocialPlatform,
+  accountId: string,
+) {
+  let batchQuery = supabase
+    .from("upload_batches")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", ownerId)
+    .eq("platform", platform);
+
+  batchQuery =
+    platform === "tiktok"
+      ? batchQuery.eq("tiktok_account_id", accountId)
+      : batchQuery.eq("account_id", accountId);
+
+  const { count, error } = await batchQuery;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+export async function deleteAccountUploadBatches(
+  supabase: SupabaseClient,
+  ownerId: string,
+  platform: SocialPlatform,
+  accountId: string,
+) {
+  let batchQuery = supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("platform", platform);
+
+  batchQuery =
+    platform === "tiktok"
+      ? batchQuery.eq("tiktok_account_id", accountId)
+      : batchQuery.eq("account_id", accountId);
+
+  const { data: batches, error } = await batchQuery;
+  if (error) throw new Error(error.message);
+  if (!batches?.length) {
+    return { batchesDeleted: 0, filesDeleted: 0, storagePathsRemoved: 0 };
+  }
+
+  const batchIds = batches.map((batch) => batch.id);
+  const files = await getBatchUploadFilesForIds(supabase, batchIds);
+  const storagePaths = [
+    ...new Set(files.map((file) => file.storage_path).filter(Boolean)),
+  ];
+
+  if (storagePaths.length) {
+    for (let offset = 0; offset < storagePaths.length; offset += 100) {
+      const chunk = storagePaths.slice(offset, offset + 100);
+      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
+      if (storageError) {
+        console.warn("[upload-clear] batch_storage_remove_error", {
+          platform,
+          accountId,
+          error: storageError.message,
+        });
+      }
+    }
+  }
+
+  const { error: deleteError } = await supabase.from("upload_batches").delete().in("id", batchIds);
+  if (deleteError) throw new Error(deleteError.message);
+
+  console.info("[upload-clear] account_batches_deleted", {
+    ownerId,
+    platform,
+    accountId,
+    batchesDeleted: batchIds.length,
+    filesDeleted: files.length,
+    storagePathsRemoved: storagePaths.length,
+  });
+
+  return {
+    batchesDeleted: batchIds.length,
+    filesDeleted: files.length,
+    storagePathsRemoved: storagePaths.length,
+  };
+}
+
+async function getBatchUploadFilesForIds(supabase: SupabaseClient, batchIds: string[]) {
+  if (!batchIds.length) return [] as UploadBatchFile[];
+
+  const files: UploadBatchFile[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase
+      .from("upload_files")
+      .select("*")
+      .in("batch_id", batchIds)
+      .order("sort_order", { ascending: true })
+      .range(offset, offset + 999);
+
+    if (error) throw new Error(error.message);
+    if (!data?.length) break;
+
+    files.push(...(data as UploadBatchFile[]));
+    if (data.length < 1000) break;
+  }
+
+  return files;
 }
 
 export async function getBatchForOwner(

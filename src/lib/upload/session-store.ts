@@ -4,6 +4,8 @@ import { UploadEngine, type UploadEngineProgress } from "@/lib/upload/engine";
 import {
   buildFileMapFromRecords,
   cancelUploadBatch,
+  clearAccountUploadedVideosClient,
+  deleteAccountUploadBatchesClient,
   createUploadBatch,
   ensureBatchWithFiles,
   fetchActiveBatch,
@@ -329,7 +331,74 @@ class UploadSessionStore {
   }
 
   configureSession(config: UploadSessionConfig) {
+    const prevAccount = this.config?.accountId;
+    const prevPlatform = this.config?.platform;
     this.config = config;
+
+    if (
+      config.accountId &&
+      this.initialized &&
+      (prevAccount !== config.accountId ||
+        prevPlatform !== config.platform ||
+        !this.batch ||
+        this.batchBelongsToConfig(config) === false)
+    ) {
+      void this.reloadActiveBatchForAccount();
+    }
+  }
+
+  private batchBelongsToConfig(config: UploadSessionConfig) {
+    if (!this.batch) return true;
+    const platform = config.platform ?? "instagram";
+    if (this.batch.platform !== platform) return false;
+    if (platform === "tiktok") {
+      return this.batch.tiktok_account_id === config.accountId;
+    }
+    return this.batch.account_id === config.accountId;
+  }
+
+  private async reloadActiveBatchForAccount() {
+    const config = this.config;
+    if (!config?.accountId) {
+      this.syncBatch(null);
+      return;
+    }
+
+    try {
+      const active = await fetchActiveBatch({
+        summary: true,
+        platform: config.platform ?? "instagram",
+        accountId: config.accountId,
+      });
+
+      if (!active) {
+        this.syncBatch(null);
+        this.progressMap = {};
+        return;
+      }
+
+      const needsFull =
+        !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
+      const batch = needsFull ? await refreshUploadBatch(active.id) : active;
+      this.syncBatch(batch);
+
+      if (batch.upload_speed_mode) this.speedMode = batch.upload_speed_mode;
+      this.pausedByUser = Boolean(batch.paused);
+
+      const initialProgress: Record<string, number> = {};
+      for (const file of batch.upload_files ?? []) {
+        const uploaded = Number(file.bytes_uploaded ?? 0);
+        const total = Number(file.file_size);
+        if (uploaded > 0 && total > 0 && file.status !== "completed") {
+          initialProgress[file.id] = Math.round((uploaded / total) * 100);
+        }
+      }
+      this.progressMap = initialProgress;
+    } catch (error) {
+      this.setUserMessage(error, "Erro ao carregar lote da conta");
+    } finally {
+      this.emit();
+    }
   }
 
   registerBatchListener(listener: BatchListener | null) {
@@ -393,27 +462,31 @@ class UploadSessionStore {
     }
 
     try {
-      const active = await fetchActiveBatch({ summary: true });
-      if (active) {
-        const needsFull =
-          !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
-        this.batch = needsFull ? await refreshUploadBatch(active.id) : active;
+      if (this.config?.accountId) {
+        await this.reloadActiveBatchForAccount();
       } else {
-        this.batch = null;
-      }
-
-      if (this.batch?.upload_speed_mode) this.speedMode = this.batch.upload_speed_mode;
-      if (this.batch?.paused) this.pausedByUser = true;
-      if (this.batch?.upload_files?.length) {
-        const initialProgress: Record<string, number> = {};
-        for (const file of this.batch.upload_files) {
-          const uploaded = Number(file.bytes_uploaded ?? 0);
-          const total = Number(file.file_size);
-          if (uploaded > 0 && total > 0 && file.status !== "completed") {
-            initialProgress[file.id] = Math.round((uploaded / total) * 100);
-          }
+        const active = await fetchActiveBatch({ summary: true });
+        if (active) {
+          const needsFull =
+            !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
+          this.batch = needsFull ? await refreshUploadBatch(active.id) : active;
+        } else {
+          this.batch = null;
         }
-        this.progressMap = initialProgress;
+
+        if (this.batch?.upload_speed_mode) this.speedMode = this.batch.upload_speed_mode;
+        if (this.batch?.paused) this.pausedByUser = true;
+        if (this.batch?.upload_files?.length) {
+          const initialProgress: Record<string, number> = {};
+          for (const file of this.batch.upload_files) {
+            const uploaded = Number(file.bytes_uploaded ?? 0);
+            const total = Number(file.file_size);
+            if (uploaded > 0 && total > 0 && file.status !== "completed") {
+              initialProgress[file.id] = Math.round((uploaded / total) * 100);
+            }
+          }
+          this.progressMap = initialProgress;
+        }
       }
 
       if (this.batch && this.needsFileReselection()) {
@@ -1034,6 +1107,106 @@ class UploadSessionStore {
       for (const listener of this.batchListeners) listener(null);
     } catch (error) {
       this.message = error instanceof Error ? error.message : "Erro ao cancelar lote";
+    }
+    this.emit();
+  }
+
+  async clearAccountVideos(accountLabel = "conta") {
+    const config = this.config;
+    if (!config?.accountId) {
+      this.message = "Selecione uma conta antes de apagar.";
+      this.emit();
+      return;
+    }
+
+    if (this.running) {
+      this.message = "Aguarde o upload terminar ou pause antes de apagar os vídeos.";
+      this.emit();
+      return;
+    }
+
+    const platform = config.platform ?? "instagram";
+    if (
+      !window.confirm(
+        `Apagar todos os vídeos enviados de @${accountLabel}?\n\nIsso remove os arquivos do banco e do storage desta conta. Outras contas não serão afetadas.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      if (this.batch?.id) {
+        this.cancelledBatchIds.add(this.batch.id);
+        await clearManifestBatch(this.batch.id);
+      }
+
+      const result = await clearAccountUploadedVideosClient({
+        platform,
+        accountId: config.accountId,
+      });
+
+      this.engine?.stop();
+      this.batch = null;
+      this.progress = null;
+      this.progressMap = {};
+      this.running = false;
+      this.pausedByUser = false;
+      this.retrying = false;
+      this.validationPreview = null;
+      this.message = result.message;
+      for (const listener of this.batchListeners) listener(null);
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : "Erro ao apagar vídeos enviados";
+    }
+    this.emit();
+  }
+
+  async clearAccountBatches(accountLabel = "conta") {
+    const config = this.config;
+    if (!config?.accountId) {
+      this.message = "Selecione uma conta antes de apagar.";
+      this.emit();
+      return;
+    }
+
+    if (this.running) {
+      this.message = "Aguarde o upload terminar ou pause antes de apagar os lotes.";
+      this.emit();
+      return;
+    }
+
+    const platform = config.platform ?? "instagram";
+    if (
+      !window.confirm(
+        `Apagar todos os lotes de upload de @${accountLabel}?\n\nIsso remove o histórico de lotes desta conta do banco de dados. Os posts já agendados no calendário não serão afetados. Outras contas não serão alteradas.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      if (this.batch?.id) {
+        this.cancelledBatchIds.add(this.batch.id);
+        await clearManifestBatch(this.batch.id);
+      }
+
+      const result = await deleteAccountUploadBatchesClient({
+        platform,
+        accountId: config.accountId,
+      });
+
+      this.engine?.stop();
+      this.batch = null;
+      this.progress = null;
+      this.progressMap = {};
+      this.running = false;
+      this.pausedByUser = false;
+      this.retrying = false;
+      this.validationPreview = null;
+      this.message = result.message;
+      for (const listener of this.batchListeners) listener(null);
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : "Erro ao apagar lotes";
     }
     this.emit();
   }

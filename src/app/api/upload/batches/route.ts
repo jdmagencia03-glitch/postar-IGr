@@ -64,10 +64,17 @@ export async function GET(request: NextRequest) {
   }
 
   const summaryOnly = request.nextUrl.searchParams.get("summary") === "1";
+  const platformParam = request.nextUrl.searchParams.get("platform");
+  const accountId = request.nextUrl.searchParams.get("account_id");
+  const accountScope =
+    platformParam && accountId && (platformParam === "instagram" || platformParam === "tiktok")
+      ? { platform: platformParam as "instagram" | "tiktok", accountId }
+      : undefined;
+
   const supabase = createAdminClient();
   const batch = summaryOnly
-    ? await getActiveBatchSummaryForOwner(supabase, ownerId)
-    : await getActiveBatchForOwner(supabase, ownerId);
+    ? await getActiveBatchSummaryForOwner(supabase, ownerId, accountScope)
+    : await getActiveBatchForOwner(supabase, ownerId, accountScope);
 
   if (!batch) {
     return NextResponse.json({ batch: null });
