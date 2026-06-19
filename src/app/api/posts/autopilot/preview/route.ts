@@ -13,6 +13,7 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { parseCustomSchedulePayload, parseTimeSlots } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
+import { resolveDefaultInsertionStrategy } from "@/lib/schedule-insertion";
 import type { InstagramAccount, TikTokAccount } from "@/lib/types";
 import { z } from "zod";
 
@@ -34,6 +35,9 @@ const previewSchema = z
     custom_schedule: customScheduleSchema.optional(),
     batch_offset: z.number().int().min(0).optional(),
     total_count: z.number().int().min(1).optional(),
+    upload_batch_id: z.string().uuid().optional().nullable(),
+    schedule_strategy: z.enum(["continue", "new_plan", "fill_gaps"]).optional(),
+    batch_scheduled_count: z.number().int().min(0).optional(),
     product_id: z.string().uuid().optional().nullable(),
     campaign_id: z.string().uuid().optional().nullable(),
     content_objective: z.string().max(200).optional().nullable(),
@@ -153,6 +157,17 @@ export async function POST(request: NextRequest) {
       auto,
       platform,
       campaignContext: await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data),
+      supabase,
+      upload_batch_id: parsed.data.upload_batch_id,
+      schedule_strategy:
+        parsed.data.schedule_strategy ??
+        resolveDefaultInsertionStrategy({
+          uploadBatchId: parsed.data.upload_batch_id,
+          batchScheduledCount: parsed.data.batch_scheduled_count ?? 0,
+          accountPendingCount: 0,
+          mode: scheduleMode,
+        }),
+      client_batch_scheduled_count: parsed.data.batch_scheduled_count,
     });
 
     return NextResponse.json({

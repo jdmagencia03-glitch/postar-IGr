@@ -5,6 +5,8 @@ import { Check, Loader2, Plus, UserRound, X } from "lucide-react";
 import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 import { getCompletedUploadItems, SupremeUploadManager } from "@/components/upload/SupremeUploadManager";
 import { MultiplatformPreview } from "@/components/MultiplatformPreview";
+import { ScheduleInsertionOverview } from "@/components/ScheduleInsertionOverview";
+import { ScheduleStrategyPicker } from "@/components/ScheduleStrategyPicker";
 import { WarmupScheduleOverview } from "@/components/WarmupScheduleOverview";
 import {
   ProductCampaignSelector,
@@ -25,6 +27,7 @@ import {
   type AutoAccountProfile,
 } from "@/lib/account-warmup";
 import { formatApiError } from "@/lib/api-errors";
+import type { ScheduleInsertionPreview, ScheduleInsertionStrategy } from "@/lib/schedule-insertion";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots, countTodayAvailableSlots, buildEvenTimeSlotStrings, DEFAULT_CUSTOM_START_TIME, DEFAULT_CUSTOM_END_TIME, DEFAULT_CUSTOM_POSTS_PER_DAY } from "@/lib/smart-schedule";
 import type { InstagramAccount, SocialPlatform, TikTokAccount, UploadBatch } from "@/lib/types";
@@ -279,6 +282,10 @@ export function BulkUploadForm({
   const [previewWarmupBreakdown, setPreviewWarmupBreakdown] = useState<
     Array<{ day: number; dateLabel: string; posts: number; times: string[] }> | null
   >(null);
+  const [insertionPreview, setInsertionPreview] = useState<ScheduleInsertionPreview | null>(null);
+  const [scheduleStrategy, setScheduleStrategy] = useState<ScheduleInsertionStrategy>("continue");
+  const [showStrategyPicker, setShowStrategyPicker] = useState(false);
+  const [pendingSchedulePartial, setPendingSchedulePartial] = useState(false);
   const [confirmingPreview, setConfirmingPreview] = useState(false);
   const [campaignSelection, setCampaignSelection] = useState<ProductCampaignSelection>({
     productId: null,
@@ -537,6 +544,20 @@ export function BulkUploadForm({
     };
   }
 
+  function batchScheduledCount() {
+    return (
+      (liveBatch ?? activeBatch)?.upload_files?.filter((file) => file.removed).length ?? 0
+    );
+  }
+
+  function buildInsertionPayload() {
+    return {
+      upload_batch_id: activeBatch?.id ?? null,
+      schedule_strategy: scheduleStrategy,
+      batch_scheduled_count: batchScheduledCount(),
+    };
+  }
+
   async function confirmAutopilotBatch(params: {
     items: Array<{ media_urls: string[]; filename: string }>;
     captions: string[];
@@ -556,6 +577,7 @@ export function BulkUploadForm({
         schedule: params.schedule,
         ...buildSchedulePayload(),
         ...buildCampaignPayload(),
+        ...buildInsertionPayload(),
       }),
     });
     const autopilotData = await readJsonResponse(autopilotRes);
@@ -596,6 +618,7 @@ export function BulkUploadForm({
           total_count: total,
           ...buildSchedulePayload(),
           ...buildCampaignPayload(),
+          ...buildInsertionPayload(),
         }),
       });
 
@@ -608,6 +631,10 @@ export function BulkUploadForm({
         setCaptionSource("fallback");
       } else if (previewData.caption_source === "ai") {
         setCaptionSource("ai");
+      }
+
+      if (previewData.insertion_preview && batchIndex === 0) {
+        setInsertionPreview(previewData.insertion_preview as ScheduleInsertionPreview);
       }
 
       const entries = (previewData.preview as Array<{ caption: string }>) ?? [];
@@ -673,6 +700,7 @@ export function BulkUploadForm({
           total_count: items.length,
           ...buildSchedulePayload(),
           ...buildCampaignPayload(),
+          ...buildInsertionPayload(),
         }),
       });
 
@@ -693,6 +721,9 @@ export function BulkUploadForm({
             times: string[];
           }>,
         );
+      }
+      if (previewData.insertion_preview && batchIndex === 0) {
+        setInsertionPreview(previewData.insertion_preview as ScheduleInsertionPreview);
       }
     }
 
@@ -730,6 +761,7 @@ export function BulkUploadForm({
             })),
           })),
           ...buildCampaignPayload(),
+          upload_batch_id: activeBatch?.id ?? null,
         }),
       });
 
@@ -770,13 +802,8 @@ export function BulkUploadForm({
     );
   }
 
-  async function handleSchedule(partial = false) {
+  async function executeSchedule(partial = false) {
     if (!activeBatch || !destinationReady) return;
-
-    if (activeBatch.status === "scheduled" && !partial) {
-      setResult("Este lote já foi agendado. Inicie um novo upload para programar mais vídeos.");
-      return;
-    }
 
     const items = getCompletedUploadItems(liveBatch ?? activeBatch);
     if (!items.length) {
@@ -809,6 +836,7 @@ export function BulkUploadForm({
     setResult(null);
     setProgress(0);
     setCompletedSteps([]);
+    setInsertionPreview(null);
     markStep("videos");
 
     try {
@@ -855,6 +883,48 @@ export function BulkUploadForm({
     } finally {
       setScheduling(false);
       setLoadingStep("");
+    }
+  }
+
+  async function handleSchedule(partial = false) {
+    if (!activeBatch || !destinationReady) return;
+
+    if (activeBatch.status === "scheduled" && !partial) {
+      setResult("Este lote já foi agendado. Inicie um novo upload para programar mais vídeos.");
+      return;
+    }
+
+    try {
+      const contextRes = await apiFetch("/api/schedule/insertion-context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: uploadPlatform,
+          account_id: uploadAccountId,
+          upload_batch_id: activeBatch.id,
+          schedule_mode: effectiveScheduleMode,
+          batch_scheduled_count: batchScheduledCount(),
+        }),
+      });
+      const contextData = await readJsonResponse(contextRes);
+      if (!contextRes.ok) {
+        throw new Error(formatApiError(contextData.error) || "Falha ao analisar calendário");
+      }
+
+      const defaultStrategy = String(
+        contextData.default_strategy ?? "continue",
+      ) as ScheduleInsertionStrategy;
+      setScheduleStrategy(defaultStrategy);
+
+      if (contextData.show_strategy_picker) {
+        setPendingSchedulePartial(partial);
+        setShowStrategyPicker(true);
+        return;
+      }
+
+      await executeSchedule(partial);
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "Erro desconhecido");
     }
   }
   handleScheduleRef.current = handleSchedule;
@@ -1285,6 +1355,23 @@ export function BulkUploadForm({
         </p>
       )}
 
+      {showStrategyPicker && (
+        <ScheduleStrategyPicker
+          value={scheduleStrategy}
+          onChange={setScheduleStrategy}
+          loading={scheduling}
+          onCancel={() => {
+            setShowStrategyPicker(false);
+            setPendingSchedulePartial(false);
+          }}
+          onConfirm={async () => {
+            setShowStrategyPicker(false);
+            await executeSchedule(pendingSchedulePartial);
+            setPendingSchedulePartial(false);
+          }}
+        />
+      )}
+
       {previewVideos && (
         <MultiplatformPreview
           videos={previewVideos}
@@ -1294,16 +1381,21 @@ export function BulkUploadForm({
           loading={confirmingPreview}
           onCaptionChange={handlePreviewCaptionChange}
           warmupBreakdown={previewWarmupBreakdown}
+          insertionPreview={insertionPreview}
+          accountLabel={selectedUsername}
+          modeLabel={modeLabel(effectiveScheduleMode)}
           onCancel={() => {
             setPreviewVideos(null);
             setPreviewItems([]);
             setPreviewWarmupBreakdown(null);
+            setInsertionPreview(null);
           }}
           onConfirm={async () => {
             try {
               const totalCreated = await confirmMultiplatformPreview();
               setPreviewVideos(null);
               setPreviewWarmupBreakdown(null);
+              setInsertionPreview(null);
               const destLabel =
                 destinationMode === "both"
                   ? "em múltiplas plataformas"

@@ -41,6 +41,7 @@ const autopilotSchema = z
     product_id: z.string().uuid().optional().nullable(),
     campaign_id: z.string().uuid().optional().nullable(),
     content_objective: z.string().max(200).optional().nullable(),
+    upload_batch_id: z.string().uuid().optional().nullable(),
   })
   .refine((data) => Boolean(data.account_ids?.length || data.account_id), {
     message: "Selecione pelo menos uma conta",
@@ -118,6 +119,7 @@ export async function POST(request: NextRequest) {
         product_id: campaignFields.product_id,
         campaign_id: campaignFields.campaign_id,
         content_objective: campaignFields.content_objective,
+        upload_batch_id: parsed.data.upload_batch_id ?? null,
       }));
     });
 

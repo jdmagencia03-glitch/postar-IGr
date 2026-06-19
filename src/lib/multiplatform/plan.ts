@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { generateBulkCaptions } from "@/lib/ai/captions";
+import { groupWarmupScheduleByDay } from "@/lib/account-warmup";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import {
   TIKTOK_SCHEDULE_OFFSET_MINUTES,
@@ -7,14 +8,23 @@ import {
   type PublishTarget,
 } from "@/lib/multiplatform/types";
 import {
+  resolveScheduleInsertionPlan,
+  type ScheduleInsertionPreview,
+  type ScheduleInsertionStrategy,
+} from "@/lib/schedule-insertion";
+import {
   buildSmartScheduleSlice,
+  describeSmartSchedule,
   ensureFutureScheduleSlot,
+  estimateScheduleDuration,
+  resolveAutoPostsPerDay,
   type AutoScheduleOptions,
   type CustomScheduleOptions,
   type ScheduleMode,
   type WarmupScheduleOptions,
 } from "@/lib/smart-schedule";
 import type { InstagramAccount, SocialPlatform, TikTokAccount } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface MultiplatformPlanItem {
   media_urls: string[];
@@ -41,6 +51,54 @@ function scheduleForPlatform(baseSchedule: Date[], platform: SocialPlatform, now
   );
 }
 
+function buildScheduleMetadata(params: {
+  schedule: Date[];
+  mode: ScheduleMode;
+  totalCount: number;
+  warmup?: WarmupScheduleOptions;
+  custom?: CustomScheduleOptions;
+  auto?: AutoScheduleOptions;
+}) {
+  const postsPerDay =
+    params.mode === "custom"
+      ? (params.custom?.postsPerDay ?? 15)
+      : params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new")
+        ? 7
+        : resolveAutoPostsPerDay(params.totalCount, params.auto?.profile ?? "growing");
+
+  const duration =
+    params.mode === "warmup"
+      ? estimateScheduleDuration(params.totalCount, "warmup", params.warmup?.warmupDays)
+      : params.mode === "custom"
+        ? estimateScheduleDuration(params.totalCount, "custom", undefined, params.custom)
+        : estimateScheduleDuration(params.totalCount, "auto", undefined, undefined, params.auto);
+
+  const autoProfileLabel =
+    params.auto?.profile === "new"
+      ? "Conta nova · aquecimento 3→3→4→4→7"
+      : params.auto?.profile === "strong"
+        ? `${postsPerDay} posts/dia (conta forte)`
+        : params.auto?.profile === "growing"
+          ? `${postsPerDay} posts/dia (conta em crescimento)`
+          : `${postsPerDay} posts/dia`;
+
+  const schedule_summary =
+    params.mode === "warmup"
+      ? `Aquecimento 3→3→4→4→7 · ${describeSmartSchedule(params.schedule, "auto")}`
+      : params.mode === "custom"
+        ? `${postsPerDay} posts/dia · ${describeSmartSchedule(params.schedule, "auto")}`
+        : params.mode === "auto"
+          ? `${autoProfileLabel} · ${describeSmartSchedule(params.schedule, "auto")}`
+          : describeSmartSchedule(params.schedule, params.mode);
+
+  const warmup_breakdown =
+    params.mode === "warmup" || params.mode === "auto"
+      ? groupWarmupScheduleByDay(params.schedule)
+      : undefined;
+
+  return { postsPerDay, duration, schedule_summary, warmup_breakdown };
+}
+
 export async function buildMultiplatformPlan(params: {
   items: MultiplatformPlanItem[];
   targets: PublishTarget[];
@@ -54,27 +112,101 @@ export async function buildMultiplatformPlan(params: {
   auto?: AutoScheduleOptions;
   now?: Date;
   campaignContext?: import("@/lib/types").CampaignContext | null;
+  supabase?: SupabaseClient;
+  upload_batch_id?: string | null;
+  schedule_strategy?: ScheduleInsertionStrategy;
+  client_batch_scheduled_count?: number;
+  insertion_account_id?: string;
+  insertion_platform?: SocialPlatform;
 }) {
   const scheduleMode = params.schedule_mode ?? "auto";
   const totalCount = params.total_count ?? params.items.length;
   const batchOffset = params.batch_offset ?? 0;
   const now = params.now ?? new Date();
 
+  let schedule: Date[];
+  let insertionPreview: ScheduleInsertionPreview | undefined;
+  let postsPerDay: number;
+  let duration: ReturnType<typeof estimateScheduleDuration>;
+  let schedule_summary: string;
+  let warmup_breakdown:
+    | Array<{ day: number; dateLabel: string; posts: number; times: string[] }>
+    | undefined;
+
+  if (
+    params.supabase &&
+    params.schedule_strategy &&
+    params.insertion_account_id &&
+    params.insertion_platform
+  ) {
+    const supabase = params.supabase;
+    const insertionPlatform = params.insertion_platform;
+    const insertionAccountId = params.insertion_account_id;
+    const scheduleStrategy = params.schedule_strategy;
+
+    const insertion = await resolveScheduleInsertionPlan({
+      supabase,
+      platform: insertionPlatform,
+      accountId: insertionAccountId,
+      contentType: contentTypeForPlatform(insertionPlatform),
+      mode: scheduleMode,
+      strategy: scheduleStrategy,
+      newVideoCount: totalCount,
+      uploadBatchId: params.upload_batch_id,
+      clientBatchScheduledCount: params.client_batch_scheduled_count,
+      warmup: params.warmup,
+      auto: params.auto,
+      custom: params.custom,
+      now,
+    });
+
+    schedule = insertion.schedule.slice(batchOffset, batchOffset + params.items.length);
+    if (batchOffset === 0) {
+      insertionPreview = insertion.preview;
+    }
+
+    const meta = buildScheduleMetadata({
+      schedule: insertion.schedule,
+      mode: scheduleMode,
+      totalCount,
+      warmup: params.warmup,
+      custom: params.custom,
+      auto: params.auto,
+    });
+    postsPerDay = meta.postsPerDay;
+    duration = meta.duration;
+    schedule_summary = meta.schedule_summary;
+    warmup_breakdown = meta.warmup_breakdown;
+  } else {
+    const slice = buildSmartScheduleSlice({
+      mode: scheduleMode,
+      offset: batchOffset,
+      count: params.items.length,
+      totalCount,
+      warmup: params.warmup,
+      custom: params.custom,
+      auto: params.auto,
+      now,
+    });
+    schedule = slice.schedule;
+    postsPerDay = slice.postsPerDay;
+    duration = slice.duration;
+    schedule_summary = slice.schedule_summary;
+    warmup_breakdown = slice.warmup_breakdown;
+  }
+
+  if (schedule.length < params.items.length) {
+    if (scheduleMode === "today") {
+      throw new Error(
+        `Só há espaço para ${schedule.length} post(s) hoje. Use "Automático" para distribuir em vários dias.`,
+      );
+    }
+    throw new Error("Não foi possível calcular os horários. Tente com menos vídeos.");
+  }
+
   const filenames = params.items.map(
     (item, index) => item.filename ?? `video-${batchOffset + index + 1}.mp4`,
   );
-
-  const { schedule, postsPerDay, duration, schedule_summary, warmup_breakdown } =
-    buildSmartScheduleSlice({
-    mode: scheduleMode,
-    offset: batchOffset,
-    count: params.items.length,
-    totalCount,
-    warmup: params.warmup,
-    custom: params.custom,
-    auto: params.auto,
-    now,
-  });
 
   const captionsByPlatform = new Map<SocialPlatform, { captions: string[]; source: "ai" | "fallback" }>();
 
@@ -142,5 +274,6 @@ export async function buildMultiplatformPlan(params: {
     batch_offset: batchOffset,
     total_count: totalCount,
     total_posts: preview.reduce((sum, video) => sum + video.destinations.length, 0),
+    insertion_preview: insertionPreview,
   };
 }

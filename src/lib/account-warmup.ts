@@ -250,6 +250,8 @@ export function generateWarmupSchedule(params: {
   count: number;
   warmupDays?: number;
   warmupDayOffset?: number;
+  /** Ancora o Dia 1 do plano (continuação de lote/calendário). */
+  startDate?: Date;
   now?: Date;
 }) {
   const count = params.count;
@@ -258,14 +260,13 @@ export function generateWarmupSchedule(params: {
   const warmupDays = clampWarmupDays(params.warmupDays ?? DEFAULT_WARMUP_DAYS);
   const warmupDayOffset = params.warmupDayOffset ?? 0;
   const ramp = buildWarmupRamp(warmupDays);
-  const startDate = resolveStartDate(params.now);
+  const startDate = params.startDate ?? resolveStartDate(params.now);
 
   const schedule: Date[] = [];
   let calendarDay = 0;
 
   while (schedule.length < count) {
     const absoluteWarmupDay = warmupDayOffset + calendarDay;
-    const inRamp = absoluteWarmupDay < ramp.length;
     const slotTimes = slotsForAbsoluteDay(absoluteWarmupDay, ramp.length);
 
     for (const { hour, minute } of slotTimes) {
@@ -282,6 +283,21 @@ export function generateWarmupSchedule(params: {
   }
 
   return schedule;
+}
+
+/** Gera apenas os slots novos, continuando a sequência do plano (ex.: 10 já agendados → offset 10). */
+export function generateWarmupScheduleSlice(params: {
+  count: number;
+  planSlotOffset?: number;
+  warmupDays?: number;
+  warmupDayOffset?: number;
+  startDate?: Date;
+  now?: Date;
+}) {
+  const offset = params.planSlotOffset ?? 0;
+  const total = offset + params.count;
+  const full = generateWarmupSchedule({ ...params, count: total });
+  return full.slice(offset);
 }
 
 export function groupWarmupScheduleByDay(

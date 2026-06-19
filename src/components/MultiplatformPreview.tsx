@@ -2,7 +2,9 @@
 
 import { formatDateTime } from "@/lib/utils";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
+import type { ScheduleInsertionPreview } from "@/lib/schedule-insertion";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
+import { ScheduleInsertionOverview } from "@/components/ScheduleInsertionOverview";
 import { WarmupScheduleOverview } from "@/components/WarmupScheduleOverview";
 import { Clock, FileVideo, X } from "lucide-react";
 
@@ -19,6 +21,9 @@ interface Props {
   captionSource: "ai" | "fallback";
   totalPosts: number;
   warmupBreakdown?: WarmupDayPreview[] | null;
+  insertionPreview?: ScheduleInsertionPreview | null;
+  accountLabel?: string;
+  modeLabel?: string;
   loading?: boolean;
   onCaptionChange: (videoIndex: number, platform: "instagram" | "tiktok", caption: string) => void;
   onConfirm: () => void;
@@ -35,6 +40,9 @@ export function MultiplatformPreview({
   captionSource,
   totalPosts,
   warmupBreakdown,
+  insertionPreview,
+  accountLabel,
+  modeLabel,
   loading,
   onCaptionChange,
   onConfirm,
@@ -65,7 +73,14 @@ export function MultiplatformPreview({
         </div>
 
         <div className="space-y-4 overflow-y-auto px-5 py-4">
-          {warmupBreakdown?.length ? (
+          {insertionPreview ? (
+            <ScheduleInsertionOverview
+              preview={insertionPreview}
+              accountLabel={accountLabel}
+              modeLabel={modeLabel}
+            />
+          ) : null}
+          {warmupBreakdown?.length && !insertionPreview ? (
             <WarmupScheduleOverview
               scheduledDays={warmupBreakdown}
               title="📅 Cronograma previsto"
