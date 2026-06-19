@@ -89,6 +89,7 @@ export async function POST(request: NextRequest) {
     schedule_mode: scheduleMode === "warmup" ? "auto" : scheduleMode,
     custom_schedule: parsed.data.custom_schedule,
     campaignContext: await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data),
+    supabase,
   });
 
   return NextResponse.json({

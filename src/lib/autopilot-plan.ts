@@ -1,19 +1,15 @@
 import { generateBulkCaptions } from "@/lib/ai/captions";
 import {
-  DEFAULT_WARMUP_DAYS,
-  generateWarmupSchedule,
-  getWarmupDayOffset,
   groupWarmupScheduleByDay,
 } from "@/lib/account-warmup";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
-  resolveScheduleInsertionPlan,
+  buildScheduleWithInsertion,
   type ScheduleInsertionPreview,
   type ScheduleInsertionStrategy,
 } from "@/lib/schedule-insertion";
 import {
-  buildSmartScheduleSlice,
   describeSmartSchedule,
   estimateScheduleDuration,
   resolveAutoPostsPerDay,
@@ -96,79 +92,57 @@ export async function buildAutopilotPlan(params: {
     (item, index) => item.filename ?? `video-${batchOffset + index + 1}.mp4`,
   );
 
-  let schedule: Date[];
-  let insertionPreview: ScheduleInsertionPreview | undefined;
-  let postsPerDay: number;
-  let duration: ReturnType<typeof estimateScheduleDuration>;
-  let schedule_summary: string;
-  let warmup_breakdown:
-    | Array<{ day: number; dateLabel: string; posts: number; times: string[] }>
-    | undefined;
-
-  if (params.supabase && params.schedule_strategy) {
-    const insertion = await resolveScheduleInsertionPlan({
-      supabase: params.supabase,
-      platform,
-      accountId: params.accountId,
-      contentType: contentTypeForPlatform(platform),
-      mode: scheduleMode,
-      strategy: params.schedule_strategy,
-      newVideoCount: totalCount,
-      uploadBatchId: params.upload_batch_id,
-      clientBatchScheduledCount: params.client_batch_scheduled_count,
-      warmup: params.warmup,
-      auto: params.auto,
-      custom: params.custom,
-    });
-
-    schedule = insertion.schedule.slice(batchOffset, batchOffset + params.items.length);
-    if (batchOffset === 0) {
-      insertionPreview = insertion.preview;
-    }
-
-    postsPerDay =
-      scheduleMode === "custom"
-        ? (params.custom?.postsPerDay ?? 15)
-        : scheduleMode === "warmup" || (scheduleMode === "auto" && params.auto?.profile === "new")
-          ? 7
-          : resolveAutoPostsPerDay(totalCount, params.auto?.profile ?? "growing");
-
-    duration =
-      scheduleMode === "warmup"
-        ? estimateScheduleDuration(totalCount, "warmup", params.warmup?.warmupDays)
-        : scheduleMode === "custom"
-          ? estimateScheduleDuration(totalCount, "custom", undefined, params.custom)
-          : estimateScheduleDuration(totalCount, "auto", undefined, undefined, params.auto);
-
-    schedule_summary =
-      scheduleMode === "warmup"
-        ? `Aquecimento 3→3→4→4→7 · ${describeSmartSchedule(insertion.schedule, "auto")}`
-        : scheduleMode === "custom"
-          ? `${postsPerDay} posts/dia · ${describeSmartSchedule(insertion.schedule, "auto")}`
-          : scheduleMode === "auto"
-            ? `${postsPerDay} posts/dia · ${describeSmartSchedule(insertion.schedule, "auto")}`
-            : describeSmartSchedule(insertion.schedule, scheduleMode);
-
-    warmup_breakdown =
-      scheduleMode === "warmup" || scheduleMode === "auto"
-        ? groupWarmupScheduleByDay(insertion.schedule)
-        : undefined;
-  } else {
-    const slice = buildSmartScheduleSlice({
-      mode: scheduleMode,
-      offset: batchOffset,
-      count: params.items.length,
-      totalCount,
-      warmup: params.warmup,
-      custom: params.custom,
-      auto: params.auto,
-    });
-    schedule = slice.schedule;
-    postsPerDay = slice.postsPerDay;
-    duration = slice.duration;
-    schedule_summary = slice.schedule_summary;
-    warmup_breakdown = slice.warmup_breakdown;
+  if (!params.supabase) {
+    throw new Error("Contexto de encaixe no calendário é obrigatório para gerar o plano.");
   }
+
+  const insertion = await buildScheduleWithInsertion({
+    supabase: params.supabase,
+    platform,
+    accountId: params.accountId,
+    contentType: contentTypeForPlatform(platform),
+    mode: scheduleMode,
+    strategy: params.schedule_strategy,
+    count: params.items.length,
+    batchOffset,
+    totalCount,
+    uploadBatchId: params.upload_batch_id,
+    clientBatchScheduledCount: params.client_batch_scheduled_count,
+    warmup: params.warmup,
+    auto: params.auto,
+    custom: params.custom,
+  });
+
+  const schedule = insertion.schedule;
+  const insertionPreview = batchOffset === 0 ? insertion.preview : undefined;
+
+  const postsPerDay =
+    scheduleMode === "custom"
+      ? (params.custom?.postsPerDay ?? 15)
+      : scheduleMode === "warmup" || (scheduleMode === "auto" && params.auto?.profile === "new")
+        ? 7
+        : resolveAutoPostsPerDay(totalCount, params.auto?.profile ?? "growing");
+
+  const duration =
+    scheduleMode === "warmup"
+      ? estimateScheduleDuration(totalCount, "warmup", params.warmup?.warmupDays)
+      : scheduleMode === "custom"
+        ? estimateScheduleDuration(totalCount, "custom", undefined, params.custom)
+        : estimateScheduleDuration(totalCount, "auto", undefined, undefined, params.auto);
+
+  const schedule_summary =
+    scheduleMode === "warmup"
+      ? `Aquecimento 3→3→4→4→7 · ${describeSmartSchedule(insertion.totalSchedule, "auto")}`
+      : scheduleMode === "custom"
+        ? `${postsPerDay} posts/dia · ${describeSmartSchedule(insertion.totalSchedule, "auto")}`
+        : scheduleMode === "auto"
+          ? `${postsPerDay} posts/dia · ${describeSmartSchedule(insertion.totalSchedule, "auto")}`
+          : describeSmartSchedule(insertion.totalSchedule, scheduleMode);
+
+  const warmup_breakdown =
+    scheduleMode === "warmup" || scheduleMode === "auto"
+      ? groupWarmupScheduleByDay(insertion.totalSchedule)
+      : undefined;
 
   if (schedule.length < params.items.length) {
     if (scheduleMode === "today") {
@@ -215,40 +189,4 @@ export async function buildAutopilotPlan(params: {
     warmup: params.warmup,
     insertion_preview: insertionPreview,
   };
-}
-
-export function buildAccountWarmupSchedule(
-  account: InstagramAccount,
-  videoCount: number,
-  now = new Date(),
-) {
-  const warmupDays = account.warmup_days ?? DEFAULT_WARMUP_DAYS;
-  const offset = getWarmupDayOffset(account.warmup_started_at ?? account.created_at, now);
-
-  return generateWarmupSchedule({
-    count: videoCount,
-    warmupDays,
-    warmupDayOffset: offset,
-    now,
-  });
-}
-
-export function resolveScheduleForAccount(params: {
-  account: InstagramAccount;
-  videoCount: number;
-  scheduleMode: ScheduleMode;
-  now?: Date;
-}) {
-  if (params.scheduleMode === "warmup") {
-    return buildAccountWarmupSchedule(params.account, params.videoCount, params.now);
-  }
-
-  const { schedule } = buildSmartScheduleSlice({
-    mode: params.scheduleMode,
-    offset: 0,
-    count: params.videoCount,
-    totalCount: params.videoCount,
-  });
-
-  return schedule;
 }

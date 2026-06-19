@@ -840,44 +840,10 @@ export function BulkUploadForm({
     markStep("videos");
 
     try {
-      if (
-        destinationMode === "both" ||
-        destinationMode === "tiktok" ||
-        effectiveScheduleMode === "warmup" ||
-        effectiveScheduleMode === "auto"
-      ) {
-        await runMultiplatformPreview(items);
-        setScheduling(false);
-        setLoadingStep("");
-        return;
-      }
-
-      const { totalCreated, lastScheduleSummary } = await runAutopilot(items);
-
-      if (activeBatch?.id) {
-        await markBatchFilesScheduled(
-          activeBatch.id,
-          items.flatMap((item) => item.media_urls),
-        );
-      }
-
-      const successMessage = partial
-        ? `${totalCreated} publicações agendadas agora. Continue enviando o restante depois. ${lastScheduleSummary}`
-        : `${totalCreated} publicações agendadas. ${lastScheduleSummary}`;
-      setResult(successMessage);
-
-      if (!partial) {
-        const query = new URLSearchParams({
-          platform: uploadPlatform,
-          account: uploadPlatform === "tiktok" ? selectedTiktokId : selectedInstagramId,
-        });
-        window.setTimeout(() => {
-          window.location.href =
-            uploadPlatform === "tiktok"
-              ? `/dashboard/tiktok?${query.toString()}`
-              : `/dashboard/reports?${query.toString()}`;
-        }, 1200);
-      }
+      await runMultiplatformPreview(items);
+      setScheduling(false);
+      setLoadingStep("");
+      return;
     } catch (error) {
       setResult(error instanceof Error ? error.message : "Erro desconhecido");
     } finally {
@@ -1071,6 +1037,7 @@ export function BulkUploadForm({
           <div className="mt-3">
             <SupremeUploadManager
               accountId={uploadAccountId}
+              accountLabel={selectedUsername}
               platform={uploadPlatform}
               scheduleMode={scheduleMode}
               customSchedule={customSchedulePayload}

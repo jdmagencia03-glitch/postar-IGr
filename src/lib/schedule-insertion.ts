@@ -148,7 +148,7 @@ export function resolveDefaultInsertionStrategy(params: {
   if (params.batchScheduledCount > 0) {
     return "continue";
   }
-  if (params.accountPendingCount > 0 && (params.mode === "warmup" || params.mode === "auto")) {
+  if (params.accountPendingCount > 0) {
     return "continue";
   }
   return "new_plan";
@@ -277,10 +277,11 @@ function buildCustomContinuationSchedule(params: {
   custom: CustomScheduleOptions;
   existing: ExistingScheduledPostRef[];
   strategy: ScheduleInsertionStrategy;
+  continuing: boolean;
   now: Date;
 }) {
   const { postsPerDay, timeSlots } = params.custom;
-  if (params.strategy === "fill_gaps") {
+  if (params.strategy === "fill_gaps" || (params.continuing && params.existing.length > 0)) {
     return buildFillGapsSchedule({
       count: params.count,
       timeSlots,
@@ -293,7 +294,13 @@ function buildCustomContinuationSchedule(params: {
   const totalVideos = params.planSlotOffset + params.count;
   const { schedule: full } = generateCustomSchedule(totalVideos, params.custom, params.now);
   const sliced = full.slice(params.planSlotOffset);
-  return sanitizeScheduleDates(sliced, params.now);
+  return applySlotsAgainstCalendar({
+    schedule: sliced,
+    existing: params.existing,
+    postsPerDay,
+    timeSlots,
+    now: params.now,
+  }).schedule;
 }
 
 function buildFillGapsSchedule(params: {
@@ -367,11 +374,116 @@ function buildTodayContinuation(params: {
 }) {
   const todayKey = dateKey(params.now.toISOString());
   const existingToday = params.existing.filter((p) => dateKey(p.scheduled_at) === todayKey).length;
-  const available = generateSmartScheduleToday(params.count + existingToday, params.now);
-  return available.slice(existingToday);
+  const maxToday = generateSmartScheduleToday(500, params.now).length;
+  const schedule: Date[] = [];
+
+  const todayCapacity = Math.max(0, maxToday - existingToday);
+  if (todayCapacity > 0) {
+    const todaySlots = generateSmartScheduleToday(
+      Math.min(params.count, todayCapacity) + existingToday,
+      params.now,
+    ).slice(existingToday);
+    schedule.push(...todaySlots);
+  }
+
+  if (schedule.length < params.count) {
+    const virtualExisting: ExistingScheduledPostRef[] = [
+      ...params.existing,
+      ...schedule.map((slot, index) => ({
+        id: `today-new-${index}`,
+        scheduled_at: slot.toISOString(),
+        status: "pending",
+      })),
+    ];
+    const overflow = buildFillGapsSchedule({
+      count: params.count - schedule.length,
+      timeSlots: buildAutoTimeSlots(Math.min(params.count, 10)),
+      postsPerDay: 10,
+      existing: virtualExisting,
+      now: params.now,
+    });
+    schedule.push(...overflow);
+  }
+
+  return sanitizeScheduleDates(schedule, params.now);
 }
 
-function dailyLimitForMode(planDayIndex: number, mode: ScheduleMode, auto?: AutoScheduleOptions) {
+function applySlotsAgainstCalendar(params: {
+  schedule: Date[];
+  existing: ExistingScheduledPostRef[];
+  postsPerDay: number;
+  timeSlots: Array<{ hour: number; minute: number }>;
+  now: Date;
+}) {
+  const occupancy = new Map<string, number>();
+  const occupiedTimes = new Set<string>();
+
+  for (const post of params.existing) {
+    const key = dateKey(post.scheduled_at);
+    occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
+    occupiedTimes.add(`${key}T${formatTime(post.scheduled_at)}`);
+  }
+
+  const result: Date[] = [];
+
+  for (const rawSlot of params.schedule) {
+    let candidate = ensureFutureScheduleSlot(rawSlot, params.now);
+    const originalLabel = `${formatDateLabel(candidate.toISOString())} ${formatTime(candidate.toISOString())}`;
+    let slotIndex = 0;
+    let dayOffset = 0;
+
+    for (let attempt = 0; attempt < 500; attempt++) {
+      const parts = getAppDateParts(params.now);
+      const candidateDay = new Date(
+        Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset),
+      );
+      const slot = params.timeSlots[slotIndex % params.timeSlots.length];
+      candidate = ensureFutureScheduleSlot(
+        new Date(
+          candidateDay.getTime() + slot.hour * 3_600_000 + slot.minute * 60_000,
+        ),
+        params.now,
+      );
+
+      const key = dateKey(candidate.toISOString());
+      const timeKey = `${key}T${formatTime(candidate.toISOString())}`;
+      const dayCount = occupancy.get(key) ?? 0;
+
+      if (dayCount >= params.postsPerDay || occupiedTimes.has(timeKey)) {
+        slotIndex++;
+        if (slotIndex % params.timeSlots.length === 0) dayOffset++;
+        continue;
+      }
+      break;
+    }
+
+    const movedLabel = `${formatDateLabel(candidate.toISOString())} ${formatTime(candidate.toISOString())}`;
+    if (movedLabel !== originalLabel) {
+      logInsertion("schedule-conflict", { from: originalLabel, to: movedLabel });
+    }
+
+    result.push(candidate);
+    const key = dateKey(candidate.toISOString());
+    occupiedTimes.add(`${key}T${formatTime(candidate.toISOString())}`);
+    occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
+    slotIndex++;
+  }
+
+  return { schedule: result, warnings: [] as string[] };
+}
+
+function dailyLimitForMode(
+  planDayIndex: number,
+  mode: ScheduleMode,
+  auto?: AutoScheduleOptions,
+  custom?: CustomScheduleOptions,
+) {
+  if (mode === "custom") {
+    return custom?.postsPerDay ?? 15;
+  }
+  if (mode === "today") {
+    return generateSmartScheduleToday(500, new Date()).length;
+  }
   if (mode === "warmup" || (mode === "auto" && auto?.profile === "new")) {
     return warmupDailyLimit(planDayIndex);
   }
@@ -408,7 +520,7 @@ function buildPriorFilledPlanDays(params: {
   for (let i = 0; i < sorted.length && i + 1 < params.firstPlanDay; i++) {
     const planDay = i + 1;
     const entry = sorted[i];
-    const limit = dailyLimitForMode(planDay - 1, params.mode, params.auto);
+    const limit = dailyLimitForMode(planDay - 1, params.mode, params.auto, undefined);
     rows.push({
       planDay,
       dateLabel: entry.label,
@@ -428,11 +540,13 @@ function buildInsertionDayPreview(params: {
   existing: ExistingScheduledPostRef[];
   mode: ScheduleMode;
   auto?: AutoScheduleOptions;
+  custom?: CustomScheduleOptions;
   planSlotOffset: number;
   continuing: boolean;
   strategy: ScheduleInsertionStrategy;
+  extraWarnings?: string[];
 }): ScheduleInsertionPreview {
-  const warnings: string[] = [];
+  const warnings: string[] = [...(params.extraWarnings ?? [])];
   const existingByDate = new Map<string, number>();
   for (const post of params.existing) {
     const key = dateKey(post.scheduled_at);
@@ -461,7 +575,7 @@ function buildInsertionDayPreview(params: {
 
   const addingDays: ScheduleInsertionDayRow[] = breakdown.map((day, index) => {
     const planDay = firstPlanDay + index;
-    const limit = dailyLimitForMode(planDay - 1, params.mode, params.auto);
+    const limit = dailyLimitForMode(planDay - 1, params.mode, params.auto, params.custom);
 
     const sampleSlot = params.schedule.find(
       (slot) => formatDateLabel(slot.toISOString()) === day.dateLabel,
@@ -554,6 +668,7 @@ export async function resolveScheduleInsertionPlan(
   });
 
   let schedule: Date[] = [];
+  const extraWarnings: string[] = [];
 
   if (params.mode === "today") {
     schedule = buildTodayContinuation({
@@ -561,6 +676,11 @@ export async function resolveScheduleInsertionPlan(
       existing,
       now,
     });
+    if (existing.filter((p) => dateKey(p.scheduled_at) === dateKey(now.toISOString())).length > 0) {
+      extraWarnings.push(
+        "Alguns horários de hoje já estavam ocupados. Os excedentes foram movidos para os próximos dias.",
+      );
+    }
   } else if (params.mode === "custom" && params.custom) {
     schedule = buildCustomContinuationSchedule({
       count: params.newVideoCount,
@@ -568,18 +688,40 @@ export async function resolveScheduleInsertionPlan(
       custom: params.custom,
       existing,
       strategy: params.strategy,
+      continuing: continuing && params.strategy !== "new_plan",
       now,
     });
   } else if (params.mode === "warmup" || params.mode === "auto") {
-    schedule = buildWarmupOrAutoNewSchedule({
-      count: params.newVideoCount,
-      planSlotOffset: params.strategy === "new_plan" ? 0 : planSlotOffset,
-      anchorStartDate: params.strategy === "new_plan" ? undefined : anchorStartDate,
-      warmup: params.warmup,
-      auto: params.auto,
-      mode: params.mode,
-      now,
-    });
+    const useAutoFillGaps =
+      params.mode === "auto" &&
+      params.strategy !== "new_plan" &&
+      batchScheduled === 0 &&
+      existing.length > 0 &&
+      params.auto?.profile !== "new";
+
+    if (useAutoFillGaps) {
+      const postsPerDay = resolveAutoPostsPerDay(
+        params.newVideoCount,
+        params.auto?.profile ?? "growing",
+      );
+      schedule = buildFillGapsSchedule({
+        count: params.newVideoCount,
+        timeSlots: buildAutoTimeSlots(postsPerDay),
+        postsPerDay,
+        existing,
+        now,
+      });
+    } else {
+      schedule = buildWarmupOrAutoNewSchedule({
+        count: params.newVideoCount,
+        planSlotOffset: params.strategy === "new_plan" ? 0 : planSlotOffset,
+        anchorStartDate: params.strategy === "new_plan" ? undefined : anchorStartDate,
+        warmup: params.warmup,
+        auto: params.auto,
+        mode: params.mode,
+        now,
+      });
+    }
   } else {
     schedule = buildWarmupOrAutoNewSchedule({
       count: params.newVideoCount,
@@ -597,9 +739,11 @@ export async function resolveScheduleInsertionPlan(
     existing,
     mode: params.mode,
     auto: params.auto,
+    custom: params.custom,
     planSlotOffset: params.strategy === "new_plan" ? 0 : planSlotOffset,
     continuing: params.strategy !== "new_plan" && continuing,
     strategy: params.strategy,
+    extraWarnings,
   });
 
   logInsertion("plan_ready", {
@@ -610,6 +754,103 @@ export async function resolveScheduleInsertionPlan(
   });
 
   return { schedule, preview };
+}
+
+export interface BuildScheduleWithInsertionParams extends Omit<
+  ResolveScheduleInsertionParams,
+  "newVideoCount" | "strategy"
+> {
+  count: number;
+  batchOffset?: number;
+  totalCount?: number;
+  strategy?: ScheduleInsertionStrategy;
+}
+
+/** Camada central usada por todos os modos antes de preview/confirm. */
+export async function buildScheduleWithInsertion(
+  params: BuildScheduleWithInsertionParams,
+) {
+  const totalCount = params.totalCount ?? params.count;
+  const batchOffset = params.batchOffset ?? 0;
+  const existing = await fetchPendingPostsForAccount(
+    params.supabase,
+    params.platform,
+    params.accountId,
+    params.contentType,
+  );
+  const batchScheduled = Math.max(
+    countBatchScheduledPosts(existing, params.uploadBatchId),
+    params.clientBatchScheduledCount ?? 0,
+  );
+  const strategy =
+    params.strategy ??
+    resolveDefaultInsertionStrategy({
+      uploadBatchId: params.uploadBatchId,
+      batchScheduledCount: batchScheduled,
+      accountPendingCount: existing.length,
+      mode: params.mode,
+    });
+
+  const result = await resolveScheduleInsertionPlan({
+    ...params,
+    strategy,
+    newVideoCount: totalCount,
+  });
+
+  const schedule = result.schedule.slice(batchOffset, batchOffset + params.count);
+  return {
+    ...result,
+    schedule,
+    strategy,
+    totalSchedule: result.schedule,
+  };
+}
+
+export async function resolveRescheduleSlot(params: {
+  supabase: SupabaseClient;
+  platform: SocialPlatform;
+  accountId: string;
+  contentType: ContentType;
+  requestedAt: string;
+  excludePostId?: string;
+  now?: Date;
+}) {
+  const now = params.now ?? new Date();
+  const existing = await fetchPendingPostsForAccount(
+    params.supabase,
+    params.platform,
+    params.accountId,
+    params.contentType,
+  ).then((posts) => posts.filter((post) => post.id !== params.excludePostId));
+
+  const postsPerDay = 15;
+  const timeSlots = buildAutoTimeSlots(10);
+  const requested = ensureFutureScheduleSlot(new Date(params.requestedAt), now);
+  const { schedule } = applySlotsAgainstCalendar({
+    schedule: [requested],
+    existing,
+    postsPerDay,
+    timeSlots,
+    now,
+  });
+
+  const resolved = schedule[0] ?? requested;
+  const moved = resolved.getTime() !== requested.getTime();
+  logInsertion("schedule-reschedule", {
+    platform: params.platform,
+    accountId: params.accountId,
+    requested: requested.toISOString(),
+    resolved: resolved.toISOString(),
+    moved,
+  });
+
+  return {
+    scheduled_at: resolved.toISOString(),
+    moved,
+    warning: moved
+      ? "O horário escolhido conflitava com o calendário e foi ajustado automaticamente."
+      : undefined,
+  };
 }
 
 export const SCHEDULE_STRATEGY_LABELS: Record<

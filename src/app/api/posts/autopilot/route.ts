@@ -1,6 +1,6 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
-import { resolveAutopilotAccounts, resolveScheduleForAccount } from "@/lib/autopilot-plan";
+import { resolveAutopilotAccounts } from "@/lib/autopilot-plan";
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
@@ -92,18 +92,11 @@ export async function POST(request: NextRequest) {
     }
 
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
-    const usePerAccountSchedule = scheduleMode === "warmup" && platform === "instagram";
     const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
     const campaignFields = mergeCampaignFields(campaignContext);
 
     const rows = validAccounts.flatMap((account) => {
-      const schedule = usePerAccountSchedule
-        ? resolveScheduleForAccount({
-            account: account as import("@/lib/types").InstagramAccount,
-            videoCount: parsed.data.items.length,
-            scheduleMode,
-          })
-        : parsed.data.schedule.map((slot) => new Date(slot));
+      const schedule = parsed.data.schedule.map((slot) => new Date(slot));
 
       return parsed.data.items.map((item, index) => ({
         platform,

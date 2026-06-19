@@ -1,6 +1,13 @@
-import { buildSmartScheduleSlice, parseCustomSchedulePayload, type ScheduleMode } from "@/lib/smart-schedule";
 import { generateStoryTexts } from "@/lib/stories/generate-texts";
 import type { StoryPreviewEntry } from "@/lib/stories/types";
+import {
+  buildScheduleWithInsertion,
+  type ScheduleInsertionPreview,
+  type ScheduleInsertionStrategy,
+} from "@/lib/schedule-insertion";
+import { parseCustomSchedulePayload, describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
+import { contentTypeForPlatform } from "@/lib/content-types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function buildStorySchedulePlan(params: {
   items: Array<{ media_url: string; filename?: string }>;
@@ -18,19 +25,27 @@ export async function buildStorySchedulePlan(params: {
     end_time?: string;
   };
   campaignContext?: import("@/lib/types").CampaignContext | null;
+  supabase: SupabaseClient;
+  schedule_strategy?: ScheduleInsertionStrategy;
 }) {
   const filenames = params.items.map((item, index) => item.filename || `story-${index + 1}`);
+  const scheduleMode = params.schedule_mode ?? "auto";
   const customOptions =
-    params.schedule_mode === "custom" && params.custom_schedule
+    scheduleMode === "custom" && params.custom_schedule
       ? parseCustomSchedulePayload(params.custom_schedule)
       : undefined;
 
-  const { schedule, schedule_summary } = buildSmartScheduleSlice({
-    mode: params.schedule_mode ?? "auto",
-    offset: 0,
+  const insertion = await buildScheduleWithInsertion({
+    supabase: params.supabase,
+    platform: "instagram",
+    accountId: params.accountId,
+    contentType: contentTypeForPlatform("instagram"),
+    mode: scheduleMode === "warmup" ? "auto" : scheduleMode,
+    strategy: params.schedule_strategy,
     count: params.items.length,
     totalCount: params.items.length,
     custom: customOptions,
+    auto: scheduleMode === "warmup" ? { profile: "new" } : undefined,
   });
 
   const { texts, niche, source } = await generateStoryTexts({
@@ -49,7 +64,7 @@ export async function buildStorySchedulePlan(params: {
     index,
     filename: filenames[index],
     media_url: item.media_url,
-    scheduled_at: schedule[index].toISOString(),
+    scheduled_at: insertion.schedule[index].toISOString(),
     story_text: texts[index] ?? "",
     story_cta: params.storyCta,
     story_link: params.storyLink ?? null,
@@ -58,8 +73,12 @@ export async function buildStorySchedulePlan(params: {
 
   return {
     preview,
-    schedule: schedule.map((slot) => slot.toISOString()),
-    schedule_summary,
+    schedule: insertion.schedule.map((slot) => slot.toISOString()),
+    schedule_summary: `${insertion.preview.summaryLabel} · ${describeSmartSchedule(
+      insertion.totalSchedule,
+      scheduleMode === "today" ? "today" : "auto",
+    )}`,
+    insertion_preview: insertion.preview as ScheduleInsertionPreview,
     niche,
     text_source: source,
   };

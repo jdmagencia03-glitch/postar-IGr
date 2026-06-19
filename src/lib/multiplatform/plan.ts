@@ -8,12 +8,11 @@ import {
   type PublishTarget,
 } from "@/lib/multiplatform/types";
 import {
-  resolveScheduleInsertionPlan,
+  buildScheduleWithInsertion,
   type ScheduleInsertionPreview,
   type ScheduleInsertionStrategy,
 } from "@/lib/schedule-insertion";
 import {
-  buildSmartScheduleSlice,
   describeSmartSchedule,
   ensureFutureScheduleSlot,
   estimateScheduleDuration,
@@ -124,76 +123,40 @@ export async function buildMultiplatformPlan(params: {
   const batchOffset = params.batch_offset ?? 0;
   const now = params.now ?? new Date();
 
-  let schedule: Date[];
-  let insertionPreview: ScheduleInsertionPreview | undefined;
-  let postsPerDay: number;
-  let duration: ReturnType<typeof estimateScheduleDuration>;
-  let schedule_summary: string;
-  let warmup_breakdown:
-    | Array<{ day: number; dateLabel: string; posts: number; times: string[] }>
-    | undefined;
-
-  if (
-    params.supabase &&
-    params.schedule_strategy &&
-    params.insertion_account_id &&
-    params.insertion_platform
-  ) {
-    const supabase = params.supabase;
-    const insertionPlatform = params.insertion_platform;
-    const insertionAccountId = params.insertion_account_id;
-    const scheduleStrategy = params.schedule_strategy;
-
-    const insertion = await resolveScheduleInsertionPlan({
-      supabase,
-      platform: insertionPlatform,
-      accountId: insertionAccountId,
-      contentType: contentTypeForPlatform(insertionPlatform),
-      mode: scheduleMode,
-      strategy: scheduleStrategy,
-      newVideoCount: totalCount,
-      uploadBatchId: params.upload_batch_id,
-      clientBatchScheduledCount: params.client_batch_scheduled_count,
-      warmup: params.warmup,
-      auto: params.auto,
-      custom: params.custom,
-      now,
-    });
-
-    schedule = insertion.schedule.slice(batchOffset, batchOffset + params.items.length);
-    if (batchOffset === 0) {
-      insertionPreview = insertion.preview;
-    }
-
-    const meta = buildScheduleMetadata({
-      schedule: insertion.schedule,
-      mode: scheduleMode,
-      totalCount,
-      warmup: params.warmup,
-      custom: params.custom,
-      auto: params.auto,
-    });
-    postsPerDay = meta.postsPerDay;
-    duration = meta.duration;
-    schedule_summary = meta.schedule_summary;
-    warmup_breakdown = meta.warmup_breakdown;
-  } else {
-    const slice = buildSmartScheduleSlice({
-      mode: scheduleMode,
-      offset: batchOffset,
-      count: params.items.length,
-      totalCount,
-      warmup: params.warmup,
-      custom: params.custom,
-      auto: params.auto,
-      now,
-    });
-    schedule = slice.schedule;
-    postsPerDay = slice.postsPerDay;
-    duration = slice.duration;
-    schedule_summary = slice.schedule_summary;
-    warmup_breakdown = slice.warmup_breakdown;
+  if (!params.supabase || !params.insertion_account_id || !params.insertion_platform) {
+    throw new Error("Contexto de encaixe no calendário é obrigatório para gerar o plano.");
   }
+
+  const insertion = await buildScheduleWithInsertion({
+    supabase: params.supabase,
+    platform: params.insertion_platform,
+    accountId: params.insertion_account_id,
+    contentType: contentTypeForPlatform(params.insertion_platform),
+    mode: scheduleMode,
+    strategy: params.schedule_strategy,
+    count: params.items.length,
+    batchOffset,
+    totalCount,
+    uploadBatchId: params.upload_batch_id,
+    clientBatchScheduledCount: params.client_batch_scheduled_count,
+    warmup: params.warmup,
+    auto: params.auto,
+    custom: params.custom,
+    now,
+  });
+
+  const schedule = insertion.schedule;
+  const insertionPreview = batchOffset === 0 ? insertion.preview : undefined;
+
+  const meta = buildScheduleMetadata({
+    schedule: insertion.totalSchedule,
+    mode: scheduleMode,
+    totalCount,
+    warmup: params.warmup,
+    custom: params.custom,
+    auto: params.auto,
+  });
+  const { postsPerDay, duration, schedule_summary, warmup_breakdown } = meta;
 
   if (schedule.length < params.items.length) {
     if (scheduleMode === "today") {

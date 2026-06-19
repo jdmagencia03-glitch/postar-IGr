@@ -80,7 +80,7 @@ export function MultiplatformPreview({
               modeLabel={modeLabel}
             />
           ) : null}
-          {warmupBreakdown?.length && !insertionPreview ? (
+          {warmupBreakdown?.length ? (
             <WarmupScheduleOverview
               scheduledDays={warmupBreakdown}
               title="📅 Cronograma previsto"

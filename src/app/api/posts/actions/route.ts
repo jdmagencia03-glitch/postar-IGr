@@ -9,6 +9,8 @@ import {
   getOwnerPostById,
 } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { contentTypeForPlatform } from "@/lib/content-types";
+import { resolveRescheduleSlot } from "@/lib/schedule-insertion";
 import { ensureFutureScheduleSlot, sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
@@ -102,12 +104,32 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const nextTime = sanitizeScheduledAt(new Date(baseTime + index * 60_000).toISOString());
+      const platform = post.platform ?? "instagram";
+      const accountId =
+        platform === "tiktok" ? post.tiktok_account_id : post.account_id;
+      if (!accountId) {
+        results.push({ id: postId, ok: false, error: "Conta do post não encontrada" });
+        continue;
+      }
+
+      const resolved = await resolveRescheduleSlot({
+        supabase,
+        platform,
+        accountId,
+        contentType: post.content_type ?? contentTypeForPlatform(platform),
+        requestedAt: new Date(baseTime + index * 60_000).toISOString(),
+        excludePostId: postId,
+      });
+
       const { error } = await supabase
         .from("scheduled_posts")
-        .update({ scheduled_at: nextTime })
+        .update({ scheduled_at: sanitizeScheduledAt(resolved.scheduled_at) })
         .eq("id", postId);
-      results.push({ id: postId, ok: !error, error: error?.message });
+      results.push({
+        id: postId,
+        ok: !error,
+        error: error?.message ?? resolved.warning,
+      });
       continue;
     }
 
