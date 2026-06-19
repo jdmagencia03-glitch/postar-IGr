@@ -34,6 +34,7 @@ export interface UploadEngineCallbacks {
   onFileRecovered?: (fileId: string) => void;
   onComplete?: (batch: UploadBatch) => void;
   onError?: (message: string, fileId?: string) => void;
+  onEngineIdle?: (batch: UploadBatch) => void;
 }
 
 export class UploadEngine {
@@ -71,6 +72,16 @@ export class UploadEngine {
 
   getConcurrency() {
     return this.targetConcurrency;
+  }
+
+  abortFile(fileId: string) {
+    this.abortControllers.get(fileId)?.abort();
+  }
+
+  abortAll() {
+    for (const controller of this.abortControllers.values()) {
+      controller.abort();
+    }
   }
 
   pause() {
@@ -145,7 +156,13 @@ export class UploadEngine {
     return positive.reduce((sum, value) => sum + value, 0) / positive.length;
   }
 
-  private sumLiveBytes(batch: UploadBatch) {
+  private batchBytesTotal(batch: UploadBatch) {
+    return (batch.upload_files ?? [])
+      .filter((file) => !file.removed)
+      .reduce((sum, file) => sum + Number(file.file_size), 0);
+  }
+
+  private sumPersistedAndLiveBytes(batch: UploadBatch) {
     let total = 0;
     for (const record of batch.upload_files ?? []) {
       if (record.removed) continue;
@@ -182,7 +199,9 @@ export class UploadEngine {
       .map(([id, value]) => ({ id, filename: value.filename, percent: value.percent }));
 
     const speedBps = this.getSpeedBps();
-    const remaining = Math.max(0, this.bytesTotal - this.bytesUploaded);
+    const batchTotal = this.batchBytesTotal(batch);
+    const loadedBytes = this.sumPersistedAndLiveBytes(batch);
+    const remaining = Math.max(0, batchTotal - loadedBytes);
     const etaSeconds = speedBps > 0 ? remaining / speedBps : 0;
 
     this.callbacks.onProgress?.({
@@ -190,10 +209,10 @@ export class UploadEngine {
       failed,
       uploading,
       waiting,
-      total,
-      overallPercent: this.bytesTotal ? Math.round((this.bytesUploaded / this.bytesTotal) * 100) : 0,
-      bytesUploaded: this.bytesUploaded,
-      bytesTotal: this.bytesTotal,
+      total: files.length,
+      overallPercent: batchTotal ? Math.min(100, Math.round((loadedBytes / batchTotal) * 100)) : 0,
+      bytesUploaded: loadedBytes,
+      bytesTotal: batchTotal,
       speedBps,
       etaSeconds,
       activeFiles,
@@ -234,9 +253,11 @@ export class UploadEngine {
     const fileProgress = new Map<string, { percent: number; filename: string }>();
     this.targetConcurrency = Math.max(1, this.fileConcurrency);
     const pendingQueue = [...records];
+    const requeueCounts = new Map<string, number>();
     this.workerPromises = [];
+    let workerSeq = 0;
 
-    const uploadOne = async (record: UploadBatchFile): Promise<UploadOutcome> => {
+    const uploadOne = async (record: UploadBatchFile, workerId: number): Promise<UploadOutcome> => {
       const file = fileMap.get(record.id);
       if (!file) return "done";
 
@@ -252,6 +273,14 @@ export class UploadEngine {
         await this.waitWhilePaused();
         if (this.stopped) return "stopped";
 
+        console.info("[upload-worker-start]", {
+          batchId: batch.id,
+          fileId: currentRecord.id,
+          fileName: currentRecord.filename,
+          workerId,
+          status: currentRecord.status,
+        });
+
         const patch = await uploadBatchFile({
           batch,
           record: currentRecord,
@@ -264,7 +293,7 @@ export class UploadEngine {
             });
 
             this.liveLoadedBytes.set(currentRecord.id, loaded);
-            this.updateSpeed(this.sumLiveBytes(batch));
+            this.updateSpeed(this.sumPersistedAndLiveBytes(batch));
             this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
             this.emitProgress(batch, fileProgress);
           },
@@ -303,6 +332,11 @@ export class UploadEngine {
         const updatedRecord = batch.upload_files?.find((item) => item.id === currentRecord.id);
 
         if (!updatedRecord || updatedRecord.status === "failed") {
+          console.info("[upload-worker-failed]", {
+            batchId: batch.id,
+            fileId: currentRecord.id,
+            workerId,
+          });
           this.callbacks.onBatchUpdate?.(batch);
           this.emitProgress(batch, fileProgress);
           this.callbacks.onError?.(
@@ -313,9 +347,31 @@ export class UploadEngine {
         }
 
         if (updatedRecord.status !== "completed") {
+          const requeues = requeueCounts.get(currentRecord.id) ?? 0;
+          if (requeues < 1 && !this.stopped) {
+            requeueCounts.set(currentRecord.id, requeues + 1);
+            console.info("[upload-worker-requeue]", {
+              batchId: batch.id,
+              fileId: currentRecord.id,
+              status: updatedRecord.status,
+              workerId,
+            });
+            return "requeue";
+          }
+          console.info("[upload-worker-abort]", {
+            batchId: batch.id,
+            fileId: currentRecord.id,
+            status: updatedRecord.status,
+            workerId,
+          });
           return "done";
         }
 
+        console.info("[upload-worker-completed]", {
+          batchId: batch.id,
+          fileId: currentRecord.id,
+          workerId,
+        });
         fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
         this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
         this.callbacks.onBatchUpdate?.(batch);
@@ -326,9 +382,21 @@ export class UploadEngine {
           return "requeue";
         }
         if (!controller.signal.aborted) {
+          console.info("[upload-worker-stalled]", {
+            batchId: batch.id,
+            fileId: currentRecord.id,
+            workerId,
+            error: error instanceof Error ? error.message : String(error),
+          });
           this.callbacks.onError?.(
             error instanceof Error ? error.message : `Falha ao enviar ${currentRecord.filename}`,
+            currentRecord.id,
           );
+          const requeues = requeueCounts.get(currentRecord.id) ?? 0;
+          if (requeues < 1 && !this.stopped) {
+            requeueCounts.set(currentRecord.id, requeues + 1);
+            return "requeue";
+          }
         }
         return "done";
       } finally {
@@ -337,6 +405,7 @@ export class UploadEngine {
     };
 
     const worker = async () => {
+      const workerId = ++workerSeq;
       while (!this.stopped) {
         if (this.paused) {
           await this.waitWhilePaused();
@@ -346,7 +415,15 @@ export class UploadEngine {
         const record = pendingQueue.shift();
         if (!record) return;
 
-        const outcome = await uploadOne(record);
+        console.info("[upload-queue-next]", {
+          batchId: batch.id,
+          fileId: record.id,
+          fileName: record.filename,
+          workerId,
+          queueRemaining: pendingQueue.length,
+        });
+
+        const outcome = await uploadOne(record, workerId);
         if (outcome === "requeue" && !this.stopped) {
           pendingQueue.unshift(record);
         }
@@ -368,6 +445,7 @@ export class UploadEngine {
     await Promise.all(this.workerPromises);
     this.spawnWorker = null;
     this.callbacks.onBatchUpdate?.(batch);
+    this.callbacks.onEngineIdle?.(batch);
 
     const activeFiles = (batch.upload_files ?? []).filter(
       (file) =>

@@ -33,6 +33,18 @@ export const UPLOAD_STALL_TIMEOUT_MS = readPositiveInt(
   120_000,
 );
 
+/** Sem novo arquivo concluído neste intervalo → lote considerado travado. */
+export const UPLOAD_BATCH_STALL_TIMEOUT_MS = readPositiveInt(
+  process.env.UPLOAD_BATCH_STALL_TIMEOUT_MS,
+  180_000,
+);
+
+/** Intervalo do watchdog global do lote (ms). */
+export const UPLOAD_BATCH_WATCHDOG_INTERVAL_MS = readPositiveInt(
+  process.env.UPLOAD_BATCH_WATCHDOG_INTERVAL_MS,
+  30_000,
+);
+
 /** Timeout absoluto por arquivo (fallback para conexões zumbis). */
 export const UPLOAD_FILE_TIMEOUT_MS = readPositiveInt(
   process.env.UPLOAD_FILE_TIMEOUT_MS,

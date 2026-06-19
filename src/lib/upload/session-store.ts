@@ -35,7 +35,7 @@ import {
   isTerminalRemoteBatchStatus,
   reconcileUploadBatchState,
 } from "@/lib/upload/batch-status";
-import { getSpeedPresets, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+import { getSpeedPresets, UPLOAD_BATCH_STALL_TIMEOUT_MS, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
@@ -93,7 +93,13 @@ class UploadSessionStore {
   private pollingLifecycleAttached = false;
   private lastProgressAt = 0;
   private lastProgressBytes = 0;
+  private lastCompletedCount = 0;
+  private lastBatchAdvanceAt = 0;
+  private batchStalled = false;
+  private concurrencyReduced = false;
+  private stallRecoveryCount = 0;
   private recoveringFromStall = false;
+  private batchWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
   private static readonly AUTO_RETRY_RESET_MS = 60_000;
   private static readonly STALL_CHECK_INTERVAL_MS = 10_000;
@@ -111,6 +117,164 @@ class UploadSessionStore {
     this.lastProgressAt = Date.now();
     if (bytesUploaded != null) {
       this.lastProgressBytes = bytesUploaded;
+    }
+  }
+
+  private touchBatchAdvance(completed: number) {
+    if (completed > this.lastCompletedCount) {
+      this.lastCompletedCount = completed;
+      this.lastBatchAdvanceAt = Date.now();
+      this.batchStalled = false;
+      this.autoRetryPass = 0;
+      this.touchProgress();
+      this.logUpload("batch_advance", { completed });
+    }
+  }
+
+  private countCompletedFiles(batch: UploadBatch | null = this.batch) {
+    return (
+      batch?.upload_files?.filter((file) => !file.removed && file.status === "completed").length ??
+      batch?.completed_files ??
+      0
+    );
+  }
+
+  private pendingWorkInSession(batch: UploadBatch | null = this.batch) {
+    return (
+      batch?.upload_files?.filter(
+        (file) =>
+          !file.removed &&
+          file.status !== "completed" &&
+          file.status !== "failed" &&
+          this.lastFileMap.has(file.id),
+      ) ?? []
+    );
+  }
+
+  private startBatchWatchdog() {
+    this.stopBatchWatchdog();
+    this.lastCompletedCount = this.countCompletedFiles();
+    this.lastBatchAdvanceAt = Date.now();
+
+    this.batchWatchdogTimer = setInterval(() => {
+      void this.checkBatchHealth();
+    }, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS);
+  }
+
+  private stopBatchWatchdog() {
+    if (this.batchWatchdogTimer) {
+      clearInterval(this.batchWatchdogTimer);
+      this.batchWatchdogTimer = null;
+    }
+  }
+
+  private async checkBatchHealth() {
+    if (!this.batch || this.batch.status === "ready" || this.batch.status === "cancelled") {
+      return;
+    }
+    if (this.pausedByUser || this.recoveringFromStall) return;
+
+    const completed = this.progress?.completed ?? this.countCompletedFiles();
+    this.touchBatchAdvance(completed);
+
+    const pendingWork = this.pendingWorkInSession();
+    if (!pendingWork.length) {
+      this.batchStalled = false;
+      return;
+    }
+
+    const idleMs = Date.now() - this.lastBatchAdvanceAt;
+    const retryingOnly =
+      this.hasActiveFileRetry() &&
+      idleMs < UPLOAD_BATCH_STALL_TIMEOUT_MS + UPLOAD_STALL_TIMEOUT_MS;
+
+    if (idleMs < UPLOAD_BATCH_STALL_TIMEOUT_MS || retryingOnly) {
+      return;
+    }
+
+    this.batchStalled = true;
+    this.logUpload("batch_stalled", {
+      batchId: this.batch.id,
+      idleMs,
+      completed,
+      pending: pendingWork.length,
+      running: this.running,
+    });
+
+    if (this.running) {
+      await this.recoverFromStall(idleMs);
+      return;
+    }
+
+    if (this.lastFileMap.size > 0) {
+      await this.recoverBatchUpload("batch_watchdog");
+    }
+  }
+
+  private reduceConcurrencyOnInstability() {
+    const order: UploadSpeedMode[] = ["turbo", "normal", "economy"];
+    const idx = order.indexOf(this.speedMode);
+    if (idx >= order.length - 1) return;
+
+    const next = order[idx + 1]!;
+    this.stallRecoveryCount += 1;
+    this.concurrencyReduced = true;
+    this.logUpload("concurrency_reduced", {
+      from: this.speedMode,
+      to: next,
+      stallRecoveryCount: this.stallRecoveryCount,
+    });
+    this.setSpeedMode(next);
+    this.message =
+      "Detectamos instabilidade no upload. Reduzimos temporariamente a velocidade para manter o envio estável.";
+  }
+
+  async recoverBatchUpload(reason = "manual_recover") {
+    if (!this.batch || this.pausedByUser || this.recoveringFromStall) return;
+
+    this.recoveringFromStall = true;
+    this.batchStalled = true;
+    this.message = "Upload travado detectado. Tentando recuperar…";
+    this.logUpload("batch_recover_start", { batchId: this.batch.id, reason });
+    this.emit();
+
+    const batchId = this.batch.id;
+    const fileMap = this.lastFileMap;
+
+    this.engine?.abortAll();
+    this.engine?.stop();
+    this.engine = null;
+    this.running = false;
+    this.engineStarting = false;
+    this.fileRuntime = {};
+    this.stopRetryCountdown();
+
+    try {
+      if (reason !== "manual_recover" && this.stallRecoveryCount < 3) {
+        this.reduceConcurrencyOnInstability();
+      }
+
+      await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
+      const refreshed = await refreshUploadBatch(batchId);
+      if (refreshed.status === "ready" || refreshed.status === "cancelled") {
+        this.syncBatch(refreshed);
+        return;
+      }
+
+      this.syncBatch(refreshed);
+      this.lastBatchAdvanceAt = Date.now();
+      this.autoRetryPass = 0;
+
+      if (fileMap.size > 0) {
+        this.message = "Continuando envio…";
+        this.emit();
+        await this.autoContinuePendingIfNeeded(batchId, fileMap, reason);
+      }
+    } finally {
+      this.recoveringFromStall = false;
+      this.batchStalled = false;
+      this.logUpload("batch_recovered", { batchId, reason });
+      this.emit();
     }
   }
 
@@ -207,19 +371,17 @@ class UploadSessionStore {
     this.touchProgress(this.progress?.bytesUploaded ?? 0);
 
     this.stallWatchdogTimer = setInterval(() => {
-      if (
-        !this.running ||
-        this.pausedByUser ||
-        this.retrying ||
-        this.recoveringFromStall ||
-        this.hasActiveFileRetry()
-      ) {
+      if (!this.running || this.pausedByUser || this.recoveringFromStall) {
         return;
       }
 
       const idleMs = Date.now() - this.lastProgressAt;
-      if (idleMs >= UPLOAD_STALL_TIMEOUT_MS) {
-        void this.recoverFromStall(idleMs);
+      const batchIdleMs = Date.now() - this.lastBatchAdvanceAt;
+      const byteStall = idleMs >= UPLOAD_STALL_TIMEOUT_MS;
+      const batchStall = batchIdleMs >= UPLOAD_BATCH_STALL_TIMEOUT_MS;
+
+      if (byteStall || batchStall) {
+        void this.recoverFromStall(Math.max(idleMs, batchIdleMs));
       }
     }, UploadSessionStore.STALL_CHECK_INTERVAL_MS);
   }
@@ -235,6 +397,7 @@ class UploadSessionStore {
     if (!this.running || this.pausedByUser || this.recoveringFromStall || !this.batch) return;
 
     this.recoveringFromStall = true;
+    this.batchStalled = true;
     this.logUpload("stall_detected", {
       batchId: this.batch.id,
       idleMs,
@@ -246,33 +409,49 @@ class UploadSessionStore {
     const batchId = this.batch.id;
     const fileMap = this.lastFileMap;
 
+    this.engine?.abortAll();
     this.engine?.stop();
     this.engine = null;
     this.running = false;
     this.engineStarting = false;
+    this.fileRuntime = {};
+    this.stopRetryCountdown();
     this.emit();
 
     try {
+      this.reduceConcurrencyOnInstability();
       if (fileMap.size > 0 && !this.pausedByUser) {
-        await this.resetStalledUploadingFiles(batchId);
+        await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
         this.message = "Continuando envio…";
         this.emit();
+        this.autoRetryPass = 0;
         await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
       }
     } finally {
       this.recoveringFromStall = false;
+      this.batchStalled = false;
       this.emit();
     }
   }
 
-  private async resetStalledUploadingFiles(batchId: string) {
+  private async resetStalledUploadingFiles(
+    batchId: string,
+    options: { includeRetrying?: boolean } = {},
+  ) {
     const refreshed = await refreshUploadBatch(batchId);
     const now = Date.now();
     const stuck =
       refreshed.upload_files?.filter((file) => {
-        if (file.removed || file.status !== "uploading") return false;
-        const idleMs = now - new Date(file.updated_at).getTime();
-        return idleMs >= UPLOAD_STALL_TIMEOUT_MS;
+        if (file.removed) return false;
+        if (file.status === "uploading") {
+          const idleMs = now - new Date(file.updated_at).getTime();
+          return idleMs >= UPLOAD_STALL_TIMEOUT_MS;
+        }
+        if (options.includeRetrying && file.status === "retrying") {
+          const idleMs = now - new Date(file.updated_at).getTime();
+          return idleMs >= UPLOAD_STALL_TIMEOUT_MS;
+        }
+        return false;
       }) ?? [];
     if (!stuck.length) return;
 
@@ -382,6 +561,8 @@ class UploadSessionStore {
       ),
       engineStarting: this.engineStarting,
       recoveringFromStall: this.recoveringFromStall,
+      batchStalled: this.batchStalled,
+      concurrencyReduced: this.concurrencyReduced,
     };
   }
 
@@ -693,12 +874,19 @@ class UploadSessionStore {
   }
 
   private syncBatch(next: UploadBatch | null) {
+    if (next) {
+      this.touchBatchAdvance(this.countCompletedFiles(next));
+    }
     this.batch = next;
     for (const listener of this.batchListeners) listener(next);
     this.emit();
     if (next) {
       this.ensurePolling();
+      if (next.status !== "ready" && next.status !== "cancelled" && !this.batchWatchdogTimer) {
+        this.startBatchWatchdog();
+      }
     } else {
+      this.stopBatchWatchdog();
       this.stopPolling();
     }
   }
@@ -713,6 +901,7 @@ class UploadSessionStore {
 
   private scheduleProgressUpdate = (next: UploadEngineProgress) => {
     this.pendingProgress = next;
+    this.touchBatchAdvance(next.completed);
     if (next.bytesUploaded > this.lastProgressBytes) {
       this.touchProgress(next.bytesUploaded);
     }
@@ -996,6 +1185,23 @@ class UploadSessionStore {
               : `Não foi possível continuar este vídeo. Você pode tentar reenviar apenas os arquivos com erro.`;
           this.emit();
         },
+        onEngineIdle: async (latest) => {
+          const orphaned =
+            latest.upload_files?.filter(
+              (file) =>
+                !file.removed &&
+                (file.status === "uploading" || file.status === "retrying") &&
+                fileMap.has(file.id),
+            ) ?? [];
+          if (orphaned.length && !this.pausedByUser && !this.cancelledBatchIds.has(batchId)) {
+            this.logUpload("engine_idle_orphans", {
+              batchId,
+              count: orphaned.length,
+              fileIds: orphaned.map((file) => file.id),
+            });
+            await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
+          }
+        },
       });
 
       this.engine = engine;
@@ -1009,8 +1215,9 @@ class UploadSessionStore {
       this.emit();
 
       await this.persistManifest(currentBatch, fileMap);
-      await this.resetStalledUploadingFiles(batchId);
+      await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
       this.startStallWatchdog();
+      this.startBatchWatchdog();
 
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
     } catch (error) {
@@ -1025,8 +1232,6 @@ class UploadSessionStore {
       this.engineStarting = false;
       this.emit();
     }
-
-    // Retentativa e continuação automática só após liberar engineStarting (evita deadlock).
     if (!this.pausedByUser && !this.cancelledBatchIds.has(batchId)) {
       await this.tryAutoRetryAfterRun(batchId, fileMap);
       await this.autoContinuePendingIfNeeded(batchId, fileMap, "engine_finished");

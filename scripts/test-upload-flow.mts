@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   batchNeedsPolling,
+  computeBatchOverallPercent,
   mergeUploadProgressPercent,
   reconcileUploadBatchState,
   type UploadBatchRemoteStatus,
@@ -149,6 +150,23 @@ function makeBatch(fileCount: number, completed = 2): UploadBatch {
 {
   assert.equal(mergeUploadProgressPercent(45, 30, "uploading", "uploading"), 45);
   assert.equal(mergeUploadProgressPercent(45, 100, "uploading", "completed"), 100);
+}
+
+// 6) Percentual geral nunca passa de 100%
+{
+  const percent = computeBatchOverallPercent({
+    batch: {
+      upload_files: [
+        { id: "a", status: "completed", file_size: 100, removed: false },
+        { id: "b", status: "uploading", file_size: 100, removed: false, bytes_uploaded: 50 },
+      ],
+    } as never,
+    progress: { overallPercent: 223, bytesUploaded: 20e9, bytesTotal: 9e9 } as never,
+    progressMap: { b: 50 },
+    completedCount: 1,
+    totalCount: 2,
+  });
+  assert.equal(percent <= 100, true);
 }
 
 console.log("OK — testes do fluxo de upload passaram");

@@ -166,9 +166,8 @@ export function computeBatchOverallPercent(params: {
 
   const fromBytes = bytesTotal > 0 ? Math.round((loaded / bytesTotal) * 100) : 0;
   const fromCompleted = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-  const fromEngine = progress?.overallPercent ?? 0;
 
-  return Math.max(fromEngine, fromBytes, fromCompleted);
+  return Math.min(100, Math.max(fromBytes, fromCompleted));
 }
 
 /** Aplica estado remoto na store local, criando novas referências. */

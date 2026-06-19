@@ -144,6 +144,7 @@ export function SupremeUploadManager({
         fileRuntime: session.fileRuntime,
         engineStarting: session.engineStarting,
         recoveringFromStall: session.recoveringFromStall,
+        batchStalled: session.batchStalled,
       }),
     [
       session.batch,
@@ -158,6 +159,7 @@ export function SupremeUploadManager({
       session.fileRuntime,
       session.engineStarting,
       session.recoveringFromStall,
+      session.batchStalled,
     ],
   );
 
@@ -424,6 +426,16 @@ export function SupremeUploadManager({
                   <Upload size={14} /> Selecionar arquivos
                 </button>
               )}
+              {view.showRecoverButton && (
+                <button
+                  type="button"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                  disabled={session.resuming || session.recoveringFromStall}
+                  onClick={() => void uploadSessionStore.recoverBatchUpload("manual_recover")}
+                >
+                  Recuperar upload
+                </button>
+              )}
               {view.canRetryFailed && (
                 <button
                   type="button"
@@ -484,7 +496,7 @@ export function SupremeUploadManager({
         <div className="flex items-center gap-2 text-sm text-ig-primary">
           <Loader2 size={16} className="animate-spin" />
           {view.isActivelyUploading
-            ? session.recoveringFromStall
+            ? session.recoveringFromStall || session.batchStalled
               ? "Recuperando envio…"
               : `Enviando (${speedPresets[session.speedMode].label})…`
             : hasFileRetry || session.retrying
@@ -493,6 +505,12 @@ export function SupremeUploadManager({
                 ? "Reconhecendo arquivos..."
                 : `Enviando (${speedPresets[session.speedMode].label})…`}
         </div>
+      )}
+
+      {session.concurrencyReduced && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Velocidade reduzida automaticamente por instabilidade na conexão.
+        </p>
       )}
 
       {session.message && !hasFileRetry && !session.retrying && (

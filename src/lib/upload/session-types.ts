@@ -72,4 +72,6 @@ export type UploadSessionSnapshot = {
   needsFileReselection: boolean;
   engineStarting: boolean;
   recoveringFromStall: boolean;
+  batchStalled: boolean;
+  concurrencyReduced: boolean;
 };

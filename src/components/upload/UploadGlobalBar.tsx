@@ -112,6 +112,7 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
       fileRuntime: session.fileRuntime,
       engineStarting: session.engineStarting,
       recoveringFromStall: session.recoveringFromStall,
+      batchStalled: session.batchStalled,
     });
   }, [session]);
 
@@ -157,8 +158,11 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                       : `@${username} · ${speedPresets[session.speedMode].label}`}
               </p>
               <p className="mt-1 text-xs text-ig-muted">
-                {view.completedCount} enviados · {view.remainingCount} faltando · {view.overallPercent}%
-                {view.failedCount > 0 ? ` · ${view.failedCount} erro(s)` : ""}
+                {view.completedCount} enviados
+                {view.failedCount > 0 ? ` · ${view.failedCount} falharam` : ""}
+                {view.queueRemaining > 0 ? ` · ${view.queueRemaining} pendentes` : ""}
+                {" · "}
+                {view.overallPercent}%
               </p>
             </div>
 
@@ -190,6 +194,15 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                 >
                   <Upload size={14} />
                   Selecionar
+                </button>
+              )}
+              {view.showRecoverButton && !session.running && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg bg-ig-primary px-2.5 py-1.5 text-xs text-ig-on-primary"
+                  onClick={() => void uploadSessionStore.recoverBatchUpload("manual_recover")}
+                >
+                  Recuperar
                 </button>
               )}
               <Link

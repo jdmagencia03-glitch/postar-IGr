@@ -21,6 +21,7 @@ export function deriveUploadSessionView(params: {
   fileRuntime?: Record<string, { status?: string }>;
   engineStarting?: boolean;
   recoveringFromStall?: boolean;
+  batchStalled?: boolean;
 }) {
   const {
     batch,
@@ -35,6 +36,7 @@ export function deriveUploadSessionView(params: {
     fileRuntime = {},
     engineStarting = false,
     recoveringFromStall = false,
+    batchStalled = false,
   } = params;
   const files = getUploadFiles(batch);
   const pendingFiles = files
@@ -140,7 +142,20 @@ export function deriveUploadSessionView(params: {
     batch && batch.status !== "ready" && !running && !retrying && failedCount > 0,
   );
 
-  const statusLabel = retrying || recoveringFromStall
+  const queueRemaining = Math.max(0, totalCount - completedCount - failedCount);
+
+  const showRecoverButton = Boolean(
+    batch &&
+      batch.status !== "ready" &&
+      !pausedByUser &&
+      canResumeWithoutPicker &&
+      queueRemaining > 0 &&
+      (batchStalled ||
+        recoveringFromStall ||
+        (awaitingAutoRecovery && !isActivelyUploading && !hasFileRetry)),
+  );
+
+  const statusLabel = retrying || recoveringFromStall || batchStalled
     ? "reconectando"
     : engineStarting || running
       ? "enviando"
@@ -185,12 +200,15 @@ export function deriveUploadSessionView(params: {
     currentUploadName,
     statusLabel,
     showGlobalBar,
-    remainingCount: Math.max(0, totalCount - completedCount),
+    remainingCount: queueRemaining,
+    queueRemaining,
+    showRecoverButton,
     retrying,
     pausedByUser,
     canRetryFailed,
     isActivelyUploading,
     engineStarting,
     recoveringFromStall,
+    batchStalled,
   };
 }
