@@ -6,6 +6,9 @@
     "src/app/api/cron/comment-dm/route.ts": {
       "maxDuration": 120
     },
+    "src/app/api/cron/schedule-jobs/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/upload/route.ts": {
       "maxDuration": 300
     },

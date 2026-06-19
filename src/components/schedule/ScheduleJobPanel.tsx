@@ -6,9 +6,11 @@ import { Check, ChevronDown, ChevronUp, Loader2, RefreshCw } from "lucide-react"
 import type { ScheduleJobStatusResponse } from "@/lib/schedule-jobs/types";
 import {
   fetchScheduleJobStatus,
+  pollScheduleJobUntilDone,
   resumeScheduleJobApi,
   runScheduleJobUntilDone,
 } from "@/lib/schedule-jobs/client";
+import { SCHEDULE_JOB_FORCE_THRESHOLD } from "@/lib/schedule-jobs/constants";
 
 type Props = {
   jobId: string;
@@ -72,30 +74,40 @@ export function ScheduleJobPanel({
         Boolean((err as Error & { savedProgress?: boolean }).savedProgress);
       setError(
         saved
-          ? "A conexão caiu durante o agendamento. O progresso foi salvo — você pode retomar sem duplicar posts."
-          : err instanceof Error
+          ? err instanceof Error
             ? err.message
+            : "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento."
+          : err instanceof Error
+            ? err.message.includes("Failed to fetch")
+              ? "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento."
+              : err.message
             : "Erro no agendamento",
       );
       await refresh().catch(() => undefined);
     } finally {
       setRunning(false);
     }
-  }, [jobId, onComplete, onBatchRefresh, refresh]);
+  }, [jobId, onComplete, onBatchRefresh, refresh, videoCount]);
 
   const handleResume = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
       await resumeScheduleJobApi(jobId);
-      await runJob();
+      await runScheduleJobUntilDone(jobId, setStatus);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao retomar");
+      setError(
+        err instanceof Error
+          ? err.message.includes("Failed to fetch")
+            ? "A conexão caiu. O progresso foi salvo — tente Retomar novamente em alguns segundos."
+            : err.message
+          : "Falha ao retomar",
+      );
       await refresh().catch(() => undefined);
     } finally {
       setRunning(false);
     }
-  }, [jobId, refresh, runJob]);
+  }, [jobId, refresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,18 +118,47 @@ export function ScheduleJobPanel({
         setStatus(initial);
         if (autoRun && !startedRef.current && initial.isActive) {
           startedRef.current = true;
-          void runJob();
+          if (videoCount >= SCHEDULE_JOB_FORCE_THRESHOLD) {
+            void runScheduleJobUntilDone(jobId, setStatus).then((final) => {
+              if (final.status === "completed" || final.status === "partial_failed") {
+                onComplete?.(final);
+                onBatchRefresh?.();
+              }
+            }).catch(async (err) => {
+              const saved =
+                err instanceof Error &&
+                "savedProgress" in err &&
+                Boolean((err as Error & { savedProgress?: boolean }).savedProgress);
+              setError(
+                saved || (err instanceof Error && err.message.includes("Failed to fetch"))
+                  ? "Processamento iniciado. Se a conexão cair, clique em Retomar agendamento — o progresso fica salvo."
+                  : err instanceof Error
+                    ? err.message
+                    : "Erro no agendamento",
+              );
+              await refresh().catch(() => undefined);
+              void pollScheduleJobUntilDone(jobId, setStatus, { intervalMs: 5000 });
+            });
+          } else {
+            void runJob();
+          }
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Falha ao carregar job");
+          setError(
+            err instanceof Error
+              ? err.message.includes("Failed to fetch")
+                ? "Falha de conexão ao carregar o agendamento. Recarregue a página."
+                : err.message
+              : "Falha ao carregar job",
+          );
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [jobId, autoRun, runJob]);
+  }, [jobId, autoRun, runJob, videoCount, onComplete, onBatchRefresh, refresh]);
 
   useEffect(() => {
     if (!status?.isActive || running) return;
@@ -133,7 +174,7 @@ export function ScheduleJobPanel({
   const progressPct = total ? Math.round((processedCount / total) * 100) : 0;
   const isDone = status?.status === "completed";
   const isPartial = status?.status === "partial_failed";
-  const canResume = status?.canResume && !running;
+  const canResume = Boolean((status?.canResume || (status?.isActive && error)) && !running);
 
   return (
     <section className="ig-panel space-y-4 p-5">

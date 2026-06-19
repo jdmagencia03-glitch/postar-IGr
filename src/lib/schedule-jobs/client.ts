@@ -15,25 +15,19 @@ async function readJsonResponse(response: Response) {
 
   if (!trimmed) {
     if (response.status === 504 || response.status === 502) {
-      const err = new Error(
+      throw savedProgressError(
         "O servidor demorou demais. O progresso foi salvo — recarregue a página para continuar.",
       );
-      (err as Error & { savedProgress?: boolean }).savedProgress = true;
-      throw err;
     }
     throw new Error("Resposta vazia do servidor.");
   }
 
   if (trimmed.startsWith("<")) {
-    const err = new Error(
+    throw savedProgressError(
       response.status === 504 || response.status === 502
         ? "O servidor demorou demais. O agendamento continua em segundo plano — recarregue a página."
         : "Erro temporário do servidor. Tente novamente em alguns segundos.",
     );
-    if (response.status === 504 || response.status === 502) {
-      (err as Error & { savedProgress?: boolean }).savedProgress = true;
-    }
-    throw err;
   }
 
   try {
@@ -50,7 +44,8 @@ function isTransientNetworkError(error: unknown) {
     msg.includes("failed to fetch") ||
     msg.includes("networkerror") ||
     msg.includes("load failed") ||
-    msg.includes("network request failed")
+    msg.includes("network request failed") ||
+    msg.includes("aborted")
   );
 }
 
@@ -60,8 +55,31 @@ function savedProgressError(message: string) {
   return err;
 }
 
+function normalizeScheduleError(error: unknown) {
+  if (error instanceof Error && (error as Error & { savedProgress?: boolean }).savedProgress) {
+    return error;
+  }
+  if (isTransientNetworkError(error)) {
+    return savedProgressError(
+      "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento.",
+    );
+  }
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error("Erro no agendamento");
+}
+
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function safeFetchScheduleJobStatus(jobId: string, fallback?: ScheduleJobStatusResponse) {
+  try {
+    return await fetchScheduleJobStatus(jobId);
+  } catch {
+    return fallback;
+  }
 }
 
 export async function createScheduleJobApi(body: Record<string, unknown>) {
@@ -76,7 +94,12 @@ export async function createScheduleJobApi(body: Record<string, unknown>) {
 }
 
 export async function fetchScheduleJobStatus(jobId: string) {
-  const res = await apiFetch(`/api/schedule-jobs/${jobId}/status`, { cache: "no-store" });
+  let res: Response;
+  try {
+    res = await apiFetch(`/api/schedule-jobs/${jobId}/status`, { cache: "no-store" });
+  } catch (error) {
+    throw normalizeScheduleError(error);
+  }
   const data = await readJsonResponse(res);
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao carregar status"));
   return data as ScheduleJobStatusResponse;
@@ -87,12 +110,7 @@ export async function advanceScheduleJobApi(jobId: string) {
   try {
     res = await apiFetch(`/api/schedule-jobs/${jobId}/advance`, { method: "POST" });
   } catch (error) {
-    if (isTransientNetworkError(error)) {
-      throw savedProgressError(
-        "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento.",
-      );
-    }
-    throw error;
+    throw normalizeScheduleError(error);
   }
 
   const data = await readJsonResponse(res);
@@ -105,7 +123,12 @@ export async function advanceScheduleJobApi(jobId: string) {
 }
 
 export async function resumeScheduleJobApi(jobId: string) {
-  const res = await apiFetch(`/api/schedule-jobs/${jobId}/resume`, { method: "POST" });
+  let res: Response;
+  try {
+    res = await apiFetch(`/api/schedule-jobs/${jobId}/resume`, { method: "POST" });
+  } catch (error) {
+    throw normalizeScheduleError(error);
+  }
   const data = await readJsonResponse(res);
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao retomar"));
   return data as ScheduleJobStatusResponse;
@@ -120,43 +143,81 @@ export async function findActiveScheduleJobForBatch(uploadBatchId: string) {
   return (data.jobId as string | null) ?? null;
 }
 
+/** Apenas acompanha o job — útil quando o cron do servidor continua processando. */
+export async function pollScheduleJobUntilDone(
+  jobId: string,
+  onUpdate: (status: ScheduleJobStatusResponse) => void,
+  options?: { intervalMs?: number },
+) {
+  const intervalMs = options?.intervalMs ?? 5000;
+  const terminal = new Set(["completed", "partial_failed", "failed", "cancelled"]);
+
+  let status = await fetchScheduleJobStatus(jobId);
+  onUpdate(status);
+
+  while (status.isActive && !terminal.has(status.status)) {
+    await sleep(intervalMs);
+    status = (await safeFetchScheduleJobStatus(jobId, status)) ?? status;
+    onUpdate(status);
+  }
+
+  return status;
+}
+
 /** Processa o job até concluir ou falhar, chamando onUpdate a cada chunk. */
 export async function runScheduleJobUntilDone(
   jobId: string,
   onUpdate: (status: ScheduleJobStatusResponse) => void,
+  options?: { pollOnly?: boolean },
 ) {
+  if (options?.pollOnly) {
+    return pollScheduleJobUntilDone(jobId, onUpdate);
+  }
+
   let status = await fetchScheduleJobStatus(jobId);
   onUpdate(status);
 
   const terminal = new Set(["completed", "partial_failed", "failed", "cancelled"]);
+  let consecutiveErrors = 0;
 
   while (status.isActive && !terminal.has(status.status)) {
     let advanced = false;
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
         status = await advanceScheduleJobApi(jobId);
         advanced = true;
+        consecutiveErrors = 0;
         break;
       } catch (error) {
-        status = await fetchScheduleJobStatus(jobId);
-        onUpdate(status);
+        const refreshed = await safeFetchScheduleJobStatus(jobId, status);
+        if (refreshed) {
+          status = refreshed;
+          onUpdate(status);
+        }
 
         if (terminal.has(status.status)) {
           return status;
         }
 
+        const normalized = normalizeScheduleError(error);
         const canRetry =
           status.isActive &&
-          attempt < 4 &&
+          attempt < 5 &&
           (isTransientNetworkError(error) ||
-            Boolean((error as Error & { savedProgress?: boolean }).savedProgress));
+            Boolean((normalized as Error & { savedProgress?: boolean }).savedProgress));
 
         if (canRetry) {
-          await sleep(1500 * attempt);
+          await sleep(2000 * attempt);
           continue;
         }
 
-        throw error;
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 2 && status.isActive) {
+          throw savedProgressError(
+            "A conexão ficou instável. O progresso foi salvo — clique em Retomar agendamento para continuar.",
+          );
+        }
+        throw normalized;
       }
     }
 
@@ -164,7 +225,7 @@ export async function runScheduleJobUntilDone(
 
     onUpdate(status);
     if (terminal.has(status.status)) break;
-    await sleep(300);
+    await sleep(500);
   }
 
   return status;

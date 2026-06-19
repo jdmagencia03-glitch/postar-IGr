@@ -290,7 +290,10 @@ export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusRes
     scheduleSummary: job.schedule_summary,
     errorMessage: job.error_message,
     isActive,
-    canResume: job.status === "partial_failed" || failed > 0,
+    canResume:
+      job.status === "partial_failed" ||
+      failed > 0 ||
+      (isActive && processed > 0 && processed < total),
     stepLabel: stepLabels[job.current_step] ?? job.current_step,
   };
 }
@@ -339,7 +342,10 @@ export function buildJobStatus(
     scheduleSummary: job.schedule_summary,
     errorMessage: job.error_message,
     isActive,
-    canResume: job.status === "partial_failed" || failed > 0,
+    canResume:
+      job.status === "partial_failed" ||
+      failed > 0 ||
+      (isActive && planned > 0 && planned < items.length),
     stepLabel: stepLabels[job.current_step] ?? job.current_step,
   };
 }
