@@ -17,6 +17,7 @@ export function deriveUploadSessionView(params: {
   resuming?: boolean;
   canResumeWithoutPicker?: boolean;
   needsFileReselection?: boolean;
+  fileRuntime?: Record<string, { status?: string }>;
 }) {
   const {
     batch,
@@ -28,6 +29,7 @@ export function deriveUploadSessionView(params: {
     resuming = false,
     canResumeWithoutPicker = false,
     needsFileReselection = false,
+    fileRuntime = {},
   } = params;
   const files = getUploadFiles(batch);
   const pendingFiles = files
@@ -57,8 +59,9 @@ export function deriveUploadSessionView(params: {
       !retrying &&
       !resuming,
   );
+  const hasFileRetry = Object.values(fileRuntime).some((runtime) => runtime.status === "retrying");
   const autoRecovering = Boolean(
-    awaitingAutoRecovery || retrying || (running && !pausedByUser && canResumeWithoutPicker),
+    awaitingAutoRecovery || retrying || hasFileRetry || (running && !pausedByUser && canResumeWithoutPicker),
   );
   const overallPercent =
     progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
@@ -69,6 +72,7 @@ export function deriveUploadSessionView(params: {
     .filter(
       (file) =>
         file.status === "uploading" ||
+        file.status === "retrying" ||
         file.status === "failed" ||
         file.status === "pending" ||
         (progressMap[file.id] ?? 0) > 0,
@@ -79,7 +83,11 @@ export function deriveUploadSessionView(params: {
 
   const sorted = [...files].sort((a, b) => a.sort_order - b.sort_order);
   const inProgress = sorted.filter(
-    (file) => file.status === "uploading" || file.status === "failed" || file.status === "pending",
+    (file) =>
+      file.status === "uploading" ||
+      file.status === "retrying" ||
+      file.status === "failed" ||
+      file.status === "pending",
   );
   const recentCompleted = sorted.filter((file) => file.status === "completed").slice(-8);
 
@@ -97,6 +105,10 @@ export function deriveUploadSessionView(params: {
     progress?.activeFiles[0]?.filename ??
     pendingFiles.find((file) => file.status === "uploading")?.filename ??
     null;
+
+  const canRetryFailed = Boolean(
+    batch && batch.status !== "ready" && !running && !retrying && failedCount > 0,
+  );
 
   const statusLabel = retrying || awaitingAutoRecovery
     ? "reconectando"
@@ -146,5 +158,6 @@ export function deriveUploadSessionView(params: {
     remainingCount: Math.max(0, totalCount - completedCount),
     retrying,
     pausedByUser,
+    canRetryFailed,
   };
 }

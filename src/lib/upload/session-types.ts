@@ -36,6 +36,16 @@ export type UploadSessionPhase =
   | "needs_attention"
   | "completed";
 
+/** Estado efêmero por arquivo (retry, countdown) — não persiste no backend. */
+export type UploadFileRuntimeState = {
+  status?: "retrying" | "uploading" | "recovered" | "stalled";
+  attempt?: number;
+  maxAttempts?: number;
+  nextRetryAt?: number;
+  retryInMs?: number;
+  message?: string;
+};
+
 export type UploadSessionSnapshot = {
   batch: UploadBatch | null;
   initialLoading: boolean;
@@ -51,6 +61,7 @@ export type UploadSessionSnapshot = {
   speedMode: UploadSpeedMode;
   progress: UploadEngineProgress | null;
   progressMap: Record<string, number>;
+  fileRuntime: Record<string, UploadFileRuntimeState>;
   message: string | null;
   validationPreview: ValidationPreview | null;
   uploadLimits: UploadLimits | null;

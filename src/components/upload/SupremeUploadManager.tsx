@@ -59,7 +59,8 @@ const FileStatusRow = memo(function FileStatusRow({
           {fileStatusLabel(file.status, { stalled: isStalled, retrying: isRetrying })}
         </span>
       </div>
-      {(file.status === "uploading" || percent > 0) && file.status !== "completed" && (
+      {(file.status === "uploading" || file.status === "retrying" || percent > 0) &&
+        file.status !== "completed" && (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ig-elevated">
           <div className="h-full rounded-full bg-ig-primary" style={{ width: `${percent || 5}%` }} />
         </div>
@@ -106,8 +107,34 @@ export function SupremeUploadManager({
   }, [store, onBatchUpdate]);
 
   useEffect(() => {
-    onUploadingChange?.(session.running);
-  }, [session.running, onUploadingChange]);
+    const hasFileRetry = Object.values(session.fileRuntime).some(
+      (runtime) => runtime.status === "retrying",
+    );
+    const isActive =
+      session.running ||
+      session.retrying ||
+      session.resuming ||
+      hasFileRetry ||
+      Boolean(
+        session.batch &&
+          session.batch.status !== "ready" &&
+          (session.batch.upload_files ?? []).some(
+            (file) =>
+              !file.removed &&
+              (file.status === "pending" ||
+                file.status === "uploading" ||
+                file.status === "retrying"),
+          ),
+      );
+    onUploadingChange?.(isActive);
+  }, [
+    session.running,
+    session.retrying,
+    session.resuming,
+    session.fileRuntime,
+    session.batch,
+    onUploadingChange,
+  ]);
 
   const view = useMemo(
     () =>
@@ -121,6 +148,7 @@ export function SupremeUploadManager({
         resuming: session.resuming,
         canResumeWithoutPicker: session.canResumeWithoutPicker,
         needsFileReselection: session.needsFileReselection,
+        fileRuntime: session.fileRuntime,
       }),
     [
       session.batch,
@@ -132,7 +160,12 @@ export function SupremeUploadManager({
       session.resuming,
       session.canResumeWithoutPicker,
       session.needsFileReselection,
+      session.fileRuntime,
     ],
+  );
+
+  const hasFileRetry = Object.values(session.fileRuntime).some(
+    (runtime) => runtime.status === "retrying",
   );
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
@@ -324,17 +357,19 @@ export function SupremeUploadManager({
             <p className="text-lg font-semibold text-ig-text">
               {session.batch.status === "ready"
                 ? "Upload concluído"
-                : session.retrying || view.awaitingAutoRecovery
-                  ? session.message?.includes("travado")
-                    ? "Upload travado detectado. Tentando recuperar…"
-                    : "Reconectando…"
-                  : session.running
-                    ? "Enviando…"
-                    : view.canResume
-                      ? "Upload pausado pelo usuário."
-                      : view.awaitingAutoRecovery
-                        ? "Reconectando…"
-                        : "Upload em andamento"}
+                : session.message?.includes("recuperado")
+                  ? "Upload recuperado. Continuando envio…"
+                  : hasFileRetry || session.retrying
+                    ? session.message ?? "Conexão instável. Tentando novamente…"
+                    : session.running
+                      ? "Enviando…"
+                      : view.canResume
+                        ? "Upload pausado pelo usuário."
+                        : view.awaitingAutoRecovery
+                          ? session.message ?? "Reconectando…"
+                          : view.failedCount > 0 && !session.running
+                            ? `${view.failedCount} vídeo(s) com erro`
+                            : "Upload em andamento"}
             </p>
             <p className="mt-1 text-sm text-ig-muted">
               {view.completedCount} de {view.totalCount} vídeos · Lote #{session.batch.batch_number} · @
@@ -390,6 +425,16 @@ export function SupremeUploadManager({
                   <Upload size={14} /> Selecionar arquivos
                 </button>
               )}
+              {view.canRetryFailed && (
+                <button
+                  type="button"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                  disabled={session.resuming}
+                  onClick={() => void uploadSessionStore.retryAllFailedFiles()}
+                >
+                  Tentar novamente arquivos com erro
+                </button>
+              )}
               {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
                 <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
                   Agendar vídeos enviados
@@ -418,9 +463,13 @@ export function SupremeUploadManager({
                     file.status === "uploading" &&
                     !session.running &&
                     !session.retrying &&
+                    !hasFileRetry &&
                     view.awaitingAutoRecovery
                   }
-                  isRetrying={session.retrying && file.status !== "completed"}
+                  isRetrying={
+                    file.status === "retrying" ||
+                    session.fileRuntime[file.id]?.status === "retrying"
+                  }
                   onRetry={(record) => uploadSessionStore.retryFile(record)}
                 />
               ))}
@@ -429,22 +478,22 @@ export function SupremeUploadManager({
         </>
       )}
 
-      {(session.running || session.resuming || session.retrying) && (
+      {(session.running || session.resuming || session.retrying || hasFileRetry) && (
         <div className="flex items-center gap-2 text-sm text-ig-primary">
           <Loader2 size={16} className="animate-spin" />
-          {session.retrying
-            ? session.message ?? "Tentando continuar automaticamente…"
+          {hasFileRetry || session.retrying
+            ? session.message ?? "Conexão instável. Tentando novamente…"
             : session.resuming
               ? "Reconhecendo arquivos..."
               : `Enviando (${speedPresets[session.speedMode].label})…`}
         </div>
       )}
 
-      {session.message && (
+      {session.message && !hasFileRetry && !session.retrying && (
         <p
-          className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") ? "text-ig-danger" : "text-ig-text"}`}
+          className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") || session.message.includes("falhou") ? "text-ig-danger" : "text-ig-text"}`}
         >
-          {formatUploadErrorMessage(session.message)}
+          {session.message}
         </p>
       )}
     </div>

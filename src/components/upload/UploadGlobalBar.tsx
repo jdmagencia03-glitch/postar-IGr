@@ -74,9 +74,13 @@ const QueueRow = memo(function QueueRow({
     <div className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-ig-text">{file.filename}</span>
-        <span className="shrink-0 text-ig-muted">{fileStatusLabel(file.status)}</span>
+        <span className="shrink-0 text-ig-muted">
+          {fileStatusLabel(file.status, {
+            retrying: file.status === "retrying",
+          })}
+        </span>
       </div>
-      {file.status === "uploading" && (
+      {(file.status === "uploading" || file.status === "retrying") && (
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-ig-elevated">
           <div className="h-full bg-ig-primary" style={{ width: `${percent || 5}%` }} />
         </div>
@@ -105,8 +109,13 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
       resuming: session.resuming,
       canResumeWithoutPicker: session.canResumeWithoutPicker,
       needsFileReselection: session.needsFileReselection,
+      fileRuntime: session.fileRuntime,
     });
   }, [session]);
+
+  const hasFileRetry = Boolean(
+    session && Object.values(session.fileRuntime).some((runtime) => runtime.status === "retrying"),
+  );
 
   if (!session || !view?.showGlobalBar || !session.batch) return null;
 
@@ -135,8 +144,8 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                 </span>
               </div>
               <p className="mt-1 truncate text-xs text-ig-muted">
-                {session.retrying || view.awaitingAutoRecovery
-                  ? session.message ?? "Tentando continuar automaticamente…"
+                {hasFileRetry || session.retrying || view.awaitingAutoRecovery
+                  ? session.message ?? "Conexão instável. Tentando novamente…"
                   : view.currentUploadName
                     ? `Enviando: ${view.currentUploadName}`
                     : `@${username} · ${speedPresets[session.speedMode].label}`}

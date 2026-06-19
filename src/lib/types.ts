@@ -146,7 +146,7 @@ export type AccountPlaybookPayload = Omit<
 >;
 
 export type UploadBatchStatus = "uploading" | "ready" | "scheduling" | "scheduled" | "cancelled";
-export type UploadFileStatus = "pending" | "uploading" | "completed" | "failed";
+export type UploadFileStatus = "pending" | "uploading" | "retrying" | "completed" | "failed";
 export type UploadSpeedMode = "economy" | "normal" | "turbo";
 
 export interface UploadBatchFile {

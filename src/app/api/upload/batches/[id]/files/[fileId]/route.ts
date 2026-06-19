@@ -6,14 +6,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
 const patchSchema = z.object({
-  status: z.enum(["pending", "uploading", "completed", "failed"]),
+  status: z.enum(["pending", "uploading", "retrying", "completed", "failed"]),
   public_url: z.string().url().optional().nullable(),
   bytes_uploaded: z.number().int().min(0).optional(),
   error_message: z.string().max(2000).optional().nullable(),
 });
 
 function isProgressOnlyUpdate(body: z.infer<typeof patchSchema>) {
-  return body.status === "uploading" && body.bytes_uploaded !== undefined && !body.public_url;
+  return (
+    (body.status === "uploading" || body.status === "retrying") &&
+    body.bytes_uploaded !== undefined &&
+    !body.public_url
+  );
 }
 
 export async function PATCH(

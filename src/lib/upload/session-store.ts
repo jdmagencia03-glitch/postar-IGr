@@ -19,13 +19,18 @@ import {
 } from "@/lib/upload/client";
 import { formatUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
 import {
+  logUploadEvent,
+  retryMessage,
+  type UploadErrorKind,
+} from "@/lib/upload/network-retry";
+import {
   clearManifestBatch,
   getManifestForBatch,
   matchFilesToManifest,
   saveManifestEntries,
 } from "@/lib/upload/manifest-store";
 import { getSpeedPresets, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
-import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview } from "@/lib/upload/session-types";
+import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 import { formatBytes } from "@/lib/upload/validate";
@@ -59,6 +64,7 @@ class UploadSessionStore {
   speedMode: UploadSpeedMode = "normal";
   progress: UploadEngineProgress | null = null;
   progressMap: Record<string, number> = {};
+  fileRuntime: Record<string, UploadFileRuntimeState> = {};
   message: string | null = null;
   validationPreview: ValidationPreview | null = null;
 
@@ -73,6 +79,8 @@ class UploadSessionStore {
   private autoRecoveryScheduled = false;
   private autoRetryResetTimer: ReturnType<typeof setTimeout> | null = null;
   private stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private retryCountdownTimer: ReturnType<typeof setInterval> | null = null;
+  private reconcilePolling = false;
   private lastProgressAt = 0;
   private lastProgressBytes = 0;
   private recoveringFromStall = false;
@@ -93,12 +101,108 @@ class UploadSessionStore {
     }
   }
 
+  private stopRetryCountdown() {
+    if (this.retryCountdownTimer) {
+      clearInterval(this.retryCountdownTimer);
+      this.retryCountdownTimer = null;
+    }
+  }
+
+  private clearFileRuntime(fileId: string) {
+    if (!this.fileRuntime[fileId]) return;
+    const next = { ...this.fileRuntime };
+    delete next[fileId];
+    this.fileRuntime = next;
+  }
+
+  private setFileRuntime(fileId: string, patch: UploadFileRuntimeState) {
+    this.fileRuntime = {
+      ...this.fileRuntime,
+      [fileId]: { ...this.fileRuntime[fileId], ...patch },
+    };
+  }
+
+  private handleFileRetryScheduled(
+    fileId: string,
+    detail: {
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+      errorKind: string;
+    },
+  ) {
+    const endsAt = Date.now() + detail.delayMs;
+    this.setFileRuntime(fileId, {
+      status: "retrying",
+      attempt: detail.attempt,
+      maxAttempts: detail.maxAttempts,
+      nextRetryAt: endsAt,
+      retryInMs: detail.delayMs,
+      message: detail.errorMessage,
+    });
+    this.message = retryMessage({
+      attempt: detail.attempt,
+      maxAttempts: detail.maxAttempts,
+      delayMs: detail.delayMs,
+      kind: detail.errorKind as UploadErrorKind,
+    });
+    this.stopRetryCountdown();
+    this.retryCountdownTimer = setInterval(() => {
+      const remaining = Math.max(0, endsAt - Date.now());
+      if (remaining <= 0) {
+        this.stopRetryCountdown();
+        return;
+      }
+      const seconds = Math.max(1, Math.ceil(remaining / 1000));
+      this.message = retryMessage({
+        attempt: detail.attempt,
+        maxAttempts: detail.maxAttempts,
+        delayMs: seconds * 1000,
+        kind: detail.errorKind as UploadErrorKind,
+      });
+      this.setFileRuntime(fileId, { retryInMs: remaining });
+      this.emit();
+    }, 1000);
+    logUploadEvent("[upload-retry]", "ui_scheduled", {
+      batchId: this.batch?.id,
+      fileId,
+      attempt: detail.attempt,
+      maxAttempts: detail.maxAttempts,
+      nextRetryIn: detail.delayMs,
+    });
+    this.emit();
+  }
+
+  private handleFileRecovered(fileId: string) {
+    this.stopRetryCountdown();
+    this.clearFileRuntime(fileId);
+    this.message = "Upload recuperado. Continuando envio…";
+    logUploadEvent("[upload-recovered]", "file_recovered", {
+      batchId: this.batch?.id,
+      fileId,
+    });
+    this.emit();
+  }
+
+  private hasActiveFileRetry() {
+    return Object.values(this.fileRuntime).some((runtime) => runtime.status === "retrying");
+  }
+
   private startStallWatchdog() {
     this.stopStallWatchdog();
     this.touchProgress(this.progress?.bytesUploaded ?? 0);
 
     this.stallWatchdogTimer = setInterval(() => {
-      if (!this.running || this.pausedByUser || this.retrying || this.recoveringFromStall) return;
+      if (
+        !this.running ||
+        this.pausedByUser ||
+        this.retrying ||
+        this.recoveringFromStall ||
+        this.hasActiveFileRetry()
+      ) {
+        return;
+      }
 
       const idleMs = Date.now() - this.lastProgressAt;
       if (idleMs >= UPLOAD_STALL_TIMEOUT_MS) {
@@ -248,7 +352,8 @@ class UploadSessionStore {
       resuming: this.resuming,
       speedMode: this.speedMode,
       progress: this.progress,
-      progressMap: this.progressMap,
+      progressMap: { ...this.progressMap },
+      fileRuntime: { ...this.fileRuntime },
       message: this.message,
       validationPreview: this.validationPreview,
       uploadLimits: this.uploadLimits,
@@ -278,8 +383,19 @@ class UploadSessionStore {
   }
 
   private emit() {
-    const wasRunning = this.snapshot.running;
+    const prev = this.snapshot;
+    const wasRunning = prev.running;
     this.snapshot = this.buildSnapshot();
+    logUploadEvent("[upload-store-emit]", "emit", {
+      batchId: this.batch?.id,
+      listeners: this.listeners.size,
+      batchListeners: this.batchListeners.size,
+      running: this.running,
+      retrying: this.retrying,
+      phase: this.snapshot.phase,
+      previousPhase: prev.phase,
+      snapshotChanged: prev !== this.snapshot,
+    });
     for (const listener of this.listeners) listener();
     if (wasRunning && !this.running) {
       this.scheduleAutoRecovery("running_stopped");
@@ -509,8 +625,7 @@ class UploadSessionStore {
     if (this.batch) {
       void setBatchSpeedMode(this.batch.id, mode)
         .then((updated) => {
-          this.batch = updated;
-          this.emit();
+          this.syncBatch(updated);
         })
         .catch(() => undefined);
     }
@@ -534,7 +649,7 @@ class UploadSessionStore {
       refreshed.upload_files?.filter(
         (file) =>
           !file.removed &&
-          (file.status === "pending" || file.status === "uploading") &&
+          (file.status === "pending" || file.status === "uploading" || file.status === "retrying") &&
           fileMap.has(file.id),
       ) ?? [];
 
@@ -615,7 +730,7 @@ class UploadSessionStore {
       refreshed.upload_files?.filter(
         (file) =>
           !file.removed &&
-          (file.status === "pending" || file.status === "uploading") &&
+          (file.status === "pending" || file.status === "uploading" || file.status === "retrying") &&
           fileMap.has(file.id),
       ) ?? [];
 
@@ -679,9 +794,12 @@ class UploadSessionStore {
           const percent = Math.round((loaded / total) * 100);
           if (this.progressMap[fileId] !== percent) {
             this.progressMap = { ...this.progressMap, [fileId]: percent };
+            this.touchProgress(this.progress?.bytesUploaded);
             this.emit();
           }
         },
+        onFileRetryScheduled: (fileId, detail) => this.handleFileRetryScheduled(fileId, detail),
+        onFileRecovered: (fileId) => this.handleFileRecovered(fileId),
         onComplete: async (latest) => {
           if (this.cancelledBatchIds.has(latest.id)) return;
           const refreshed = await refreshUploadBatch(latest.id);
@@ -689,13 +807,21 @@ class UploadSessionStore {
           this.syncBatch(refreshed);
           if (refreshed.status === "ready") {
             this.autoRetryPass = 0;
+            this.stopRetryCountdown();
+            this.fileRuntime = {};
             this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
           }
           this.emit();
         },
-        onError: (errorMessage) => {
-          this.logUpload("file_error", { message: errorMessage });
-          this.message = `Vídeo ignorado (${formatUploadErrorMessage(errorMessage)}). Continuando lote…`;
+        onError: (errorMessage, fileId) => {
+          this.logUpload("file_error", { message: errorMessage, fileId });
+          if (fileId) this.clearFileRuntime(fileId);
+          const failedCount =
+            this.batch?.upload_files?.filter((f) => !f.removed && f.status === "failed").length ?? 0;
+          this.message =
+            failedCount > 0
+              ? `${failedCount} vídeo(s) falhou(aram) após várias tentativas. O restante do lote continuará normalmente.`
+              : `Não foi possível continuar este vídeo. Você pode tentar reenviar apenas os arquivos com erro.`;
           this.emit();
         },
       });
@@ -705,6 +831,8 @@ class UploadSessionStore {
       this.running = true;
       this.pausedByUser = false;
       this.message = null;
+      this.fileRuntime = {};
+      this.stopRetryCountdown();
       this.logUpload("engine_start", { batchId, files: fileMap.size, onlyFileIds });
       this.emit();
 
@@ -962,7 +1090,7 @@ class UploadSessionStore {
       }
       await setBatchPaused(this.batch.id, false);
       const refreshed = await refreshUploadBatch(this.batch.id);
-      this.batch = refreshed;
+      this.syncBatch(refreshed);
       this.autoRetryPass = 0;
       await this.startEngine(refreshed, this.lastFileMap);
     } catch (error) {
@@ -978,77 +1106,156 @@ class UploadSessionStore {
   /** Sincroniza progresso ao voltar para a aba (upload segue em segundo plano). */
   async reconcileOnForeground() {
     if (typeof document !== "undefined" && document.hidden) return;
+    await this.reconcileActiveBatch("foreground");
+  }
 
+  /** Polling de segurança — reconcilia estado local com o backend. */
+  async reconcileActiveBatch(source: "foreground" | "polling" = "polling") {
+    if (this.reconcilePolling) return;
     if (!this.batch) return;
+    if (this.batch.status === "ready" || this.batch.status === "cancelled") return;
+
+    this.reconcilePolling = true;
+    const prevBatch = this.batch;
+    const prevProgressMap = this.progressMap;
 
     try {
       const refreshed = await refreshUploadBatch(this.batch.id);
+      const nextProgress: Record<string, number> = { ...this.progressMap };
+      let dbBytesTotal = 0;
 
-      if (this.running || this.retrying) {
-        this.batch = refreshed;
-        const nextProgress: Record<string, number> = { ...this.progressMap };
-        let dbBytesTotal = 0;
-        for (const file of refreshed.upload_files ?? []) {
-          const uploaded = Number(file.bytes_uploaded ?? 0);
-          const total = Number(file.file_size);
-          dbBytesTotal += uploaded;
-          if (file.status === "completed") {
-            nextProgress[file.id] = 100;
-          } else if (uploaded > 0 && total > 0) {
-            nextProgress[file.id] = Math.round((uploaded / total) * 100);
-          }
+      for (const file of refreshed.upload_files ?? []) {
+        const uploaded = Number(file.bytes_uploaded ?? 0);
+        const total = Number(file.file_size);
+        dbBytesTotal += uploaded;
+        if (file.status === "completed") {
+          nextProgress[file.id] = 100;
+          this.clearFileRuntime(file.id);
+        } else if (uploaded > 0 && total > 0) {
+          nextProgress[file.id] = Math.round((uploaded / total) * 100);
         }
-        this.progressMap = nextProgress;
-
-        const sessionBytes = this.progress?.bytesUploaded ?? 0;
-        const bytesMoved = dbBytesTotal > this.lastProgressBytes || sessionBytes > this.lastProgressBytes;
-        if (bytesMoved) {
-          this.touchProgress(Math.max(dbBytesTotal, sessionBytes));
-        } else if (
-          Date.now() - this.lastProgressAt >= UPLOAD_STALL_TIMEOUT_MS &&
-          !this.recoveringFromStall
-        ) {
-          void this.recoverFromStall(Date.now() - this.lastProgressAt);
-        }
-
-        this.emit();
-        return;
       }
 
-      this.batch = refreshed;
-      if (refreshed.paused) {
+      this.progressMap = nextProgress;
+
+      const sessionBytes = this.progress?.bytesUploaded ?? 0;
+      const bytesMoved = dbBytesTotal > this.lastProgressBytes || sessionBytes > this.lastProgressBytes;
+      if (bytesMoved) {
+        this.touchProgress(Math.max(dbBytesTotal, sessionBytes));
+      } else if (
+        (this.running || this.retrying) &&
+        Date.now() - this.lastProgressAt >= UPLOAD_STALL_TIMEOUT_MS &&
+        !this.recoveringFromStall
+      ) {
+        void this.recoverFromStall(Date.now() - this.lastProgressAt);
+      }
+
+      if (refreshed.paused && !this.running) {
         this.pausedByUser = true;
-        this.logUpload("foreground_sync_paused_by_user");
       }
 
-      const incomplete = (refreshed.upload_files ?? []).some(
-        (file) => !file.removed && file.status !== "completed",
-      );
+      if (refreshed.status === "ready" && prevBatch.status !== "ready") {
+        this.running = false;
+        this.retrying = false;
+        this.stopRetryCountdown();
+        this.fileRuntime = {};
+        this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
+      }
+
+      logUploadEvent("[upload-reconcile]", source, {
+        batchId: refreshed.id,
+        previousStatus: prevBatch.status,
+        nextStatus: refreshed.status,
+        running: this.running,
+        retrying: this.retrying,
+        progressChanged: JSON.stringify(prevProgressMap) !== JSON.stringify(nextProgress),
+      });
+
+      this.syncBatch(refreshed);
 
       if (
-        incomplete &&
+        refreshed.status !== "ready" &&
+        !this.running &&
+        !this.retrying &&
         !this.pausedByUser &&
+        !this.recoveringFromStall &&
         this.lastFileMap.size > 0 &&
         this.hasPendingInSession()
       ) {
-        this.logUpload("foreground_auto_continue");
-        await this.autoContinuePendingIfNeeded(this.batch.id, this.lastFileMap, "foreground");
+        await this.autoContinuePendingIfNeeded(refreshed.id, this.lastFileMap, source);
         return;
       }
 
       if (
-        incomplete &&
+        refreshed.status !== "ready" &&
         this.needsFileReselection() &&
         !this.message?.includes("Selecione novamente")
       ) {
         this.message =
           "Selecione novamente os vídeos no computador para continuar o envio.";
+        this.emit();
       }
-      this.emit();
     } catch (error) {
-      this.logUpload("foreground_reconcile_error", {
+      logUploadEvent("[upload-reconcile]", "error", {
+        batchId: this.batch?.id,
+        source,
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      this.reconcilePolling = false;
+    }
+  }
+
+  async retryAllFailedFiles() {
+    if (!this.batch) return;
+
+    const failed =
+      this.batch.upload_files?.filter((file) => !file.removed && file.status === "failed") ?? [];
+    if (!failed.length) {
+      this.message = "Nenhum arquivo com erro para reenviar.";
+      this.emit();
+      return;
+    }
+
+    if (this.running || this.engineStarting) {
+      this.message = "Aguarde o upload atual terminar antes de reenviar arquivos com erro.";
+      this.emit();
+      return;
+    }
+
+    const failedInSession = failed.filter((file) => this.lastFileMap.has(file.id));
+    if (!failedInSession.length) {
+      this.message =
+        "Não foi possível continuar estes vídeos. Selecione novamente os arquivos com erro.";
+      this.emit();
+      this.fileInputs?.pickResume();
+      return;
+    }
+
+    this.resuming = true;
+    this.message = `Reenviando ${failedInSession.length} arquivo(s) com erro…`;
+    this.emit();
+
+    try {
+      let refreshed = this.batch;
+      for (const file of failedInSession) {
+        refreshed = await resetFailedUploadFile(refreshed, file.id);
+        const nextMap = { ...this.progressMap };
+        delete nextMap[file.id];
+        this.progressMap = nextMap;
+      }
+
+      this.syncBatch(refreshed);
+      this.pausedByUser = false;
+      await setBatchPaused(refreshed.id, false);
+      const failedIds = failedInSession.map((file) => file.id);
+      await this.startEngine(refreshed, this.lastFileMap, failedIds);
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : "Erro ao reenviar arquivos com erro";
+      this.running = false;
+    } finally {
+      this.resuming = false;
+      this.emit();
     }
   }
 

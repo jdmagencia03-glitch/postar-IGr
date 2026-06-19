@@ -21,8 +21,19 @@ export interface UploadEngineCallbacks {
   onProgress?: (progress: UploadEngineProgress) => void;
   onBatchUpdate?: (batch: UploadBatch) => void;
   onFileProgress?: (fileId: string, loaded: number, total: number) => void;
+  onFileRetryScheduled?: (
+    fileId: string,
+    detail: {
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+      errorKind: string;
+    },
+  ) => void;
+  onFileRecovered?: (fileId: string) => void;
   onComplete?: (batch: UploadBatch) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, fileId?: string) => void;
 }
 
 export class UploadEngine {
@@ -159,10 +170,10 @@ export class UploadEngine {
     const files = (batch.upload_files ?? []).filter((file) => !file.removed);
     const completed = files.filter((file) => file.status === "completed").length;
     const failed = files.filter((file) => file.status === "failed").length;
-    const uploading = files.filter((file) => file.status === "uploading").length;
-    const waiting = files.filter(
-      (file) => file.status === "pending" || file.status === "failed",
+    const uploading = files.filter(
+      (file) => file.status === "uploading" || file.status === "retrying",
     ).length;
+    const waiting = files.filter((file) => file.status === "pending").length;
     const total = files.length;
 
     const activeFiles = [...fileProgress.entries()]
@@ -257,6 +268,32 @@ export class UploadEngine {
             this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
             this.emitProgress(batch, fileProgress);
           },
+          onRetryScheduled: (detail) => {
+            batch = applyBatchFilePatch(batch, {
+              file: { ...currentRecord, status: "retrying" },
+              counters: null,
+            });
+            currentRecord = batch.upload_files?.find((item) => item.id === currentRecord.id) ?? {
+              ...currentRecord,
+              status: "retrying",
+            };
+            this.callbacks.onBatchUpdate?.(batch);
+            this.callbacks.onFileRetryScheduled?.(currentRecord.id, detail);
+            this.emitProgress(batch, fileProgress);
+          },
+          onRecovered: () => {
+            batch = applyBatchFilePatch(batch, {
+              file: { ...currentRecord, status: "uploading" },
+              counters: null,
+            });
+            currentRecord = batch.upload_files?.find((item) => item.id === currentRecord.id) ?? {
+              ...currentRecord,
+              status: "uploading",
+            };
+            this.callbacks.onBatchUpdate?.(batch);
+            this.callbacks.onFileRecovered?.(currentRecord.id);
+            this.emitProgress(batch, fileProgress);
+          },
         });
 
         batch = await this.withBatchLock(() =>
@@ -270,6 +307,7 @@ export class UploadEngine {
           this.emitProgress(batch, fileProgress);
           this.callbacks.onError?.(
             updatedRecord?.error_message ?? `Falha ao enviar ${currentRecord.filename}`,
+            currentRecord.id,
           );
           return "done";
         }
@@ -334,7 +372,7 @@ export class UploadEngine {
     const activeFiles = (batch.upload_files ?? []).filter(
       (file) =>
         !file.removed &&
-        (file.status === "pending" || file.status === "uploading") &&
+        (file.status === "pending" || file.status === "uploading" || file.status === "retrying") &&
         fileMap.has(file.id),
     );
     if (!this.stopped && activeFiles.length === 0) {

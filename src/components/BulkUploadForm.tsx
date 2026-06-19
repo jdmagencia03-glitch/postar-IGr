@@ -365,7 +365,8 @@ export function BulkUploadForm({
   const totalCount = uploadView?.totalCount ?? liveBatch?.total_files ?? activeBatch?.total_files ?? 0;
   const activeUploadCount =
     uploadView?.pendingFiles.filter(
-      (file) => file.status === "pending" || file.status === "uploading",
+      (file) =>
+        file.status === "pending" || file.status === "uploading" || file.status === "retrying",
     ).length ?? 0;
   const batchReady = activeBatch?.status === "ready";
   const uploadSettled = !isUploading && !uploadSession?.retrying && activeUploadCount === 0;

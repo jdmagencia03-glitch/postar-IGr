@@ -1,10 +1,15 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode } from "@/lib/types";
 import { BATCH_CREATE_CHUNK_SIZE, TUS_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
 import { extractUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
+import {
+  classifyUploadError,
+  logUploadEvent,
+  UPLOAD_FILE_MAX_ATTEMPTS,
+  UPLOAD_FILE_RETRY_DELAYS_MS,
+  userMessageForUploadError,
+} from "@/lib/upload/network-retry";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
-
-const RETRY_DELAYS = [0, 3000, 10000, 30000, 60000, 90000];
 
 export interface UploadFilePatchResult {
   file: UploadBatchFile;
@@ -124,34 +129,81 @@ export async function uploadBatchFile(params: {
   file: File;
   signal?: AbortSignal;
   onProgress?: (bytesUploaded: number, bytesTotal: number) => void;
+  onRetryScheduled?: (detail: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    errorMessage: string;
+    errorKind: string;
+  }) => void;
+  onRecovered?: () => void;
 }): Promise<UploadFilePatchResult> {
-  const { batch, file, onProgress, signal } = params;
+  const { batch, file, onProgress, signal, onRetryScheduled, onRecovered } = params;
   let record = params.record;
 
-  for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
+  for (let attempt = 0; attempt < UPLOAD_FILE_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) {
       throw new DOMException("Upload pausado", "AbortError");
     }
 
     if (attempt > 0) {
-      console.info("[upload-retry] retry_attempt", {
+      const delayMs = UPLOAD_FILE_RETRY_DELAYS_MS[attempt - 1] ?? 120_000;
+      logUploadEvent("[upload-retry]", "scheduled", {
         batchId: batch.id,
         fileId: record.id,
-        filename: file.name,
-        attempt: attempt + 1,
-        maxAttempts: RETRY_DELAYS.length,
+        fileName: file.name,
+        attempt,
+        maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
+        nextRetryIn: delayMs,
+        previousStatus: record.status,
       });
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt]));
+
+      await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "retrying",
+          bytes_uploaded: Number(record.bytes_uploaded ?? 0),
+          error_message: record.error_message,
+        }),
+      }).catch(() => undefined);
+
+      onRetryScheduled?.({
+        attempt: attempt + 1,
+        maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
+        delayMs,
+        errorMessage: record.error_message ?? "Erro de conexão",
+        errorKind: "network",
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (signal?.aborted) {
+        throw new DOMException("Upload pausado", "AbortError");
+      }
     }
 
     try {
-      console.info("[upload-worker] upload_start", {
+      logUploadEvent("[upload-engine-event]", "upload_start", {
         batchId: batch.id,
         fileId: record.id,
-        filename: file.name,
+        fileName: file.name,
         attempt: attempt + 1,
+        maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
         previousStatus: record.status,
+        uploadProgress: Number(record.bytes_uploaded ?? 0),
       });
+
+      if (attempt > 0) {
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "uploading",
+            bytes_uploaded: Number(record.bytes_uploaded ?? 0),
+          }),
+        }).catch(() => undefined);
+        onRecovered?.();
+      }
       const prepareRes = await apiFetch("/api/upload/files/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -243,22 +295,55 @@ export async function uploadBatchFile(params: {
       return patchData;
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (attempt === RETRY_DELAYS.length - 1) {
-        const rawError = extractUploadErrorMessage(error);
+
+      const classification = classifyUploadError(error);
+      const rawError = classification.message;
+      record = {
+        ...record,
+        error_message: userMessageForUploadError(classification),
+      };
+
+      logUploadEvent("[upload-network]", "upload_error", {
+        batchId: batch.id,
+        fileId: record.id,
+        fileName: file.name,
+        attempt: attempt + 1,
+        maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
+        errorCode: classification.statusCode,
+        errorMessage: rawError,
+        recoverable: classification.recoverable,
+      });
+
+      if (!classification.recoverable || attempt === UPLOAD_FILE_MAX_ATTEMPTS - 1) {
         const failRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             status: "failed",
-            error_message: rawError,
+            error_message: userMessageForUploadError(classification),
           }),
         });
         const failData = (await failRes.json()) as UploadFilePatchResult & { error?: unknown };
+        logUploadEvent("[upload-failed]", "file_failed", {
+          batchId: batch.id,
+          fileId: record.id,
+          fileName: file.name,
+          attempt: attempt + 1,
+          errorMessage: rawError,
+        });
         if (failRes.ok) {
           return failData;
         }
         throw error;
       }
+
+      onRetryScheduled?.({
+        attempt: attempt + 2,
+        maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
+        delayMs: UPLOAD_FILE_RETRY_DELAYS_MS[attempt] ?? 120_000,
+        errorMessage: userMessageForUploadError(classification),
+        errorKind: classification.kind,
+      });
     }
   }
 
@@ -523,8 +608,8 @@ export function fileStatusLabel(
   status: UploadBatchFile["status"],
   options?: { stalled?: boolean; retrying?: boolean },
 ) {
-  if (options?.retrying && status !== "completed") return "Tentando novamente…";
-  if (options?.stalled && status === "uploading") return "Travado";
+  if (options?.stalled && status !== "completed") return "Sem progresso";
+  if (options?.retrying || status === "retrying") return "Tentando novamente…";
   switch (status) {
     case "completed":
       return "Enviado";

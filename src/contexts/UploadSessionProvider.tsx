@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { uploadSessionStore } from "@/lib/upload/session-store";
+import { logUploadEvent } from "@/lib/upload/network-retry";
 import { UploadGlobalBar } from "@/components/upload/UploadGlobalBar";
 import { UploadSessionFileInputs } from "@/components/upload/UploadSessionFileInputs";
 
@@ -30,10 +31,15 @@ export function UploadSessionProvider({ children }: { children: ReactNode }) {
     const reconcileTimer = window.setInterval(() => {
       if (document.hidden) return;
       const snapshot = uploadSessionStore.getSnapshot();
-      if (snapshot.running || snapshot.retrying) {
-        void uploadSessionStore.reconcileOnForeground();
-      }
-    }, 30_000);
+      if (!snapshot.batch || snapshot.batch.status === "ready") return;
+      logUploadEvent("[upload-polling]", "tick", {
+        batchId: snapshot.batch.id,
+        running: snapshot.running,
+        retrying: snapshot.retrying,
+        phase: snapshot.phase,
+      });
+      void uploadSessionStore.reconcileActiveBatch("polling");
+    }, 8_000);
 
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("focus", onFocus);

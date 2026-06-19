@@ -580,7 +580,7 @@ export async function refreshBatchCounters(
         .select("id", { count: "exact", head: true })
         .eq("batch_id", batchId)
         .or(notRemoved)
-        .in("status", ["pending", "uploading"]),
+        .in("status", ["pending", "uploading", "retrying"]),
     ]);
 
   const batchRow = batchResult.data;
