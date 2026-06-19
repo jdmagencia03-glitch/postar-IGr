@@ -27,16 +27,17 @@ export const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
 
 export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 64 * 1024 * 1024;
 
-/** Sem bytes novos neste intervalo → upload TUS considerado travado. */
+/** Sem bytes novos neste intervalo → upload TUS considerado travado.
+ *  Deve ser maior que o tempo de enviar 1 chunk (6MB) em conexão lenta (~50 KB/s ≈ 2 min). */
 export const UPLOAD_STALL_TIMEOUT_MS = readPositiveInt(
   process.env.UPLOAD_STALL_TIMEOUT_MS,
-  120_000,
+  300_000,
 );
 
 /** Sem novo arquivo concluído neste intervalo → lote considerado travado. */
 export const UPLOAD_BATCH_STALL_TIMEOUT_MS = readPositiveInt(
   process.env.UPLOAD_BATCH_STALL_TIMEOUT_MS,
-  180_000,
+  420_000,
 );
 
 /** Intervalo do watchdog global do lote (ms). */

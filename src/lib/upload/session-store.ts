@@ -1444,6 +1444,14 @@ class UploadSessionStore {
         onError: (errorMessage, fileId) => {
           this.logUpload("file_error", { message: errorMessage, fileId });
           if (fileId) this.clearFileRuntime(fileId);
+          const isStallLike = /sem progresso|reconectando|conexão lenta|stall/i.test(
+            errorMessage.toLowerCase(),
+          );
+          if (isStallLike) {
+            this.message = "Conexão lenta detectada. Retomando envio automaticamente…";
+            this.emit();
+            return;
+          }
           const failedCount =
             this.batch?.upload_files?.filter((f) => !f.removed && f.status === "failed").length ?? 0;
           this.message =

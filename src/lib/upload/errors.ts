@@ -98,7 +98,10 @@ export function formatUploadErrorMessage(
     return `Arquivo${sizeHint} excede o limite do Supabase Storage.${limitHint} Detalhe: ${trimmed}`;
   }
 
-  if (/network|failed to fetch|timeout|aborted|offline|connection|falha de conexão|muitas requisições|429/i.test(trimmed)) {
+  if (/network|failed to fetch|timeout|aborted|offline|connection|falha de conexão|muitas requisições|429|sem progresso|reconectando|conexão lenta/i.test(trimmed)) {
+    if (/sem progresso|reconectando|conexão lenta/i.test(trimmed)) {
+      return "Conexão lenta — o envio continua automaticamente em segundo plano.";
+    }
     if (/429|muitas requisições/i.test(trimmed)) {
       return "Servidor ocupado — aguarde alguns segundos. O upload vai retomar automaticamente.";
     }

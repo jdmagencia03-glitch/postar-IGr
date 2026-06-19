@@ -17,6 +17,7 @@ export type UploadErrorKind =
   | "rate_limit"
   | "auth"
   | "file"
+  | "stall"
   | "unknown";
 
 export interface UploadErrorClassification {
@@ -80,6 +81,19 @@ export function classifyUploadError(error: unknown): UploadErrorClassification {
   }
 
   if (
+    /sem progresso|reconectando automaticamente|stall_timeout|upload travado|tempo máximo de upload/i.test(
+      lower,
+    )
+  ) {
+    return {
+      kind: "stall",
+      recoverable: true,
+      message,
+      statusCode,
+    };
+  }
+
+  if (
     /network|failed to fetch|timeout|aborted|offline|connection|econnreset|etimedout|err_network|fetch failed|load failed|socket/i.test(
       lower,
     )
@@ -102,6 +116,8 @@ export function classifyUploadError(error: unknown): UploadErrorClassification {
 
 export function userMessageForUploadError(classification: UploadErrorClassification) {
   switch (classification.kind) {
+    case "stall":
+      return "Conexão lenta — retomando envio automaticamente…";
     case "network":
       return "Conexão instável. Tentando novamente…";
     case "server":
@@ -124,6 +140,9 @@ export function retryMessage(params: {
   kind: UploadErrorKind;
 }) {
   const seconds = Math.max(1, Math.round(params.delayMs / 1000));
+  if (params.kind === "stall") {
+    return `Conexão lenta — retomando envio (${params.attempt}/${params.maxAttempts}) em ${seconds}s…`;
+  }
   if (params.kind === "server") {
     return `Servidor instável. Tentativa ${params.attempt} de ${params.maxAttempts} em ${seconds}s…`;
   }

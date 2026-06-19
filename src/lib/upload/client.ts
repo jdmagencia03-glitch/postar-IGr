@@ -247,10 +247,11 @@ export async function uploadBatchFile(params: {
       }
 
       const uploadedBytes = Number(record.bytes_uploaded ?? 0);
+      // Só reinicia do zero se travou no meio do 1º chunk (< 6MB), não após chunk completo.
       const partialLooksBroken =
         file.size > TUS_CHUNK_SIZE &&
         uploadedBytes > 0 &&
-        uploadedBytes <= TUS_CHUNK_SIZE;
+        uploadedBytes < TUS_CHUNK_SIZE;
 
       let shouldResume =
         record.status !== "failed" &&
@@ -321,10 +322,23 @@ export async function uploadBatchFile(params: {
 
       const classification = classifyUploadError(error);
       const rawError = classification.message;
+      const userMessage = userMessageForUploadError(classification);
       record = {
         ...record,
-        error_message: userMessageForUploadError(classification),
+        error_message: userMessage,
       };
+
+      if (classification.kind === "stall" && attempt < UPLOAD_FILE_MAX_ATTEMPTS - 1) {
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "retrying",
+            bytes_uploaded: Number(record.bytes_uploaded ?? 0),
+            error_message: userMessage,
+          }),
+        }).catch(() => undefined);
+      }
 
       logUploadEvent("[upload-network]", "upload_error", {
         batchId: batch.id,

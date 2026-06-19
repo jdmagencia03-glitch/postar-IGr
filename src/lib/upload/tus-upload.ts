@@ -99,7 +99,11 @@ export function uploadFileWithTus(params: {
         resetStallTimer(reject);
         params.onProgress?.(bytesUploaded, bytesTotal);
       },
+      onBeforeRequest: () => {
+        resetStallTimer(reject);
+      },
       onShouldRetry(error) {
+        resetStallTimer(reject);
         const status = (error as { originalResponse?: { getStatus?: () => number } }).originalResponse
           ?.getStatus?.();
         if (status === 403 || status === 404) return false;
