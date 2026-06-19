@@ -484,8 +484,23 @@ export async function deleteAccountUploadBatchesClient(params: {
   };
 }
 
+function countSchedulableUploadFiles(batch: UploadBatch) {
+  return (batch.upload_files ?? []).filter(
+    (file) => file.status === "completed" && file.public_url && !file.removed,
+  ).length;
+}
+
 export async function ensureBatchWithFiles(batch: UploadBatch) {
-  if (batch.upload_files && batch.upload_files.length > 0) return batch;
+  const fileCount = batch.upload_files?.length ?? 0;
+  const completedCounter = batch.completed_files ?? 0;
+  const schedulable = countSchedulableUploadFiles(batch);
+
+  const needsRefresh =
+    (fileCount === 0 && batch.total_files > 0) ||
+    (completedCounter > 0 && schedulable === 0) ||
+    (schedulable > 0 && schedulable < completedCounter);
+
+  if (!needsRefresh) return batch;
   return refreshUploadBatch(batch.id);
 }
 

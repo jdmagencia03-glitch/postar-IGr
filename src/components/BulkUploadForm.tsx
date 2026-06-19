@@ -622,7 +622,11 @@ export function BulkUploadForm({
     void refreshActiveBatch();
   }
 
-  async function runScheduleJobFlow(items: Array<{ media_urls: string[]; filename: string }>, partial = false) {
+  async function runScheduleJobFlow(
+    items: Array<{ media_urls: string[]; filename: string }>,
+    partial = false,
+    videoCount = items.length,
+  ) {
     markStep("videos");
     setScheduleJobNotice(null);
 
@@ -636,7 +640,7 @@ export function BulkUploadForm({
     markStep("hashtags");
     markStep("calendar");
     setProgress(15);
-    setLoadingStep(`Processando ${items.length} vídeo(s) em segundo plano...`);
+    setLoadingStep(`Processando ${videoCount} vídeo(s) em segundo plano...`);
   }
 
   async function confirmAutopilotBatch(params: {
@@ -924,18 +928,30 @@ export function BulkUploadForm({
     }
 
     const items = getCompletedUploadItems(batchWithFiles);
-    if (!items.length) {
+    const readyCount = Math.max(
+      items.length,
+      batchWithFiles.completed_files ?? 0,
+      completedCount,
+    );
+
+    if (readyCount <= 0) {
+      setResult("Envie pelo menos um vídeo antes de agendar.");
+      return;
+    }
+
+    const useJobQueue = readyCount >= SCHEDULE_JOB_FORCE_THRESHOLD;
+
+    if (!items.length && !useJobQueue) {
       setResult(
-        completedCount > 0
-          ? "Não foi possível carregar a lista de vídeos enviados. Atualize a página e tente novamente."
-          : "Envie pelo menos um vídeo antes de agendar.",
+        "Não foi possível carregar a lista de vídeos enviados. Atualize a página e tente novamente.",
       );
       return;
     }
 
     if (effectiveScheduleMode === "today") {
       const maxToday = countTodayAvailableSlots();
-      if (items.length > maxToday) {
+      const countToSchedule = items.length || readyCount;
+      if (countToSchedule > maxToday) {
         setResult(
           `Só há espaço para ${maxToday} post(s) hoje. Use "Automático" ou envie menos vídeos.`,
         );
@@ -961,11 +977,9 @@ export function BulkUploadForm({
     setInsertionPreview(null);
     markStep("videos");
 
-    const useJobQueue = items.length >= SCHEDULE_JOB_FORCE_THRESHOLD;
-
     try {
       if (useJobQueue) {
-        await runScheduleJobFlow(items, partial);
+        await runScheduleJobFlow(items, partial, items.length || readyCount);
         setScheduling(false);
         setLoadingStep("");
         return;

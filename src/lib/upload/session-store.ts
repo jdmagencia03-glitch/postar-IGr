@@ -1208,8 +1208,7 @@ class UploadSessionStore {
       } else {
         const active = await fetchActiveBatch({ summary: true });
         if (active) {
-          const needsFull =
-            !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
+          const needsFull = !active.upload_files?.length && active.total_files > 0;
           this.batch = needsFull ? await refreshUploadBatch(active.id) : active;
         } else {
           this.batch = null;
