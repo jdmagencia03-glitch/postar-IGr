@@ -44,7 +44,7 @@ async function countSuccessLogs(supabase: AdminClient, postId: string) {
 export async function assertSafeToPublish(supabase: AdminClient, postId: string) {
   const { data: post, error } = await supabase
     .from("scheduled_posts")
-    .select("status, media_id")
+    .select("status, media_id, provider_publish_id")
     .eq("id", postId)
     .maybeSingle();
 
@@ -58,6 +58,10 @@ export async function assertSafeToPublish(supabase: AdminClient, postId: string)
 
   if (post.media_id) {
     throw new PublishGuardError("Post já possui media_id — republicação bloqueada");
+  }
+
+  if (post.provider_publish_id) {
+    throw new PublishGuardError("Post já possui publish_id do provedor — republicação bloqueada");
   }
 
   if (post.status === "published") {
@@ -288,9 +292,23 @@ export async function markPostPublished(
     container_id?: string | null;
     media_id: string;
     permalink?: string | null;
+    provider_publish_id?: string | null;
+    provider_status?: string | null;
+    provider_response?: Record<string, unknown> | null;
   },
 ) {
   await persistPublishedMediaIdWithRetry(supabase, postId, fields);
+
+  if (fields.provider_publish_id || fields.provider_status || fields.provider_response) {
+    await supabase
+      .from("scheduled_posts")
+      .update({
+        provider_publish_id: fields.provider_publish_id ?? undefined,
+        provider_status: fields.provider_status ?? undefined,
+        provider_response: fields.provider_response ?? undefined,
+      })
+      .eq("id", postId);
+  }
 }
 
 /** Mantém em processing se IG publicou mas banco falhou — NUNCA volta para pending. */

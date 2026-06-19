@@ -27,6 +27,18 @@ export const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
 
 export const UPLOAD_PROGRESS_DB_SYNC_BYTES = 64 * 1024 * 1024;
 
+/** Sem bytes novos neste intervalo → upload TUS considerado travado. */
+export const UPLOAD_STALL_TIMEOUT_MS = readPositiveInt(
+  process.env.UPLOAD_STALL_TIMEOUT_MS,
+  120_000,
+);
+
+/** Timeout absoluto por arquivo (fallback para conexões zumbis). */
+export const UPLOAD_FILE_TIMEOUT_MS = readPositiveInt(
+  process.env.UPLOAD_FILE_TIMEOUT_MS,
+  30 * 60_000,
+);
+
 /** Cache CDN — paths são imutáveis (uuid por arquivo). */
 export const STORAGE_CACHE_CONTROL = "31536000";
 

@@ -45,7 +45,7 @@ export function AccountOperationsGrid({ accounts }: Props) {
         const username = account.username ? `@${account.username}` : "conta";
         const reconnectHref =
           account.platform === "tiktok"
-            ? `/api/auth/tiktok?next=/dashboard/accounts/${account.id}/diagnostics?platform=tiktok`
+            ? `/api/tiktok/connect?next=/dashboard/accounts/${account.id}/diagnostics?platform=tiktok&add_account=1`
             : `/api/auth/meta?next=/dashboard/accounts/${account.id}/diagnostics?platform=instagram`;
 
         return (

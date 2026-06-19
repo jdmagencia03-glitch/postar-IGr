@@ -110,7 +110,9 @@ export function deriveUploadSessionView(params: {
             ? "pausado"
             : canSelectFiles
               ? "aguardando"
-              : "enviando";
+              : pendingCount > 0
+                ? "reconectando"
+                : "aguardando";
 
   const hasIncomplete =
     Boolean(batch) &&

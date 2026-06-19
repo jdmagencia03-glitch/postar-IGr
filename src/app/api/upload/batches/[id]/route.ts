@@ -1,6 +1,6 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
-import { getBatchForOwner } from "@/lib/upload/batches";
+import { getBatchForOwner, getBatchFileStatusCounts } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -37,7 +37,13 @@ export async function GET(
     return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
   }
 
-  return NextResponse.json({ batch });
+  const fileCounts = await getBatchFileStatusCounts(supabase, id);
+
+  return NextResponse.json({
+    batch,
+    fileCounts,
+    pendingTotal: fileCounts.pending + fileCounts.uploading,
+  });
 }
 
 export async function PATCH(

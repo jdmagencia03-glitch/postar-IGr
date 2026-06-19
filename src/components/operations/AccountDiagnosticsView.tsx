@@ -20,6 +20,13 @@ interface DiagnosticsPayload {
     connectionStatus: string;
     connectionMessage: string | null;
     permissions: string[];
+    tiktokCreator?: {
+      username: string | null;
+      nickname: string | null;
+      max_video_post_duration_sec: number | null;
+      last_validated_at: string | null;
+      last_validation_error: string | null;
+    } | null;
     playbookConfigured: boolean;
     niche: string | null;
     recentLogs: Array<{ level: string; message: string; created_at: string }>;
@@ -50,7 +57,7 @@ export function AccountDiagnosticsView({
   const username = initial.account.username ? `@${initial.account.username}` : "conta";
   const reconnectHref =
     platform === "tiktok"
-      ? `/api/auth/tiktok?next=/dashboard/accounts/${accountId}/diagnostics?platform=tiktok`
+      ? `/api/tiktok/connect?next=/dashboard/accounts/${accountId}/diagnostics?platform=tiktok&add_account=1`
       : `/api/auth/meta?next=/dashboard/accounts/${accountId}/diagnostics?platform=instagram`;
 
   async function togglePause() {
@@ -120,6 +127,31 @@ export function AccountDiagnosticsView({
                   {initial.diagnostics.permissions.join(", ")}
                 </dd>
               </div>
+            )}
+            {platform === "tiktok" && initial.diagnostics.tiktokCreator && (
+              <>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-ig-muted">Creator</dt>
+                  <dd className="font-medium text-ig-text">
+                    {initial.diagnostics.tiktokCreator.username
+                      ? `@${initial.diagnostics.tiktokCreator.username}`
+                      : initial.diagnostics.tiktokCreator.nickname ?? "—"}
+                  </dd>
+                </div>
+                {initial.diagnostics.tiktokCreator.max_video_post_duration_sec && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ig-muted">Duração máxima</dt>
+                    <dd className="font-medium text-ig-text">
+                      {initial.diagnostics.tiktokCreator.max_video_post_duration_sec}s
+                    </dd>
+                  </div>
+                )}
+                {initial.diagnostics.tiktokCreator.last_validation_error && (
+                  <p className="text-xs text-ig-danger">
+                    {initial.diagnostics.tiktokCreator.last_validation_error}
+                  </p>
+                )}
+              </>
             )}
           </dl>
           <div className="mt-4 space-y-4">

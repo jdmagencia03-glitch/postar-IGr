@@ -1,5 +1,5 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
-import { uploadBatchFile } from "@/lib/upload/client";
+import { applyBatchFilePatch, uploadBatchFile } from "@/lib/upload/client";
 
 type UploadOutcome = "done" | "requeue" | "stopped";
 
@@ -223,7 +223,6 @@ export class UploadEngine {
     const fileProgress = new Map<string, { percent: number; filename: string }>();
     this.targetConcurrency = Math.max(1, this.fileConcurrency);
     const pendingQueue = [...records];
-    let finishedCount = 0;
     this.workerPromises = [];
 
     const uploadOne = async (record: UploadBatchFile): Promise<UploadOutcome> => {
@@ -242,24 +241,26 @@ export class UploadEngine {
         await this.waitWhilePaused();
         if (this.stopped) return "stopped";
 
-        batch = await this.withBatchLock(() =>
-          uploadBatchFile({
-            batch,
-            record: currentRecord,
-            file,
-            signal: controller.signal,
-            onProgress: (loaded, total) => {
-              fileProgress.set(currentRecord.id, {
-                percent: Math.round((loaded / total) * 100),
-                filename: currentRecord.filename,
-              });
+        const patch = await uploadBatchFile({
+          batch,
+          record: currentRecord,
+          file,
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            fileProgress.set(currentRecord.id, {
+              percent: Math.round((loaded / total) * 100),
+              filename: currentRecord.filename,
+            });
 
-              this.liveLoadedBytes.set(currentRecord.id, loaded);
-              this.updateSpeed(this.sumLiveBytes(batch));
-              this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
-              this.emitProgress(batch, fileProgress);
-            },
-          }),
+            this.liveLoadedBytes.set(currentRecord.id, loaded);
+            this.updateSpeed(this.sumLiveBytes(batch));
+            this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
+            this.emitProgress(batch, fileProgress);
+          },
+        });
+
+        batch = await this.withBatchLock(() =>
+          Promise.resolve(applyBatchFilePatch(batch, patch)),
         );
 
         const updatedRecord = batch.upload_files?.find((item) => item.id === currentRecord.id);
@@ -279,7 +280,6 @@ export class UploadEngine {
 
         fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
         this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
-        finishedCount += 1;
         this.callbacks.onBatchUpdate?.(batch);
         this.emitProgress(batch, fileProgress);
         return "done";

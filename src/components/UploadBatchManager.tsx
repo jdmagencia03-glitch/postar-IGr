@@ -11,6 +11,7 @@ import {
   getCompletedUploadItems,
   matchFileToRecord,
   refreshUploadBatch,
+  applyBatchFilePatch,
   uploadBatchFile,
 } from "@/lib/upload/client";
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
@@ -88,7 +89,7 @@ export function UploadBatchManager({
       if (!file) continue;
 
       try {
-        latestBatch = await uploadBatchFile({
+        const patch = await uploadBatchFile({
           batch: latestBatch,
           record,
           file,
@@ -99,6 +100,7 @@ export function UploadBatchManager({
             }));
           },
         });
+        latestBatch = applyBatchFilePatch(latestBatch, patch);
         syncBatch(latestBatch);
       } catch (error) {
         latestBatch = await refreshUploadBatch(latestBatch.id);

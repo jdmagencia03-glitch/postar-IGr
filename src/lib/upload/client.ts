@@ -13,11 +13,13 @@ export interface UploadFilePatchResult {
 
 export function applyBatchFilePatch(batch: UploadBatch, patch: UploadFilePatchResult): UploadBatch {
   const counters = patch.counters;
+  const completed = counters?.completed ?? batch.completed_files;
+  const failed = counters?.failed ?? batch.failed_files;
   return {
     ...batch,
     total_files: counters?.total ?? batch.total_files,
-    completed_files: counters?.completed ?? batch.completed_files,
-    failed_files: counters?.failed ?? batch.failed_files,
+    completed_files: Math.max(batch.completed_files, completed),
+    failed_files: Math.max(batch.failed_files, failed),
     status: counters?.status ?? batch.status,
     upload_files: (batch.upload_files ?? []).map((item) =>
       item.id === patch.file.id ? { ...item, ...patch.file } : item,
@@ -122,7 +124,7 @@ export async function uploadBatchFile(params: {
   file: File;
   signal?: AbortSignal;
   onProgress?: (bytesUploaded: number, bytesTotal: number) => void;
-}) {
+}): Promise<UploadFilePatchResult> {
   const { batch, file, onProgress, signal } = params;
   let record = params.record;
 
@@ -224,7 +226,7 @@ export async function uploadBatchFile(params: {
         throw new Error(String(patchData.error ?? "Falha ao salvar upload"));
       }
 
-      return applyBatchFilePatch(batch, patchData);
+      return patchData;
     } catch (error) {
       if (signal?.aborted) throw error;
       if (attempt === RETRY_DELAYS.length - 1) {
@@ -239,7 +241,7 @@ export async function uploadBatchFile(params: {
         });
         const failData = (await failRes.json()) as UploadFilePatchResult & { error?: unknown };
         if (failRes.ok) {
-          return applyBatchFilePatch(batch, failData);
+          return failData;
         }
         throw error;
       }

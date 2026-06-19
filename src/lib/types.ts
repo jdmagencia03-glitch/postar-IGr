@@ -29,6 +29,19 @@ export interface InstagramAccount {
   updated_at: string;
 }
 
+export type TikTokAccountStatus = "active" | "error" | "disconnected";
+
+export interface TikTokCreatorValidation {
+  username: string | null;
+  nickname: string | null;
+  avatar_url: string | null;
+  max_video_post_duration_sec: number | null;
+  privacy_level_options: string[];
+  comment_disabled: boolean;
+  duet_disabled: boolean;
+  stitch_disabled: boolean;
+}
+
 export interface TikTokAccount {
   id: string;
   owner_id: string;
@@ -42,6 +55,11 @@ export interface TikTokAccount {
   refresh_expires_at: string | null;
   scopes: string | null;
   publishing_paused?: boolean;
+  last_validated_at?: string | null;
+  last_validation_error?: string | null;
+  status?: TikTokAccountStatus;
+  creator_max_duration_sec?: number | null;
+  creator_username?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +96,9 @@ export interface ScheduledPost {
   permalink: string | null;
   error_message: string | null;
   published_at: string | null;
+  provider_publish_id?: string | null;
+  provider_status?: string | null;
+  provider_response?: Record<string, unknown> | null;
   media_cleaned_at?: string | null;
   hidden_from_report?: boolean;
   created_at: string;

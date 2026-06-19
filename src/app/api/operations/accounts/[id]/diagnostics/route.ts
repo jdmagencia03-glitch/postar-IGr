@@ -7,6 +7,7 @@ import { buildAccountOperationsSummary } from "@/lib/operations/account-ops";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
+import { validateTikTokConnection } from "@/lib/tiktok/validate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SocialPlatform } from "@/lib/types";
 
@@ -42,6 +43,13 @@ export async function GET(
   let permissions: string[] = [];
   let igAccount = null;
   let tiktokAccount = null;
+  let tiktokCreator: {
+    username: string | null;
+    nickname: string | null;
+    max_video_post_duration_sec: number | null;
+    last_validated_at: string | null;
+    last_validation_error: string | null;
+  } | null = null;
 
   if (platform === "instagram") {
     igAccount = await getOwnerAccountById(supabase, ownerId, id);
@@ -61,14 +69,44 @@ export async function GET(
     tiktokAccount = await getOwnerTikTokAccountById(supabase, ownerId, id);
     if (tiktokAccount) {
       permissions = tiktokAccount.scopes?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-      if (!tiktokAccount.token_expires_at) {
+      if (tiktokAccount.status === "error") {
+        tokenStatus = "expired";
+        connectionMessage =
+          tiktokAccount.last_validation_error ?? "Conta com erro — reconecte o TikTok";
+      } else if (!tiktokAccount.token_expires_at) {
         tokenStatus = "unknown";
         connectionMessage = "Expiração do token não informada";
       } else {
         tokenStatus =
           new Date(tiktokAccount.token_expires_at).getTime() > Date.now() ? "valid" : "expired";
         connectionMessage =
-          tokenStatus === "valid" ? "Token TikTok válido" : "Token TikTok expirado — reconecte";
+          tokenStatus === "valid"
+            ? "Token TikTok válido (renovação automática quando necessário)"
+            : "Token TikTok expirado — será renovado na próxima publicação ou reconecte";
+      }
+
+      tiktokCreator = {
+        username: tiktokAccount.creator_username ?? tiktokAccount.username,
+        nickname: tiktokAccount.display_name,
+        max_video_post_duration_sec: tiktokAccount.creator_max_duration_sec ?? null,
+        last_validated_at: tiktokAccount.last_validated_at ?? null,
+        last_validation_error: tiktokAccount.last_validation_error ?? null,
+      };
+
+      try {
+        const live = await validateTikTokConnection(supabase, ownerId, id, { persist: false });
+        if (live.creator) {
+          tiktokCreator = {
+            username: live.creator.username,
+            nickname: live.creator.nickname,
+            max_video_post_duration_sec: live.creator.max_video_post_duration_sec,
+            last_validated_at: tiktokAccount.last_validated_at ?? live.checkedAt,
+            last_validation_error: live.overall === "error" ? live.summary : null,
+          };
+          if (live.overall === "ok") tokenStatus = "valid";
+        }
+      } catch {
+        // Mantém dados locais se API live falhar
       }
     }
   }
@@ -112,6 +150,7 @@ export async function GET(
       permissions,
       playbookConfigured: playbookHasContent(playbook),
       niche,
+      tiktokCreator,
       recentLogs: recentLogs ?? [],
     },
     alerts,

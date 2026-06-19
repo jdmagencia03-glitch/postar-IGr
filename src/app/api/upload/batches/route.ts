@@ -7,6 +7,7 @@ import {
   buildUploadFileRows,
   getActiveBatchForOwner,
   getActiveBatchSummaryForOwner,
+  getBatchFileStatusCounts,
   getUploadingBatchForOwner,
   insertUploadFiles,
 } from "@/lib/upload/batches";
@@ -68,7 +69,17 @@ export async function GET(request: NextRequest) {
     ? await getActiveBatchSummaryForOwner(supabase, ownerId)
     : await getActiveBatchForOwner(supabase, ownerId);
 
-  return NextResponse.json({ batch });
+  if (!batch) {
+    return NextResponse.json({ batch: null });
+  }
+
+  const fileCounts = await getBatchFileStatusCounts(supabase, batch.id);
+
+  return NextResponse.json({
+    batch,
+    fileCounts,
+    pendingTotal: fileCounts.pending + fileCounts.uploading,
+  });
 }
 
 export async function POST(request: NextRequest) {

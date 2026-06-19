@@ -148,7 +148,7 @@ export default async function TikTokDashboardPage({
 
         <section className="ig-panel p-5">
           <h2 className="mb-4 text-lg font-semibold text-ig-text">Contas TikTok</h2>
-          <TikTokAccountsSection connectHref="/api/auth/tiktok?next=/dashboard/tiktok&add_account=1" />
+          <TikTokAccountsSection connectHref="/api/tiktok/connect?next=/dashboard/tiktok&add_account=1" />
         </section>
     </>
   );

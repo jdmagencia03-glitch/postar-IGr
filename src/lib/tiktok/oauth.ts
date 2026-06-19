@@ -9,7 +9,8 @@ const DEFAULT_TIKTOK_SCOPES = [
 ];
 
 export function getTikTokOAuthScopes() {
-  const fromEnv = process.env.TIKTOK_OAUTH_SCOPES?.trim();
+  const fromEnv =
+    process.env.TIKTOK_SCOPES?.trim() || process.env.TIKTOK_OAUTH_SCOPES?.trim();
   if (fromEnv) {
     return fromEnv
       .split(",")
@@ -25,7 +26,7 @@ export const TIKTOK_SCOPES = DEFAULT_TIKTOK_SCOPES.join(",");
 export function getTikTokRedirectUri() {
   const fromEnv = process.env.TIKTOK_REDIRECT_URI?.trim().replace(/\/$/, "");
   if (fromEnv) return fromEnv;
-  return `${getAppUrl()}/api/auth/tiktok/callback`;
+  return `${getAppUrl()}/api/tiktok/callback`;
 }
 
 export function isTikTokOAuthConfigured() {
@@ -171,4 +172,26 @@ export async function getTikTokProfile(accessToken: string) {
     display_name: user.display_name ?? null,
     profile_picture_url: user.avatar_url ?? null,
   };
+}
+
+export async function revokeAccessToken(accessToken: string) {
+  const { clientKey, clientSecret } = getTikTokCredentials();
+
+  const res = await fetch("https://open.tiktokapis.com/v2/oauth/revoke/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      token: accessToken,
+    }),
+  });
+
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as {
+      error_description?: string;
+      error?: string;
+    };
+    throw new Error(data.error_description ?? data.error ?? "Falha ao revogar token TikTok");
+  }
 }

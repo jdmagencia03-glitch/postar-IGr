@@ -48,7 +48,7 @@ function recommendAction(post: ScheduledPost): { action: string; href?: string }
   if (msg.includes("token") || msg.includes("expir") || msg.includes("permission") || msg.includes("oauth")) {
     const href =
       post.platform === "tiktok"
-        ? `/api/auth/tiktok?next=/dashboard/accounts/${accountId}/diagnostics?platform=tiktok`
+        ? `/api/tiktok/connect?next=/dashboard/accounts/${accountId}/diagnostics?platform=tiktok&add_account=1`
         : `/api/auth/meta?next=/dashboard/accounts/${accountId}/diagnostics?platform=instagram`;
     return { action: "Reconectar conta", href };
   }

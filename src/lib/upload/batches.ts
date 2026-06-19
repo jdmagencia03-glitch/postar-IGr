@@ -117,6 +117,7 @@ export async function getActiveBatchForOwner(supabase: SupabaseClient, ownerId: 
   const summary = await getActiveBatchSummaryForOwner(supabase, ownerId);
   if (!summary) return null;
 
+  await resetStaleUploadingFiles(supabase, summary.id);
   const upload_files = await getBatchUploadFiles(supabase, summary.id);
   return { ...summary, upload_files };
 }
@@ -135,6 +136,7 @@ export async function getBatchForOwner(
 
   if (!data) return null;
 
+  await resetStaleUploadingFiles(supabase, batchId);
   const upload_files = await getBatchUploadFiles(supabase, batchId);
   return { ...(data as UploadBatch), upload_files };
 }
@@ -171,6 +173,70 @@ export interface BatchCounters {
   completed: number;
   failed: number;
   status: UploadBatchStatus;
+}
+
+/** Arquivos órfãos em "uploading" após crash/refresh — voltam para pending. */
+const STALE_UPLOADING_MS = 15 * 60_000;
+
+export async function resetStaleUploadingFiles(
+  supabase: SupabaseClient,
+  batchId: string,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - STALE_UPLOADING_MS).toISOString();
+
+  const { data: stale, error: selectError } = await supabase
+    .from("upload_files")
+    .select("id")
+    .eq("batch_id", batchId)
+    .eq("status", "uploading")
+    .or("removed.is.null,removed.eq.false")
+    .lt("updated_at", cutoff);
+
+  if (selectError) throw new Error(selectError.message);
+  if (!stale?.length) return 0;
+
+  const { error: updateError } = await supabase
+    .from("upload_files")
+    .update({
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("batch_id", batchId)
+    .eq("status", "uploading")
+    .lt("updated_at", cutoff);
+
+  if (updateError) throw new Error(updateError.message);
+
+  await refreshBatchCounters(supabase, batchId);
+  return stale.length;
+}
+
+export async function getBatchFileStatusCounts(
+  supabase: SupabaseClient,
+  batchId: string,
+) {
+  const notRemoved = "removed.is.null,removed.eq.false";
+  const statuses = ["completed", "pending", "uploading", "failed"] as const;
+  const counts: Record<(typeof statuses)[number], number> = {
+    completed: 0,
+    pending: 0,
+    uploading: 0,
+    failed: 0,
+  };
+
+  await Promise.all(
+    statuses.map(async (status) => {
+      const { count } = await supabase
+        .from("upload_files")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", batchId)
+        .or(notRemoved)
+        .eq("status", status);
+      counts[status] = count ?? 0;
+    }),
+  );
+
+  return counts;
 }
 
 export async function refreshBatchCounters(

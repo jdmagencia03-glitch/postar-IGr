@@ -31,7 +31,7 @@ export default async function BulkPage({
             Conectar Instagram
           </a>
           <a
-            href="/api/auth/tiktok?next=/dashboard/bulk?platform=tiktok"
+            href="/api/tiktok/connect?next=/dashboard/bulk?platform=tiktok&add_account=1"
             className="ig-btn-secondary px-5 py-2.5"
           >
             Conectar TikTok

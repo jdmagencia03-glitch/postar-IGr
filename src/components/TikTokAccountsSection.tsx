@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Music2, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Loader2, Music2, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 
 export interface TikTokAccountItem {
@@ -10,6 +11,14 @@ export interface TikTokAccountItem {
   username: string | null;
   display_name: string | null;
   profile_picture_url: string | null;
+  scopes?: string | null;
+  status?: string;
+  token_valid?: boolean;
+  token_expires_at?: string | null;
+  publishing_paused?: boolean;
+  last_validated_at?: string | null;
+  last_validation_error?: string | null;
+  creator_max_duration_sec?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -21,13 +30,14 @@ interface Props {
 }
 
 export function TikTokAccountsSection({
-  connectHref = "/api/auth/tiktok?next=/dashboard/tiktok&add_account=1",
+  connectHref = "/api/tiktok/connect?next=/dashboard/tiktok&add_account=1",
   compact = false,
   onAccountsChange,
 }: Props) {
   const [accounts, setAccounts] = useState<TikTokAccountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [validatingId, setValidatingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const fetchAccounts = useCallback(async () => {
@@ -52,8 +62,29 @@ export function TikTokAccountsSection({
     fetchAccounts();
   }, [fetchAccounts]);
 
-  async function handleRemove(accountId: string, label: string) {
-    if (!confirm(`Remover ${label}? Os posts TikTok agendados também serão apagados.`)) {
+  async function handleValidate(accountId: string) {
+    setValidatingId(accountId);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/tiktok/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ account_id: accountId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(String(data.error ?? "Falha na validação"));
+      setMessage(data.summary ?? "Validação concluída");
+      await fetchAccounts();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Erro na validação");
+    } finally {
+      setValidatingId(null);
+    }
+  }
+
+  async function handleDisconnect(accountId: string, label: string) {
+    if (!confirm(`Desconectar ${label}? Os posts TikTok agendados também serão apagados.`)) {
       return;
     }
 
@@ -61,18 +92,20 @@ export function TikTokAccountsSection({
     setMessage(null);
 
     try {
-      const res = await fetch(`/api/tiktok/accounts?id=${accountId}`, {
-        method: "DELETE",
+      const res = await fetch("/api/tiktok/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({ account_id: accountId }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(String(data.error ?? "Falha ao remover conta"));
+        throw new Error(String(data.error ?? "Falha ao desconectar conta"));
       }
-      setMessage("Conta TikTok removida.");
+      setMessage("Conta TikTok desconectada.");
       await fetchAccounts();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao remover conta");
+      setMessage(error instanceof Error ? error.message : "Erro ao desconectar conta");
     } finally {
       setRemovingId(null);
     }
@@ -126,6 +159,8 @@ export function TikTokAccountsSection({
           const label = account.username
             ? `@${account.username}`
             : account.display_name ?? "Conta TikTok";
+          const needsReconnect = account.status === "error" || account.token_valid === false;
+          const reconnectHref = `/api/tiktok/connect?next=/dashboard/tiktok&add_account=1`;
 
           return (
             <article
@@ -150,6 +185,30 @@ export function TikTokAccountsSection({
                   <p className="mt-1 text-xs text-ig-muted">
                     Conectada em {formatDateTime(account.created_at)}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    <span
+                      className={`rounded-full px-2 py-0.5 ${
+                        needsReconnect
+                          ? "bg-ig-danger/10 text-ig-danger"
+                          : "bg-emerald-500/10 text-emerald-700"
+                      }`}
+                    >
+                      {needsReconnect ? "Reconexão necessária" : "Token OK"}
+                    </span>
+                    {account.publishing_paused && (
+                      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-700">
+                        Pausada
+                      </span>
+                    )}
+                    {account.creator_max_duration_sec && (
+                      <span className="rounded-full bg-ig-secondary px-2 py-0.5 text-ig-muted">
+                        Máx. {account.creator_max_duration_sec}s
+                      </span>
+                    )}
+                  </div>
+                  {account.last_validation_error && (
+                    <p className="mt-2 text-xs text-ig-danger">{account.last_validation_error}</p>
+                  )}
                 </div>
               </div>
 
@@ -161,14 +220,36 @@ export function TikTokAccountsSection({
                   >
                     Agendar vídeos
                   </a>
+                  <Link
+                    href={`/dashboard/accounts/${account.id}/diagnostics?platform=tiktok`}
+                    className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
+                  >
+                    Diagnóstico
+                  </Link>
                   <button
                     type="button"
-                    onClick={() => handleRemove(account.id, label)}
+                    onClick={() => void handleValidate(account.id)}
+                    disabled={validatingId === account.id}
+                    className="inline-flex items-center gap-1 rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface disabled:opacity-50"
+                  >
+                    <ShieldCheck size={14} />
+                    {validatingId === account.id ? "Validando…" : "Validar"}
+                  </button>
+                  <a
+                    href={reconnectHref}
+                    className="inline-flex items-center gap-1 rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
+                  >
+                    <RefreshCw size={14} />
+                    Reconectar
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => void handleDisconnect(account.id, label)}
                     disabled={removingId === account.id}
                     className="ml-auto flex items-center gap-1 rounded-lg border border-red-500/20 bg-ig-danger/10 px-3 py-1.5 text-xs text-ig-danger hover:bg-red-500/20 disabled:opacity-50"
                   >
                     <Trash2 size={14} />
-                    {removingId === account.id ? "Removendo..." : "Remover"}
+                    {removingId === account.id ? "Desconectando…" : "Desconectar"}
                   </button>
                 </div>
               )}

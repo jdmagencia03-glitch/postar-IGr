@@ -1,6 +1,6 @@
 import { getOwnerAccountById, getAccountAccessToken } from "@/lib/accounts";
 import { checkInstagramAccountHealth } from "@/lib/meta/instagram";
-import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
+import { validateTikTokConnection } from "@/lib/tiktok/validate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SocialPlatform } from "@/lib/types";
 
@@ -39,79 +39,11 @@ export async function validateAccountPermissions(
   const checkedAt = new Date().toISOString();
 
   if (platform === "tiktok") {
-    const account = await getOwnerTikTokAccountById(supabase, ownerId, accountId);
-    if (!account) {
-      return {
-        overall: "error",
-        summary: "Conta TikTok não encontrada.",
-        checks: [],
-        platform,
-        accountId,
-        username: null,
-        checkedAt,
-      };
-    }
-
-    const tokenValid =
-      account.token_expires_at && new Date(account.token_expires_at).getTime() > Date.now();
-
-    checks.push({
-      key: "token",
-      label: "Token",
-      level: levelFromBoolean(Boolean(tokenValid)),
-      message: tokenValid ? "Token válido" : "Token expirado — reconecte a conta",
+    const result = await validateTikTokConnection(supabase, ownerId, accountId, {
+      persist: true,
     });
-
-    checks.push({
-      key: "publish",
-      label: "Publicação",
-      level: tokenValid ? "ok" : "error",
-      message: tokenValid
-        ? "Integração TikTok conectada para publicação"
-        : "Reconecte para publicar vídeos",
-    });
-
-    if (account.scopes) {
-      const hasPublish = account.scopes.includes("video.publish") || account.scopes.includes("video.upload");
-      checks.push({
-        key: "scopes",
-        label: "Permissões",
-        level: levelFromBoolean(hasPublish, !hasPublish),
-        message: hasPublish
-          ? `Scopes: ${account.scopes}`
-          : "Permissão de publicação de vídeo não confirmada nos scopes",
-      });
-    }
-
-    if (account.publishing_paused) {
-      checks.push({
-        key: "paused",
-        label: "Publicações",
-        level: "attention",
-        message: "Conta pausada — cron não publicará até retomar",
-      });
-    }
-
-    const overall = checks.some((c) => c.level === "error")
-      ? "error"
-      : checks.some((c) => c.level === "attention")
-        ? "attention"
-        : "ok";
-
-    return {
-      overall,
-      summary:
-        overall === "ok"
-          ? "Conta validada com sucesso. Publicação liberada."
-          : overall === "attention"
-            ? "Conta conectada, mas há pontos de atenção."
-            : "Erro na validação — reconecte ou revise permissões.",
-      checks,
-      platform,
-      accountId,
-      username: account.username ?? account.display_name,
-      checkedAt,
-    };
+    const { creator: _creator, ...rest } = result;
+    return rest;
   }
 
   const account = await getOwnerAccountById(supabase, ownerId, accountId);

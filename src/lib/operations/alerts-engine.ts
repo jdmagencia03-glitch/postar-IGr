@@ -124,7 +124,7 @@ export function buildOperationsAlerts(params: {
         accountUsername: account.username,
         actionHref:
           account.platform === "tiktok"
-            ? `/api/auth/tiktok?next=/dashboard/accounts/${account.id}/diagnostics`
+            ? `/api/tiktok/connect?next=/dashboard/accounts/${account.id}/diagnostics&add_account=1`
             : `/api/auth/meta?next=/dashboard/accounts/${account.id}/diagnostics`,
         actionLabel: "Reconectar",
       });

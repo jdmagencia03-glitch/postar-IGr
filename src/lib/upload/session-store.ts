@@ -7,6 +7,7 @@ import {
   createUploadBatch,
   ensureBatchWithFiles,
   fetchActiveBatch,
+  fileFingerprint,
   findRecordForUpload,
   matchFileToRecord,
   refreshUploadBatch,
@@ -22,7 +23,7 @@ import {
   matchFilesToManifest,
   saveManifestEntries,
 } from "@/lib/upload/manifest-store";
-import { getSpeedPresets } from "@/lib/upload/storage-config";
+import { getSpeedPresets, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
@@ -70,12 +71,89 @@ class UploadSessionStore {
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryScheduled = false;
   private autoRetryResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private lastProgressAt = 0;
+  private lastProgressBytes = 0;
+  private recoveringFromStall = false;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
   private static readonly AUTO_RETRY_RESET_MS = 60_000;
+  private static readonly STALL_CHECK_INTERVAL_MS = 10_000;
 
   private logUpload(event: string, detail?: Record<string, unknown>) {
     if (typeof console !== "undefined") {
       console.info(`[upload-session] ${event}`, detail ?? "");
+    }
+  }
+
+  private touchProgress(bytesUploaded?: number) {
+    this.lastProgressAt = Date.now();
+    if (bytesUploaded != null) {
+      this.lastProgressBytes = bytesUploaded;
+    }
+  }
+
+  private startStallWatchdog() {
+    this.stopStallWatchdog();
+    this.touchProgress(this.progress?.bytesUploaded ?? 0);
+
+    this.stallWatchdogTimer = setInterval(() => {
+      if (!this.running || this.pausedByUser || this.retrying || this.recoveringFromStall) return;
+
+      const idleMs = Date.now() - this.lastProgressAt;
+      if (idleMs >= UPLOAD_STALL_TIMEOUT_MS) {
+        void this.recoverFromStall(idleMs);
+      }
+    }, UploadSessionStore.STALL_CHECK_INTERVAL_MS);
+  }
+
+  private stopStallWatchdog() {
+    if (this.stallWatchdogTimer) {
+      clearInterval(this.stallWatchdogTimer);
+      this.stallWatchdogTimer = null;
+    }
+  }
+
+  private async recoverFromStall(idleMs: number) {
+    if (!this.running || this.pausedByUser || this.recoveringFromStall || !this.batch) return;
+
+    this.recoveringFromStall = true;
+    this.logUpload("stall_detected", { idleMs, completed: this.progress?.completed });
+    this.message = "Upload parou de responder. Reconectando automaticamente…";
+    this.stopStallWatchdog();
+
+    const batchId = this.batch.id;
+    const fileMap = this.lastFileMap;
+
+    this.engine?.stop();
+    this.engine = null;
+    this.running = false;
+    this.engineStarting = false;
+    this.recoveringFromStall = false;
+    this.emit();
+
+    if (fileMap.size > 0 && !this.pausedByUser) {
+      await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
+    }
+  }
+
+  private async persistManifest(batch: UploadBatch, fileMap: Map<string, File>) {
+    const entries = [...fileMap.entries()]
+      .map(([fileId, file]) => {
+        const record = batch.upload_files?.find((item) => item.id === fileId);
+        if (!record || record.status === "completed") return null;
+        return {
+          fileId,
+          batchId: batch.id,
+          name: file.name,
+          size: file.size,
+          lastModified: file.lastModified,
+          fingerprint: record.file_hash ?? fileFingerprint(file),
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry != null);
+
+    if (entries.length) {
+      await saveManifestEntries(entries);
     }
   }
 
@@ -242,6 +320,9 @@ class UploadSessionStore {
 
   private scheduleProgressUpdate = (next: UploadEngineProgress) => {
     this.pendingProgress = next;
+    if (next.bytesUploaded > this.lastProgressBytes) {
+      this.touchProgress(next.bytesUploaded);
+    }
     if (this.progressFrame !== null) return;
     this.progressFrame = requestAnimationFrame(() => {
       this.progressFrame = null;
@@ -276,12 +357,19 @@ class UploadSessionStore {
 
     try {
       const active = await fetchActiveBatch({ summary: true });
-      this.batch = active;
-      if (active?.upload_speed_mode) this.speedMode = active.upload_speed_mode;
-      if (active?.paused) this.pausedByUser = true;
-      if (active?.upload_files?.length) {
+      if (active) {
+        const needsFull =
+          !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
+        this.batch = needsFull ? await refreshUploadBatch(active.id) : active;
+      } else {
+        this.batch = null;
+      }
+
+      if (this.batch?.upload_speed_mode) this.speedMode = this.batch.upload_speed_mode;
+      if (this.batch?.paused) this.pausedByUser = true;
+      if (this.batch?.upload_files?.length) {
         const initialProgress: Record<string, number> = {};
-        for (const file of active.upload_files) {
+        for (const file of this.batch.upload_files) {
           const uploaded = Number(file.bytes_uploaded ?? 0);
           const total = Number(file.file_size);
           if (uploaded > 0 && total > 0 && file.status !== "completed") {
@@ -289,6 +377,12 @@ class UploadSessionStore {
           }
         }
         this.progressMap = initialProgress;
+      }
+
+      if (this.batch && this.needsFileReselection()) {
+        const completed = this.batch.completed_files ?? 0;
+        const total = this.batch.total_files ?? 0;
+        this.message = `${completed} de ${total} já enviados. Selecione os vídeos pendentes para continuar — eles não serão reenviados.`;
       }
     } catch (error) {
       this.setUserMessage(error, "Erro ao carregar lote");
@@ -460,6 +554,7 @@ class UploadSessionStore {
           this.emit();
         },
         onFileProgress: (fileId, loaded, total) => {
+          this.touchProgress();
           const percent = Math.round((loaded / total) * 100);
           if (this.progressMap[fileId] !== percent) {
             this.progressMap = { ...this.progressMap, [fileId]: percent };
@@ -492,6 +587,9 @@ class UploadSessionStore {
       this.logUpload("engine_start", { batchId, files: fileMap.size, onlyFileIds });
       this.emit();
 
+      await this.persistManifest(currentBatch, fileMap);
+      this.startStallWatchdog();
+
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
     } catch (error) {
       this.logUpload("engine_crash", {
@@ -500,6 +598,7 @@ class UploadSessionStore {
       });
       this.setUserMessage(error, "Erro durante upload");
     } finally {
+      this.stopStallWatchdog();
       this.running = false;
       this.engineStarting = false;
       this.emit();
@@ -767,9 +866,11 @@ class UploadSessionStore {
       if (this.running || this.retrying) {
         this.batch = refreshed;
         const nextProgress: Record<string, number> = { ...this.progressMap };
+        let dbBytesTotal = 0;
         for (const file of refreshed.upload_files ?? []) {
           const uploaded = Number(file.bytes_uploaded ?? 0);
           const total = Number(file.file_size);
+          dbBytesTotal += uploaded;
           if (file.status === "completed") {
             nextProgress[file.id] = 100;
           } else if (uploaded > 0 && total > 0) {
@@ -777,6 +878,18 @@ class UploadSessionStore {
           }
         }
         this.progressMap = nextProgress;
+
+        const sessionBytes = this.progress?.bytesUploaded ?? 0;
+        const bytesMoved = dbBytesTotal > this.lastProgressBytes || sessionBytes > this.lastProgressBytes;
+        if (bytesMoved) {
+          this.touchProgress(Math.max(dbBytesTotal, sessionBytes));
+        } else if (
+          Date.now() - this.lastProgressAt >= UPLOAD_STALL_TIMEOUT_MS &&
+          !this.recoveringFromStall
+        ) {
+          void this.recoverFromStall(Date.now() - this.lastProgressAt);
+        }
+
         this.emit();
         return;
       }

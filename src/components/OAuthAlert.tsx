@@ -72,7 +72,7 @@ export function OAuthAlert({
           {platform === "tiktok" && tiktokEnabled && (
             <div className="mt-4">
               <a
-                href="/api/auth/tiktok?next=/dashboard/tiktok&add_account=1"
+                href="/api/tiktok/connect?next=/dashboard/tiktok&add_account=1"
                 className="inline-flex items-center gap-2 rounded-lg border border-ig-border bg-ig-secondary px-4 py-2 text-xs text-ig-text hover:bg-ig-surface"
               >
                 <Music2 size={14} />

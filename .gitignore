@@ -37,6 +37,7 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 .env*.local
+.env.vercel*
 !.env.local.example
 
 # secrets / keys
@@ -51,3 +52,7 @@ secrets/
 *.tsbuildinfo
 
 .vercel
+
+.vercel
+
+.env*

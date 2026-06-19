@@ -57,6 +57,7 @@ function deriveHealth(params: {
 }
 
 function tiktokTokenStatus(account: TikTokAccount): TokenStatus {
+  if (account.status === "error") return "expired";
   if (!account.token_expires_at) return "unknown";
   return new Date(account.token_expires_at).getTime() > Date.now() ? "valid" : "expired";
 }

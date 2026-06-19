@@ -1,5 +1,10 @@
 import * as tus from "tus-js-client";
-import { STORAGE_CACHE_CONTROL, TUS_CHUNK_SIZE } from "@/lib/upload/storage-config";
+import {
+  STORAGE_CACHE_CONTROL,
+  TUS_CHUNK_SIZE,
+  UPLOAD_FILE_TIMEOUT_MS,
+  UPLOAD_STALL_TIMEOUT_MS,
+} from "@/lib/upload/storage-config";
 
 export interface TusPrepareResponse {
   tusEndpoint: string;
@@ -26,6 +31,27 @@ export function uploadFileWithTus(params: {
 }) {
   let uploadRef: tus.Upload | null = null;
   let abortedByUser = false;
+  let stallTimer: ReturnType<typeof setTimeout> | null = null;
+  let absoluteTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearTimers = () => {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+    if (absoluteTimer) {
+      clearTimeout(absoluteTimer);
+      absoluteTimer = null;
+    }
+  };
+
+  const resetStallTimer = (reject: (error: Error) => void) => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      uploadRef?.abort(true);
+      reject(new Error("Upload sem progresso — reconectando automaticamente…"));
+    }, UPLOAD_STALL_TIMEOUT_MS);
+  };
 
   const chunkSize = params.prepare.chunkSize || TUS_CHUNK_SIZE;
   // Supabase: só enviar dados no POST inicial se couber em 1 chunk (≤6MB).
@@ -58,6 +84,7 @@ export function uploadFileWithTus(params: {
         return Promise.resolve(base);
       },
       onProgress: (bytesUploaded, bytesTotal) => {
+        resetStallTimer(reject);
         params.onProgress?.(bytesUploaded, bytesTotal);
       },
       onShouldRetry(error) {
@@ -67,22 +94,32 @@ export function uploadFileWithTus(params: {
         return true;
       },
       onError: (error) => {
+        clearTimers();
         if (abortedByUser) {
           reject(new DOMException("Upload pausado", "AbortError"));
           return;
         }
         reject(error);
       },
-      onSuccess: () => resolve(),
+      onSuccess: () => {
+        clearTimers();
+        resolve();
+      },
     });
 
     uploadRef = upload;
+
+    absoluteTimer = setTimeout(() => {
+      upload.abort(true);
+      reject(new Error("Tempo máximo de upload excedido — tentando novamente…"));
+    }, UPLOAD_FILE_TIMEOUT_MS);
 
     if (params.signal) {
       params.signal.addEventListener(
         "abort",
         () => {
           abortedByUser = true;
+          clearTimers();
           upload.abort(false);
         },
         { once: true },
@@ -95,15 +132,20 @@ export function uploadFileWithTus(params: {
         if (params.resumePrevious !== false && previousUploads.length > 0) {
           upload.resumeFromPreviousUpload(previousUploads[0]);
         }
+        resetStallTimer(reject);
         upload.start();
       })
-      .catch(reject);
+      .catch((error) => {
+        clearTimers();
+        reject(error);
+      });
   });
 
   return {
     promise,
     abort: (terminate = false) => {
       abortedByUser = true;
+      clearTimers();
       uploadRef?.abort(terminate);
     },
   };

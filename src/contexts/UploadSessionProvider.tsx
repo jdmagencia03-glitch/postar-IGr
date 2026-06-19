@@ -27,10 +27,19 @@ export function UploadSessionProvider({ children }: { children: ReactNode }) {
       void uploadSessionStore.reconcileOnForeground();
     };
 
+    const reconcileTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      const snapshot = uploadSessionStore.getSnapshot();
+      if (snapshot.running || snapshot.retrying) {
+        void uploadSessionStore.reconcileOnForeground();
+      }
+    }, 30_000);
+
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("focus", onFocus);
 
     return () => {
+      clearInterval(reconcileTimer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onFocus);
     };

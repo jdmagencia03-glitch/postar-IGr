@@ -171,6 +171,7 @@ export async function GET(request: NextRequest) {
           account,
           mediaUrls: post.media_urls,
           caption: post.caption ?? undefined,
+          existingPublishId: post.provider_publish_id,
         });
 
         publishResult = {
@@ -181,6 +182,9 @@ export async function GET(request: NextRequest) {
         await markPostPublished(supabase, post.id, {
           media_id: publishResult.mediaId,
           permalink: publishResult.permalink,
+          provider_publish_id: result.publishId,
+          provider_status: result.providerStatus,
+          provider_response: result.providerResponse,
         });
 
         await logSecurityEvent({
