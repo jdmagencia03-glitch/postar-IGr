@@ -3,6 +3,7 @@ import { getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import type {
   PostStatus,
+  PublishLog,
   ScheduledPost,
   ScheduledPostWithAccountSecrets,
   SocialPlatform,
@@ -12,9 +13,21 @@ import type {
 const POST_SELECT_PUBLIC =
   "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url), products(id, name, main_cta), campaigns(id, name, default_cta, objective)";
 
-/** Consulta leve para logs — evita joins que quebram se migrations opcionais não foram aplicadas. */
-const POST_SELECT_LOGS =
+/** Consulta completa para logs quando todas as migrations estão aplicadas. */
+const POST_SELECT_LOGS_FULL =
   "id, platform, account_id, tiktok_account_id, caption, scheduled_at, content_type, media_type, instagram_accounts(ig_username), tiktok_accounts(username, display_name)";
+
+/** Fallback sem colunas/joins opcionais de TikTok e content_type. */
+const POST_SELECT_LOGS_IG =
+  "id, account_id, caption, scheduled_at, media_type, instagram_accounts(ig_username)";
+
+const POST_SELECT_LOGS_TT =
+  "id, platform, account_id, tiktok_account_id, caption, scheduled_at, media_type, tiktok_accounts(username, display_name)";
+
+const POST_SELECT_LOGS_MINIMAL = "id, account_id, tiktok_account_id, caption, scheduled_at, media_type";
+
+const LOGS_POST_LIMIT = 400;
+const LOGS_FETCH_CHUNK = 60;
 
 const POST_SELECT_SECRETS =
   "*, instagram_accounts(ig_username, profile_picture_url, ig_user_id, page_access_token, auth_provider), tiktok_accounts(username, display_name, profile_picture_url)";
@@ -157,12 +170,133 @@ export async function getOwnerScheduledPosts(
   return filtered;
 }
 
+function tagInstagramPosts(posts: ScheduledPost[]) {
+  return posts.map((post) => ({ ...post, platform: post.platform ?? "instagram" }));
+}
+
+function tagTikTokPosts(posts: ScheduledPost[]) {
+  return posts.map((post) => ({ ...post, platform: post.platform ?? "tiktok" }));
+}
+
+async function queryInstagramPostsForLogs(
+  supabase: SupabaseClient,
+  igIds: string[],
+  limit: number,
+): Promise<{ posts: ScheduledPost[]; error: string | null }> {
+  const full = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_FULL)
+    .eq("platform", "instagram")
+    .in("account_id", igIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!full.error) {
+    return { posts: tagInstagramPosts((full.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  const legacy = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_IG)
+    .in("account_id", igIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!legacy.error) {
+    return { posts: tagInstagramPosts((legacy.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  const minimal = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_MINIMAL)
+    .in("account_id", igIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!minimal.error) {
+    return { posts: tagInstagramPosts((minimal.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  return { posts: [], error: minimal.error.message };
+}
+
+async function queryTikTokPostsForLogs(
+  supabase: SupabaseClient,
+  ttIds: string[],
+  limit: number,
+): Promise<{ posts: ScheduledPost[]; error: string | null }> {
+  const full = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_FULL)
+    .eq("platform", "tiktok")
+    .in("tiktok_account_id", ttIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!full.error) {
+    return { posts: tagTikTokPosts((full.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  const legacy = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_TT)
+    .in("tiktok_account_id", ttIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!legacy.error) {
+    return { posts: tagTikTokPosts((legacy.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  const minimal = await supabase
+    .from("scheduled_posts")
+    .select(POST_SELECT_LOGS_MINIMAL)
+    .in("tiktok_account_id", ttIds)
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (!minimal.error) {
+    return { posts: tagTikTokPosts((minimal.data ?? []) as unknown as ScheduledPost[]), error: null };
+  }
+
+  return { posts: [], error: minimal.error.message };
+}
+
+/** Busca publish_logs em lotes para evitar URL/query muito grande no PostgREST. */
+export async function fetchPublishLogsForPostIds(
+  supabase: SupabaseClient,
+  postIds: string[],
+  limit = 300,
+): Promise<{ logs: PublishLog[]; error: string | null }> {
+  if (!postIds.length) return { logs: [], error: null };
+
+  const collected: PublishLog[] = [];
+  const errors: string[] = [];
+
+  for (let offset = 0; offset < postIds.length && collected.length < limit * 2; offset += LOGS_FETCH_CHUNK) {
+    const chunk = postIds.slice(offset, offset + LOGS_FETCH_CHUNK);
+    const { data, error } = await supabase
+      .from("publish_logs")
+      .select("*")
+      .in("post_id", chunk)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      errors.push(error.message);
+      break;
+    }
+
+    collected.push(...((data ?? []) as PublishLog[]));
+  }
+
+  const logs = collected
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, limit);
+
+  return { logs, error: errors.length ? errors.join("; ") : null };
+}
+
 /** Posts enxutos para a aba de Logs — select leve e limite para evitar timeout. */
 export async function getOwnerPostsForLogs(
   supabase: SupabaseClient,
   ownerId: string,
   filters: OwnerPostFilters = {},
-  limit = 2000,
+  limit = LOGS_POST_LIMIT,
 ): Promise<{ posts: ScheduledPost[]; error: string | null }> {
   const platform = filters.platform ?? "all";
   const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
@@ -190,27 +324,15 @@ export async function getOwnerPostsForLogs(
   const errors: string[] = [];
 
   if (igIds.length && platform !== "tiktok") {
-    const { data, error } = await supabase
-      .from("scheduled_posts")
-      .select(POST_SELECT_LOGS)
-      .eq("platform", "instagram")
-      .in("account_id", igIds)
-      .order("scheduled_at", { ascending: false })
-      .limit(limit);
-    if (error) errors.push(error.message);
-    else posts.push(...((data ?? []) as unknown as ScheduledPost[]));
+    const result = await queryInstagramPostsForLogs(supabase, igIds, limit);
+    if (result.error) errors.push(result.error);
+    else posts.push(...result.posts);
   }
 
   if (ttIds.length && platform !== "instagram") {
-    const { data, error } = await supabase
-      .from("scheduled_posts")
-      .select(POST_SELECT_LOGS)
-      .eq("platform", "tiktok")
-      .in("tiktok_account_id", ttIds)
-      .order("scheduled_at", { ascending: false })
-      .limit(limit);
-    if (error) errors.push(error.message);
-    else posts.push(...((data ?? []) as unknown as ScheduledPost[]));
+    const result = await queryTikTokPostsForLogs(supabase, ttIds, limit);
+    if (result.error) errors.push(result.error);
+    else posts.push(...result.posts);
   }
 
   return {

@@ -1,13 +1,15 @@
 import { redirect } from "next/navigation";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
-import {
-  buildOperationalLogRows,
-  OperationalLogsList,
-} from "@/components/operations/OperationalLogsList";
+import { OperationalLogsList } from "@/components/operations/OperationalLogsList";
+import { buildOperationalLogRows } from "@/lib/operations/operational-logs";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { getOwnerAccountRefs, getOwnerPostsForLogs } from "@/lib/posts";
+import {
+  fetchPublishLogsForPostIds,
+  getOwnerAccountRefs,
+  getOwnerPostsForLogs,
+} from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { PublishLog, ScheduledPost, SocialPlatform } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -28,63 +30,56 @@ export default async function LogsPage({
     ? params.platform ?? "all"
     : "all";
 
-  const supabase = createAdminClient();
-  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
-  const visibleRefs = accountRefs.filter(
-    (account) => platformFilter === "all" || account.platform === platformFilter,
-  );
-  const selectedAccountId =
-    params.account && visibleRefs.some((account) => account.id === params.account)
-      ? params.account
-      : undefined;
+  let accountRefs: Awaited<ReturnType<typeof getOwnerAccountRefs>> = [];
+  let rows: ReturnType<typeof buildOperationalLogRows> = [];
+  let errorMessage: string | undefined;
+  let selectedAccountId: string | undefined;
 
-  const { posts, error: postsError } = await getOwnerPostsForLogs(supabase, ownerId, {
-    platform: platformFilter,
-    accountId: selectedAccountId,
-  });
-  const postIds = posts.map((post) => post.id);
-  const postsById = new Map(posts.map((post) => [post.id, post as ScheduledPost]));
-
-  let logsError: string | null = postsError;
-  let logs: PublishLog[] = [];
-
-  if (postIds.length) {
-    const { data, error } = await supabase
-      .from("publish_logs")
-      .select("*")
-      .in("post_id", postIds)
-      .order("created_at", { ascending: false })
-      .limit(300);
-
-    if (error) {
-      logsError = logsError ? `${logsError}; ${error.message}` : error.message;
-      if (typeof console !== "undefined") {
-        console.error("[logs-page] publish_logs query failed:", error.message);
-      }
-    } else {
-      logs = (data ?? []) as PublishLog[];
-    }
-  }
-
-  let rows = buildOperationalLogRows(logs, postsById);
-
-  if (params.level && params.level !== "all") {
-    rows = rows.filter((row) => row.level === params.level);
-  }
-
-  if (params.q?.trim()) {
-    const needle = params.q.trim().toLowerCase();
-    rows = rows.filter(
-      (row) =>
-        (row.message ?? "").toLowerCase().includes(needle) ||
-        (row.accountUsername ?? "").toLowerCase().includes(needle) ||
-        (row.eventLabel ?? "").toLowerCase().includes(needle),
+  try {
+    const supabase = createAdminClient();
+    accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+    const visibleRefs = accountRefs.filter(
+      (account) => platformFilter === "all" || account.platform === platformFilter,
     );
-  }
+    selectedAccountId =
+      params.account && visibleRefs.some((account) => account.id === params.account)
+        ? params.account
+        : undefined;
 
-  const errorMessage = logsError
-    ? "Não foi possível carregar os logs agora. Tente novamente."
-    : undefined;
+    const { posts, error: postsError } = await getOwnerPostsForLogs(supabase, ownerId, {
+      platform: platformFilter,
+      accountId: selectedAccountId,
+    });
+    const postIds = posts.map((post) => post.id);
+    const postsById = new Map(posts.map((post) => [post.id, post as ScheduledPost]));
+
+    const { logs, error: logsError } = await fetchPublishLogsForPostIds(supabase, postIds);
+    const combinedError = [postsError, logsError].filter(Boolean).join("; ") || null;
+
+    rows = buildOperationalLogRows(logs, postsById);
+
+    if (params.level && params.level !== "all") {
+      rows = rows.filter((row) => row.level === params.level);
+    }
+
+    if (params.q?.trim()) {
+      const needle = params.q.trim().toLowerCase();
+      rows = rows.filter(
+        (row) =>
+          (row.message ?? "").toLowerCase().includes(needle) ||
+          (row.accountUsername ?? "").toLowerCase().includes(needle) ||
+          (row.eventLabel ?? "").toLowerCase().includes(needle),
+      );
+    }
+
+    if (combinedError) {
+      console.error("[logs-page] load failed:", combinedError);
+      errorMessage = "Não foi possível carregar os logs agora. Tente novamente.";
+    }
+  } catch (error) {
+    console.error("[logs-page] unexpected error:", error);
+    errorMessage = "Não foi possível carregar os logs agora. Tente novamente.";
+  }
 
   return (
     <div className="mx-auto max-w-5xl">
