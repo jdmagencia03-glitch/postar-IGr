@@ -583,6 +583,13 @@ export async function refreshUploadBatch(batchId: string) {
   return data.batch as UploadBatch;
 }
 
+export async function fetchUploadBatchStatus(batchId: string) {
+  const res = await apiFetch(`/api/upload/batches/${batchId}/status`, { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(String(data.error ?? "Falha ao carregar status do lote"));
+  return data as import("@/lib/upload/batch-status").UploadBatchRemoteStatus;
+}
+
 export async function markBatchFilesScheduled(batchId: string, publicUrls: string[]) {
   const res = await apiFetch(`/api/upload/batches/${batchId}/mark-scheduled`, {
     method: "POST",

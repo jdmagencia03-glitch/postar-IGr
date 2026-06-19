@@ -9,6 +9,7 @@ import {
   createUploadBatch,
   ensureBatchWithFiles,
   fetchActiveBatch,
+  fetchUploadBatchStatus,
   fileFingerprint,
   findRecordForUpload,
   matchFileToRecord,
@@ -29,6 +30,11 @@ import {
   matchFilesToManifest,
   saveManifestEntries,
 } from "@/lib/upload/manifest-store";
+import {
+  batchNeedsPolling,
+  isTerminalRemoteBatchStatus,
+  reconcileUploadBatchState,
+} from "@/lib/upload/batch-status";
 import { getSpeedPresets, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
@@ -81,12 +87,18 @@ class UploadSessionStore {
   private stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private retryCountdownTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilePolling = false;
+  private pollingTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollingBatchId: string | null = null;
+  private pollingLifecycleAttached = false;
   private lastProgressAt = 0;
   private lastProgressBytes = 0;
   private recoveringFromStall = false;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
   private static readonly AUTO_RETRY_RESET_MS = 60_000;
   private static readonly STALL_CHECK_INTERVAL_MS = 10_000;
+  private static readonly POLL_INTERVAL_NORMAL_MS = 10_000;
+  private static readonly POLL_INTERVAL_FAST_MS = 5_000;
+  private static readonly POLL_INTERVAL_HIDDEN_MS = 30_000;
 
   private logUpload(event: string, detail?: Record<string, unknown>) {
     if (typeof console !== "undefined") {
@@ -396,11 +408,153 @@ class UploadSessionStore {
       previousPhase: prev.phase,
       snapshotChanged: prev !== this.snapshot,
     });
+    logUploadEvent("[upload-snapshot]", "built", {
+      batchId: this.batch?.id,
+      phase: this.snapshot.phase,
+      running: this.running,
+      retrying: this.retrying,
+      progressKeys: Object.keys(this.progressMap).length,
+      fileRuntimeKeys: Object.keys(this.fileRuntime).length,
+      batchStatus: this.batch?.status,
+      completed: this.batch?.completed_files,
+      failed: this.batch?.failed_files,
+    });
     for (const listener of this.listeners) listener();
     if (wasRunning && !this.running) {
       this.scheduleAutoRecovery("running_stopped");
     }
   }
+
+  private getPollingIntervalMs() {
+    if (typeof document !== "undefined" && document.hidden) {
+      return UploadSessionStore.POLL_INTERVAL_HIDDEN_MS;
+    }
+
+    const files = this.batch?.upload_files ?? [];
+    const hasRetryOrStall =
+      this.retrying ||
+      this.hasActiveFileRetry() ||
+      files.some((file) => file.status === "retrying") ||
+      Object.values(this.fileRuntime).some((runtime) => runtime.status === "stalled");
+
+    return hasRetryOrStall
+      ? UploadSessionStore.POLL_INTERVAL_FAST_MS
+      : UploadSessionStore.POLL_INTERVAL_NORMAL_MS;
+  }
+
+  private shouldPoll() {
+    return batchNeedsPolling(this.batch);
+  }
+
+  private clearPollingTimer() {
+    if (this.pollingTimer) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = null;
+    }
+  }
+
+  stopPolling() {
+    this.clearPollingTimer();
+    const batchId = this.pollingBatchId;
+    this.pollingBatchId = null;
+    if (batchId) {
+      logUploadEvent("[upload-polling]", "stopped", { batchId });
+    }
+  }
+
+  ensurePolling() {
+    if (!this.shouldPoll()) {
+      this.stopPolling();
+      return;
+    }
+
+    const batchId = this.batch!.id;
+    if (this.pollingBatchId === batchId && this.pollingTimer) {
+      return;
+    }
+
+    this.stopPolling();
+    this.pollingBatchId = batchId;
+    logUploadEvent("[upload-polling]", "started", {
+      batchId,
+      intervalMs: this.getPollingIntervalMs(),
+      hidden: typeof document !== "undefined" ? document.hidden : false,
+    });
+    this.scheduleNextPoll(0);
+  }
+
+  private scheduleNextPoll(delayMs?: number) {
+    this.clearPollingTimer();
+    if (!this.shouldPoll()) {
+      this.stopPolling();
+      return;
+    }
+
+    const intervalMs = delayMs ?? this.getPollingIntervalMs();
+    this.pollingTimer = setTimeout(() => {
+      void this.runPollingTick();
+    }, intervalMs);
+  }
+
+  private async runPollingTick() {
+    if (!this.shouldPoll()) {
+      this.stopPolling();
+      return;
+    }
+
+    logUploadEvent("[upload-polling]", "tick", {
+      batchId: this.batch?.id,
+      intervalMs: this.getPollingIntervalMs(),
+      hidden: typeof document !== "undefined" ? document.hidden : false,
+      running: this.running,
+      retrying: this.retrying,
+      phase: this.snapshot.phase,
+    });
+
+    await this.reconcileActiveBatch("polling");
+
+    if (this.shouldPoll()) {
+      this.scheduleNextPoll();
+    } else {
+      this.stopPolling();
+    }
+  }
+
+  attachPollingLifecycle() {
+    if (this.pollingLifecycleAttached || typeof document === "undefined") return;
+    this.pollingLifecycleAttached = true;
+
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    window.addEventListener("focus", this.handleWindowFocus);
+    this.ensurePolling();
+  }
+
+  detachPollingLifecycle() {
+    if (!this.pollingLifecycleAttached || typeof document === "undefined") return;
+    this.pollingLifecycleAttached = false;
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    window.removeEventListener("focus", this.handleWindowFocus);
+    this.stopPolling();
+  }
+
+  private handleVisibilityChange = () => {
+    if (document.hidden) {
+      this.clearPollingTimer();
+      if (this.shouldPoll()) {
+        this.scheduleNextPoll(this.getPollingIntervalMs());
+      }
+      return;
+    }
+    void this.reconcileOnForeground();
+    this.clearPollingTimer();
+    if (this.shouldPoll()) {
+      this.scheduleNextPoll(0);
+    }
+  };
+
+  private handleWindowFocus = () => {
+    void this.reconcileOnForeground();
+  };
 
   private scheduleAutoRecovery(reason: string) {
     if (
@@ -529,6 +683,11 @@ class UploadSessionStore {
     this.batch = next;
     for (const listener of this.batchListeners) listener(next);
     this.emit();
+    if (next) {
+      this.ensurePolling();
+    } else {
+      this.stopPolling();
+    }
   }
 
   private get speedPresets() {
@@ -614,6 +773,7 @@ class UploadSessionStore {
     } finally {
       this.initialLoading = false;
       this.emit();
+      this.ensurePolling();
     }
   }
 
@@ -789,6 +949,7 @@ class UploadSessionStore {
           this.batch = next;
           for (const listener of this.batchListeners) listener(next);
           this.emit();
+          this.ensurePolling();
         },
         onFileProgress: (fileId, loaded, total) => {
           const percent = Math.round((loaded / total) * 100);
@@ -1109,72 +1270,93 @@ class UploadSessionStore {
     await this.reconcileActiveBatch("foreground");
   }
 
-  /** Polling de segurança — reconcilia estado local com o backend. */
+  /** Polling de segurança — reconcilia estado local com o backend (endpoint leve). */
   async reconcileActiveBatch(source: "foreground" | "polling" = "polling") {
     if (this.reconcilePolling) return;
     if (!this.batch) return;
-    if (this.batch.status === "ready" || this.batch.status === "cancelled") return;
+    if (this.batch.status === "ready" || this.batch.status === "cancelled") {
+      this.stopPolling();
+      return;
+    }
 
     this.reconcilePolling = true;
     const prevBatch = this.batch;
     const prevProgressMap = this.progressMap;
 
     try {
-      const refreshed = await refreshUploadBatch(this.batch.id);
-      const nextProgress: Record<string, number> = { ...this.progressMap };
-      let dbBytesTotal = 0;
+      const remote = await fetchUploadBatchStatus(this.batch.id);
+      const reconciled = reconcileUploadBatchState(this.batch, remote, this.progressMap);
 
-      for (const file of refreshed.upload_files ?? []) {
-        const uploaded = Number(file.bytes_uploaded ?? 0);
-        const total = Number(file.file_size);
-        dbBytesTotal += uploaded;
+      let dbBytesTotal = 0;
+      for (const file of reconciled.batch.upload_files ?? []) {
+        dbBytesTotal += Number(file.bytes_uploaded ?? 0);
         if (file.status === "completed") {
-          nextProgress[file.id] = 100;
           this.clearFileRuntime(file.id);
-        } else if (uploaded > 0 && total > 0) {
-          nextProgress[file.id] = Math.round((uploaded / total) * 100);
         }
       }
-
-      this.progressMap = nextProgress;
 
       const sessionBytes = this.progress?.bytesUploaded ?? 0;
       const bytesMoved = dbBytesTotal > this.lastProgressBytes || sessionBytes > this.lastProgressBytes;
       if (bytesMoved) {
         this.touchProgress(Math.max(dbBytesTotal, sessionBytes));
       } else if (
-        (this.running || this.retrying) &&
+        (this.running || this.retrying || remote.retrying > 0 || remote.stalled > 0) &&
         Date.now() - this.lastProgressAt >= UPLOAD_STALL_TIMEOUT_MS &&
-        !this.recoveringFromStall
+        !this.recoveringFromStall &&
+        !this.hasActiveFileRetry()
       ) {
         void this.recoverFromStall(Date.now() - this.lastProgressAt);
       }
 
-      if (refreshed.paused && !this.running) {
+      if (remote.paused && !this.running) {
         this.pausedByUser = true;
       }
 
-      if (refreshed.status === "ready" && prevBatch.status !== "ready") {
+      const batchFinished =
+        isTerminalRemoteBatchStatus(remote.status) || reconciled.batch.status === "ready";
+
+      if (batchFinished && prevBatch.status !== "ready") {
         this.running = false;
         this.retrying = false;
         this.stopRetryCountdown();
         this.fileRuntime = {};
-        this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
+        if (remote.status === "completed") {
+          this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
+        } else if (remote.status === "partial_failed") {
+          this.message = `${remote.failed} vídeo(s) falharam. ${remote.completed} prontos para agendar.`;
+        } else if (remote.status === "failed") {
+          this.message = "Não foi possível enviar os vídeos. Você pode tentar reenviar apenas os arquivos com erro.";
+        }
+        this.stopPolling();
       }
 
+      const stateChanged =
+        reconciled.changedFiles > 0 ||
+        reconciled.batchStatusChanged ||
+        JSON.stringify(prevProgressMap) !== JSON.stringify(reconciled.progressMap);
+
       logUploadEvent("[upload-reconcile]", source, {
-        batchId: refreshed.id,
-        previousStatus: prevBatch.status,
-        nextStatus: refreshed.status,
+        batchId: remote.batchId,
+        changedFiles: reconciled.changedFiles,
+        batchStatusChanged: reconciled.batchStatusChanged,
+        localStatus: reconciled.localStatusSummary,
+        remoteStatus: reconciled.remoteStatusSummary,
+        stateChanged,
         running: this.running,
         retrying: this.retrying,
-        progressChanged: JSON.stringify(prevProgressMap) !== JSON.stringify(nextProgress),
+        hidden: typeof document !== "undefined" ? document.hidden : false,
+        pollingIntervalMs: this.getPollingIntervalMs(),
       });
 
-      this.syncBatch(refreshed);
+      if (stateChanged) {
+        this.progressMap = reconciled.progressMap;
+        this.syncBatch(reconciled.batch);
+      } else {
+        this.ensurePolling();
+      }
 
       if (
-        refreshed.status !== "ready" &&
+        reconciled.batch.status !== "ready" &&
         !this.running &&
         !this.retrying &&
         !this.pausedByUser &&
@@ -1182,12 +1364,12 @@ class UploadSessionStore {
         this.lastFileMap.size > 0 &&
         this.hasPendingInSession()
       ) {
-        await this.autoContinuePendingIfNeeded(refreshed.id, this.lastFileMap, source);
+        await this.autoContinuePendingIfNeeded(reconciled.batch.id, this.lastFileMap, source);
         return;
       }
 
       if (
-        refreshed.status !== "ready" &&
+        reconciled.batch.status !== "ready" &&
         this.needsFileReselection() &&
         !this.message?.includes("Selecione novamente")
       ) {
@@ -1319,6 +1501,7 @@ class UploadSessionStore {
       this.retrying = false;
       this.message = "Lote cancelado.";
       for (const listener of this.batchListeners) listener(null);
+      this.stopPolling();
     } catch (error) {
       this.message = error instanceof Error ? error.message : "Erro ao cancelar lote";
     }
@@ -1369,6 +1552,7 @@ class UploadSessionStore {
       this.validationPreview = null;
       this.message = result.message;
       for (const listener of this.batchListeners) listener(null);
+      this.stopPolling();
     } catch (error) {
       this.message = error instanceof Error ? error.message : "Erro ao apagar vídeos enviados";
     }
@@ -1419,6 +1603,7 @@ class UploadSessionStore {
       this.validationPreview = null;
       this.message = result.message;
       for (const listener of this.batchListeners) listener(null);
+      this.stopPolling();
     } catch (error) {
       this.message = error instanceof Error ? error.message : "Erro ao apagar lotes";
     }

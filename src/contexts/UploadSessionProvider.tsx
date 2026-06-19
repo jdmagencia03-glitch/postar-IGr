@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import { uploadSessionStore } from "@/lib/upload/session-store";
-import { logUploadEvent } from "@/lib/upload/network-retry";
 import { UploadGlobalBar } from "@/components/upload/UploadGlobalBar";
 import { UploadSessionFileInputs } from "@/components/upload/UploadSessionFileInputs";
 
@@ -17,37 +16,10 @@ const UploadSessionContext = createContext<typeof uploadSessionStore | null>(nul
 export function UploadSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void uploadSessionStore.initialize();
-
-    const onVisibilityChange = () => {
-      if (!document.hidden) {
-        void uploadSessionStore.reconcileOnForeground();
-      }
-    };
-
-    const onFocus = () => {
-      void uploadSessionStore.reconcileOnForeground();
-    };
-
-    const reconcileTimer = window.setInterval(() => {
-      if (document.hidden) return;
-      const snapshot = uploadSessionStore.getSnapshot();
-      if (!snapshot.batch || snapshot.batch.status === "ready") return;
-      logUploadEvent("[upload-polling]", "tick", {
-        batchId: snapshot.batch.id,
-        running: snapshot.running,
-        retrying: snapshot.retrying,
-        phase: snapshot.phase,
-      });
-      void uploadSessionStore.reconcileActiveBatch("polling");
-    }, 8_000);
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("focus", onFocus);
+    uploadSessionStore.attachPollingLifecycle();
 
     return () => {
-      clearInterval(reconcileTimer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("focus", onFocus);
+      uploadSessionStore.detachPollingLifecycle();
     };
   }, []);
 

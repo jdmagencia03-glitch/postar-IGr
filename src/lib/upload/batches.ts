@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { DB_INSERT_CHUNK_SIZE } from "@/lib/upload/storage-config";
+import { DB_INSERT_CHUNK_SIZE, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { SocialPlatform, UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
+import type { UploadBatchRemoteStatus } from "@/lib/upload/batch-status";
 
 export interface UploadFileInput {
   filename: string;
@@ -547,6 +548,107 @@ export async function getBatchFileStatusCounts(
   );
 
   return counts;
+}
+
+export async function getBatchStatusLight(
+  supabase: SupabaseClient,
+  ownerId: string,
+  batchId: string,
+): Promise<UploadBatchRemoteStatus | null> {
+  const { data: batchRow, error: batchError } = await supabase
+    .from("upload_batches")
+    .select("id, status, total_files, completed_files, failed_files, updated_at, paused")
+    .eq("id", batchId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+
+  if (batchError) throw new Error(batchError.message);
+  if (!batchRow) return null;
+
+  const { data: files, error: filesError } = await supabase
+    .from("upload_files")
+    .select("id, filename, status, bytes_uploaded, file_size, error_message, updated_at, removed")
+    .eq("batch_id", batchId)
+    .order("sort_order", { ascending: true });
+
+  if (filesError) throw new Error(filesError.message);
+
+  const activeFiles = (files ?? []).filter((file) => !file.removed);
+  const now = Date.now();
+
+  let completed = 0;
+  let failed = 0;
+  let uploading = 0;
+  let retrying = 0;
+  let pending = 0;
+  let stalled = 0;
+
+  const fileStatuses = activeFiles.map((file) => {
+    const total = Number(file.file_size) || 0;
+    const uploaded = Number(file.bytes_uploaded ?? 0);
+    const progress =
+      file.status === "completed" ? 100 : total > 0 ? Math.round((uploaded / total) * 100) : 0;
+
+    switch (file.status) {
+      case "completed":
+        completed += 1;
+        break;
+      case "failed":
+        failed += 1;
+        break;
+      case "uploading":
+        uploading += 1;
+        break;
+      case "retrying":
+        retrying += 1;
+        break;
+      default:
+        pending += 1;
+        break;
+    }
+
+    const isStalled =
+      (file.status === "uploading" || file.status === "retrying") &&
+      now - new Date(file.updated_at).getTime() >= UPLOAD_STALL_TIMEOUT_MS;
+    if (isStalled) stalled += 1;
+
+    return {
+      fileId: file.id,
+      filename: file.filename,
+      status: file.status as UploadFileStatus,
+      progress,
+      errorMessage: file.error_message,
+      updatedAt: file.updated_at,
+    };
+  });
+
+  const totalFiles = activeFiles.length;
+  const progressPercent = totalFiles ? Math.round((completed / totalFiles) * 100) : 0;
+
+  let aggregateStatus: UploadBatchRemoteStatus["status"] = "active";
+  if (batchRow.status === "cancelled") {
+    aggregateStatus = "cancelled";
+  } else if (batchRow.status === "ready" || (completed + failed === totalFiles && totalFiles > 0)) {
+    if (failed === 0) aggregateStatus = "completed";
+    else if (completed === 0) aggregateStatus = "failed";
+    else aggregateStatus = "partial_failed";
+  }
+
+  return {
+    batchId: batchRow.id,
+    status: aggregateStatus,
+    totalFiles,
+    completed,
+    failed,
+    uploading,
+    retrying,
+    stalled,
+    pending,
+    progress: progressPercent,
+    updatedAt: batchRow.updated_at,
+    paused: Boolean(batchRow.paused),
+    files: fileStatuses,
+  };
 }
 
 export async function refreshBatchCounters(

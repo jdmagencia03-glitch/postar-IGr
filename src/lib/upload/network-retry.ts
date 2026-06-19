@@ -142,7 +142,8 @@ export function logUploadEvent(
     | "[upload-store-emit]"
     | "[upload-engine-event]"
     | "[upload-reconcile]"
-    | "[upload-polling]",
+    | "[upload-polling]"
+    | "[upload-snapshot]",
   event: string,
   detail?: Record<string, unknown>,
 ) {
