@@ -1,4 +1,5 @@
-import type { UploadBatch, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
+import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
+import type { UploadEngineProgress } from "@/lib/upload/engine";
 
 /** Status agregado do lote para polling leve. */
 export type UploadBatchRemoteAggregateStatus =
@@ -90,6 +91,86 @@ function remoteStatusSummary(remote: UploadBatchRemoteStatus) {
   return `${remote.status}:c${remote.completed}/f${remote.failed}/u${remote.uploading}/r${remote.retrying}/p${remote.pending}`;
 }
 
+/** Progresso nunca regride — o TUS local costuma estar à frente do PATCH no banco. */
+export function mergeUploadProgressPercent(
+  localPercent: number,
+  remotePercent: number,
+  localStatus: UploadFileStatus,
+  remoteStatus: UploadFileStatus,
+) {
+  if (remoteStatus === "completed" || localStatus === "completed") return 100;
+  return Math.max(localPercent, remotePercent, 0);
+}
+
+export function mergeBytesUploaded(
+  localBytes: number,
+  remoteBytes: number,
+  fileSize: number,
+  localStatus: UploadFileStatus,
+  remoteStatus: UploadFileStatus,
+) {
+  if (remoteStatus === "completed" || localStatus === "completed") return fileSize;
+  return Math.max(localBytes, remoteBytes, 0);
+}
+
+export function mergeFileStatus(
+  localStatus: UploadFileStatus,
+  remoteStatus: UploadFileStatus,
+  localPercent: number,
+) {
+  if (remoteStatus === "completed" || remoteStatus === "failed") return remoteStatus;
+  if (localStatus === "completed") return localStatus;
+  if (localPercent > 0 && remoteStatus === "pending") return localStatus === "retrying" ? "retrying" : "uploading";
+  return remoteStatus;
+}
+
+export function getFileDisplayPercent(
+  file: UploadBatchFile,
+  progressMap: Record<string, number>,
+) {
+  if (file.status === "completed") return 100;
+  const fromMap = progressMap[file.id] ?? 0;
+  const size = Number(file.file_size);
+  const fromBytes =
+    size > 0 ? Math.round((Number(file.bytes_uploaded ?? 0) / size) * 100) : 0;
+  return Math.max(fromMap, fromBytes, 0);
+}
+
+export function computeBatchOverallPercent(params: {
+  batch: UploadBatch | null;
+  progress: UploadEngineProgress | null;
+  progressMap: Record<string, number>;
+  completedCount: number;
+  totalCount: number;
+}) {
+  const { batch, progress, progressMap, completedCount, totalCount } = params;
+  const files = batch?.upload_files?.filter((file) => !file.removed) ?? [];
+
+  let loaded = 0;
+  let bytesTotal = 0;
+  for (const file of files) {
+    const size = Number(file.file_size);
+    if (!size) continue;
+    bytesTotal += size;
+    if (file.status === "completed") {
+      loaded += size;
+      continue;
+    }
+    const mapPercent = progressMap[file.id] ?? 0;
+    if (mapPercent > 0) {
+      loaded += Math.round((mapPercent / 100) * size);
+      continue;
+    }
+    loaded += Number(file.bytes_uploaded ?? 0);
+  }
+
+  const fromBytes = bytesTotal > 0 ? Math.round((loaded / bytesTotal) * 100) : 0;
+  const fromCompleted = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+  const fromEngine = progress?.overallPercent ?? 0;
+
+  return Math.max(fromEngine, fromBytes, fromCompleted);
+}
+
 /** Aplica estado remoto na store local, criando novas referências. */
 export function reconcileUploadBatchState(
   localBatch: UploadBatch,
@@ -111,28 +192,49 @@ export function reconcileUploadBatchState(
 
           const remoteUpdatedAt = new Date(remoteFile.updatedAt).getTime();
           const localUpdatedAt = new Date(localFile.updated_at).getTime();
-          const nextBytes = Math.round((remoteFile.progress / 100) * Number(localFile.file_size));
-          const statusChanged = localFile.status !== remoteFile.status;
+          const remoteBytes = Math.round((remoteFile.progress / 100) * Number(localFile.file_size));
+          const localPercent = nextProgress[localFile.id] ?? 0;
+          const mergedPercent = mergeUploadProgressPercent(
+            localPercent,
+            remoteFile.progress,
+            localFile.status,
+            remoteFile.status,
+          );
+          const mergedBytes = mergeBytesUploaded(
+            Number(localFile.bytes_uploaded ?? 0),
+            remoteBytes,
+            Number(localFile.file_size),
+            localFile.status,
+            remoteFile.status,
+          );
+          const mergedStatus = mergeFileStatus(localFile.status, remoteFile.status, mergedPercent);
+          const statusChanged = localFile.status !== mergedStatus;
           const progressChanged =
-            (nextProgress[localFile.id] ?? 0) !== remoteFile.progress ||
-            Number(localFile.bytes_uploaded ?? 0) !== nextBytes;
+            mergedPercent !== localPercent ||
+            Number(localFile.bytes_uploaded ?? 0) !== mergedBytes;
           const errorChanged =
             (localFile.error_message ?? null) !== (remoteFile.errorMessage ?? null);
-          const remoteIsNewer = remoteUpdatedAt > localUpdatedAt;
+          const remoteIsNewer =
+            remoteUpdatedAt > localUpdatedAt &&
+            remoteFile.progress >= localPercent &&
+            remoteFile.status !== "pending";
 
           if (!statusChanged && !progressChanged && !errorChanged && !remoteIsNewer) {
             return localFile;
           }
 
           changedFiles += 1;
-          nextProgress[localFile.id] = remoteFile.progress;
+          nextProgress[localFile.id] = mergedPercent;
 
           return {
             ...localFile,
-            status: remoteFile.status,
-            bytes_uploaded: remoteFile.status === "completed" ? Number(localFile.file_size) : nextBytes,
-            error_message: remoteFile.errorMessage ?? null,
-            updated_at: remoteFile.updatedAt,
+            status: mergedStatus,
+            bytes_uploaded: mergedBytes,
+            error_message: remoteFile.errorMessage ?? localFile.error_message,
+            updated_at:
+              remoteIsNewer || remoteFile.status === "completed" || remoteFile.status === "failed"
+                ? remoteFile.updatedAt
+                : localFile.updated_at,
           };
         })
       : remote.files.map((remoteFile, index) => ({
@@ -160,8 +262,15 @@ export function reconcileUploadBatchState(
     for (const remoteFile of remote.files) {
       const localFile = localFiles.find((file) => file.id === remoteFile.fileId);
       if (!localFile || localFile.removed) continue;
-      if ((nextProgress[remoteFile.fileId] ?? 0) !== remoteFile.progress) {
-        nextProgress[remoteFile.fileId] = remoteFile.progress;
+      const localPercent = nextProgress[remoteFile.fileId] ?? 0;
+      const mergedPercent = mergeUploadProgressPercent(
+        localPercent,
+        remoteFile.progress,
+        localFile.status,
+        remoteFile.status,
+      );
+      if (mergedPercent !== localPercent) {
+        nextProgress[remoteFile.fileId] = mergedPercent;
       }
     }
   }

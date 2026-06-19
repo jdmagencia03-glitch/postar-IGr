@@ -962,8 +962,10 @@ class UploadSessionStore {
         onFileProgress: (fileId, loaded, total) => {
           const percent = Math.round((loaded / total) * 100);
           this.touchProgress();
-          if (this.progressMap[fileId] !== percent) {
-            this.progressMap = { ...this.progressMap, [fileId]: percent };
+          const prev = this.progressMap[fileId] ?? 0;
+          const next = Math.max(prev, percent);
+          if (next !== prev) {
+            this.progressMap = { ...this.progressMap, [fileId]: next };
             this.emit();
           }
         },
@@ -1367,7 +1369,11 @@ class UploadSessionStore {
       });
 
       if (stateChanged) {
-        this.progressMap = reconciled.progressMap;
+        const mergedProgressMap = { ...reconciled.progressMap };
+        for (const [fileId, localPercent] of Object.entries(this.progressMap)) {
+          mergedProgressMap[fileId] = Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0);
+        }
+        this.progressMap = mergedProgressMap;
         this.syncBatch(reconciled.batch);
       } else {
         this.ensurePolling();

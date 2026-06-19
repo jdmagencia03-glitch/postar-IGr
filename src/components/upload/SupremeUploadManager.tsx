@@ -8,6 +8,7 @@ import {
 } from "@/contexts/UploadSessionProvider";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { fileStatusLabel, getCompletedUploadItems } from "@/lib/upload/client";
+import { getFileDisplayPercent } from "@/lib/upload/batch-status";
 import { displayUploadErrorMessage, formatUploadErrorMessage } from "@/lib/upload/errors";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
@@ -455,7 +456,7 @@ export function SupremeUploadManager({
                 <FileStatusRow
                   key={file.id}
                   file={file}
-                  percent={session.progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
+                  percent={getFileDisplayPercent(file, session.progressMap)}
                   maxUploadBytes={maxUploadBytes}
                   isStalled={session.fileRuntime[file.id]?.status === "stalled"}
                   isRetrying={

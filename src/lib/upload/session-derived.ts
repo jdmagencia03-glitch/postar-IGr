@@ -1,5 +1,6 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
+import { computeBatchOverallPercent } from "@/lib/upload/batch-status";
 
 export function getUploadFiles(batch: UploadBatch | null) {
   return batch?.upload_files?.filter((file) => !file.removed) ?? [];
@@ -70,8 +71,13 @@ export function deriveUploadSessionView(params: {
   const autoRecovering = Boolean(
     awaitingAutoRecovery || retrying || hasFileRetry || (isActivelyUploading && !pausedByUser && canResumeWithoutPicker),
   );
-  const overallPercent =
-    progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
+  const overallPercent = computeBatchOverallPercent({
+    batch,
+    progress,
+    progressMap,
+    completedCount,
+    totalCount,
+  });
 
   const visibleFiles = files
     .slice()
