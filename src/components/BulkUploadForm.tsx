@@ -12,7 +12,14 @@ import {
   ProductCampaignSelector,
   type ProductCampaignSelection,
 } from "@/components/products/ProductCampaignSelector";
-import { updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
+import { ScheduleJobPanel } from "@/components/schedule/ScheduleJobPanel";
+import { SCHEDULE_JOB_FORCE_THRESHOLD } from "@/lib/schedule-jobs/constants";
+import {
+  createScheduleJobApi,
+  findActiveScheduleJobForBatch,
+} from "@/lib/schedule-jobs/client";
+import type { ScheduleJobStatusResponse } from "@/lib/schedule-jobs/types";
+import { refreshUploadBatch, updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
 import type { PublishDestination } from "@/lib/multiplatform/types";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
 import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
@@ -302,6 +309,8 @@ export function BulkUploadForm({
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
   const [result, setResult] = useState<string | null>(null);
   const [captionSource, setCaptionSource] = useState<"ai" | "fallback" | null>(null);
+  const [scheduleJobId, setScheduleJobId] = useState<string | null>(null);
+  const [scheduleJobNotice, setScheduleJobNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedAccountId(uploadAccountId);
@@ -564,6 +573,67 @@ export function BulkUploadForm({
     };
   }
 
+  function buildScheduleJobPayload(partial = false) {
+    return {
+      upload_batch_id: activeBatch!.id,
+      targets: buildMultiplatformTargets(),
+      schedule_mode: effectiveScheduleMode,
+      ...buildSchedulePayload(),
+      ...buildCampaignPayload(),
+      schedule_strategy: scheduleStrategy,
+      batch_scheduled_count: batchScheduledCount(),
+      partial,
+    };
+  }
+
+  async function refreshActiveBatch() {
+    if (!activeBatch?.id) return;
+    const batch = await refreshUploadBatch(activeBatch.id).catch(() => null);
+    if (batch) handleBatchUpdate(batch);
+  }
+
+  useEffect(() => {
+    if (!activeBatch?.id) {
+      setScheduleJobId(null);
+      return;
+    }
+    let cancelled = false;
+    void findActiveScheduleJobForBatch(activeBatch.id).then((jobId) => {
+      if (!cancelled && jobId) setScheduleJobId(jobId);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBatch?.id]);
+
+  function handleScheduleJobComplete(status: ScheduleJobStatusResponse) {
+    if (status.status === "completed") {
+      setResult(`✓ ${status.completed} vídeo(s) agendados com sucesso.`);
+    } else if (status.status === "partial_failed") {
+      setResult(
+        `${status.completed} vídeo(s) agendados. ${status.failed} com erro — use Retomar agendamento.`,
+      );
+    }
+    void refreshActiveBatch();
+  }
+
+  async function runScheduleJobFlow(items: Array<{ media_urls: string[]; filename: string }>, partial = false) {
+    markStep("videos");
+    setScheduleJobNotice(null);
+
+    const created = await createScheduleJobApi(buildScheduleJobPayload(partial));
+    setScheduleJobId(created.jobId);
+    if (created.message) setScheduleJobNotice(created.message);
+    if (created.reused) {
+      setResult("Retomando agendamento em andamento — progresso salvo no servidor.");
+    }
+    markStep("captions");
+    markStep("hashtags");
+    markStep("calendar");
+    setProgress(15);
+    setLoadingStep(`Processando ${items.length} vídeo(s) em segundo plano...`);
+  }
+
   async function confirmAutopilotBatch(params: {
     items: Array<{ media_urls: string[]; filename: string }>;
     captions: string[];
@@ -734,9 +804,10 @@ export function BulkUploadForm({
           setInsertionPreview(previewData.insertion_preview as ScheduleInsertionPreview);
         }
       } catch (error) {
-        const label = batchItems.map((item) => item.filename).join(", ") || `lote ${batchIndex + 1}`;
         skippedPreviewErrors.push(
-          `${label}: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
+          `Lote ${batchIndex + 1} (${batchItems.length} vídeo(s)): ${
+            error instanceof Error ? error.message : "Erro desconhecido"
+          }`,
         );
       }
     }
@@ -870,13 +941,28 @@ export function BulkUploadForm({
     setInsertionPreview(null);
     markStep("videos");
 
+    const useJobQueue = items.length >= SCHEDULE_JOB_FORCE_THRESHOLD;
+
     try {
+      if (useJobQueue) {
+        await runScheduleJobFlow(items, partial);
+        setScheduling(false);
+        setLoadingStep("");
+        return;
+      }
       await runMultiplatformPreview(items);
       setScheduling(false);
       setLoadingStep("");
       return;
     } catch (error) {
-      setResult(error instanceof Error ? error.message : "Erro desconhecido");
+      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      if (message.toLowerCase().includes("failed to fetch")) {
+        setResult(
+          "O agendamento demorou mais que o esperado. Salvamos o progresso — use Retomar agendamento se necessário.",
+        );
+      } else {
+        setResult(message);
+      }
     } finally {
       setScheduling(false);
       setLoadingStep("");
@@ -1322,7 +1408,22 @@ export function BulkUploadForm({
         </p>
       )}
 
-      {(scheduling || completedSteps.length > 0) && (
+      {scheduleJobNotice && (
+        <div className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
+          {scheduleJobNotice}
+        </div>
+      )}
+
+      {scheduleJobId && (
+        <ScheduleJobPanel
+          jobId={scheduleJobId}
+          videoCount={completedCount || totalCount}
+          onComplete={handleScheduleJobComplete}
+          onBatchRefresh={() => void refreshActiveBatch()}
+        />
+      )}
+
+      {(scheduling || completedSteps.length > 0) && !scheduleJobId && (
         <section className="ig-panel space-y-2 p-5">
           {PROGRESS_STEPS.map((step) => {
             const done = completedSteps.includes(step.id);
@@ -1337,7 +1438,7 @@ export function BulkUploadForm({
         </section>
       )}
 
-      {scheduling && progress > 0 && (
+      {scheduling && progress > 0 && !scheduleJobId && (
         <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
           <div
             className="h-full rounded-full bg-ig-primary transition-all duration-300"
