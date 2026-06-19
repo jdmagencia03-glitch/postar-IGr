@@ -19,12 +19,7 @@ import {
   findActiveScheduleJobForBatch,
 } from "@/lib/schedule-jobs/client";
 import type { ScheduleJobStatusResponse } from "@/lib/schedule-jobs/types";
-import {
-  ensureBatchWithFiles,
-  refreshUploadBatch,
-  updateBatchSchedule,
-  markBatchFilesScheduled,
-} from "@/lib/upload/client";
+import { refreshUploadBatch, updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
 import type { PublishDestination } from "@/lib/multiplatform/types";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
 import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
@@ -215,6 +210,9 @@ function applyBatchSchedule(batch: UploadBatch) {
 function batchSummaryEqual(a: UploadBatch | null, b: UploadBatch | null) {
   if (a === b) return true;
   if (!a || !b) return false;
+  const aFileCount = a.upload_files?.length ?? 0;
+  const bFileCount = b.upload_files?.length ?? 0;
+  if (aFileCount !== bFileCount) return false;
   return (
     a.id === b.id &&
     a.status === b.status &&
@@ -578,9 +576,9 @@ export function BulkUploadForm({
     };
   }
 
-  function buildScheduleJobPayload(partial = false) {
+  function buildScheduleJobPayload(partial = false, batchId?: string) {
     return {
-      upload_batch_id: activeBatch!.id,
+      upload_batch_id: batchId ?? activeBatch?.id ?? uploadSession?.batch?.id ?? "",
       targets: buildMultiplatformTargets(),
       schedule_mode: effectiveScheduleMode,
       ...buildSchedulePayload(),
@@ -623,6 +621,7 @@ export function BulkUploadForm({
   }
 
   async function runScheduleJobFlow(
+    batchId: string,
     items: Array<{ media_urls: string[]; filename: string }>,
     partial = false,
     videoCount = items.length,
@@ -630,7 +629,7 @@ export function BulkUploadForm({
     markStep("videos");
     setScheduleJobNotice(null);
 
-    const created = await createScheduleJobApi(buildScheduleJobPayload(partial));
+    const created = await createScheduleJobApi(buildScheduleJobPayload(partial, batchId));
     setScheduleJobId(created.jobId);
     if (created.message) setScheduleJobNotice(created.message);
     if (created.reused) {
@@ -914,28 +913,24 @@ export function BulkUploadForm({
   }
 
   async function executeSchedule(partial = false) {
-    if (!activeBatch || !destinationReady) return;
+    const batchId = activeBatch?.id ?? uploadSession?.batch?.id;
+    if (!batchId || !destinationReady) return;
 
     let batchWithFiles: UploadBatch;
     try {
-      batchWithFiles = await ensureBatchWithFiles(liveBatch ?? activeBatch);
-      if (batchWithFiles !== (liveBatch ?? activeBatch)) {
-        handleBatchUpdate(batchWithFiles);
-      }
+      batchWithFiles = await refreshUploadBatch(batchId);
+      handleBatchUpdate(batchWithFiles);
     } catch (error) {
       setResult(error instanceof Error ? error.message : "Falha ao carregar vídeos do lote.");
       return;
     }
 
     const items = getCompletedUploadItems(batchWithFiles);
-    const readyCount = Math.max(
-      items.length,
-      batchWithFiles.completed_files ?? 0,
-      completedCount,
-    );
+    const serverReady = batchWithFiles.completed_files ?? 0;
+    const readyCount = Math.max(items.length, serverReady);
 
     if (readyCount <= 0) {
-      setResult("Envie pelo menos um vídeo antes de agendar.");
+      setResult("Nenhum vídeo concluído neste lote. Verifique o upload antes de agendar.");
       return;
     }
 
@@ -943,7 +938,7 @@ export function BulkUploadForm({
 
     if (!items.length && !useJobQueue) {
       setResult(
-        "Não foi possível carregar a lista de vídeos enviados. Atualize a página e tente novamente.",
+        "Não foi possível carregar os links dos vídeos enviados. Atualize a página e tente novamente.",
       );
       return;
     }
@@ -979,7 +974,7 @@ export function BulkUploadForm({
 
     try {
       if (useJobQueue) {
-        await runScheduleJobFlow(items, partial, items.length || readyCount);
+        await runScheduleJobFlow(batchId, items, partial, items.length || readyCount);
         setScheduling(false);
         setLoadingStep("");
         return;
@@ -1004,9 +999,10 @@ export function BulkUploadForm({
   }
 
   async function handleSchedule(partial = false) {
-    if (!activeBatch || !destinationReady) return;
+    const batchId = activeBatch?.id ?? uploadSession?.batch?.id;
+    if (!batchId || !destinationReady) return;
 
-    if (activeBatch.status === "scheduled" && !partial) {
+    if (activeBatch?.status === "scheduled" && !partial) {
       setResult("Este lote já foi agendado. Inicie um novo upload para programar mais vídeos.");
       return;
     }
@@ -1018,7 +1014,7 @@ export function BulkUploadForm({
         body: JSON.stringify({
           platform: uploadPlatform,
           account_id: uploadAccountId,
-          upload_batch_id: activeBatch.id,
+          upload_batch_id: batchId,
           schedule_mode: effectiveScheduleMode,
           batch_scheduled_count: batchScheduledCount(),
         }),
