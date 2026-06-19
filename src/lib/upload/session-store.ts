@@ -1098,8 +1098,7 @@ class UploadSessionStore {
         return;
       }
 
-      const needsFull =
-        !active.upload_files?.length && active.total_files > 0 && active.status !== "ready";
+      const needsFull = !active.upload_files?.length && active.total_files > 0;
       const batch = needsFull ? await refreshUploadBatch(active.id) : active;
       this.syncBatch(batch);
 

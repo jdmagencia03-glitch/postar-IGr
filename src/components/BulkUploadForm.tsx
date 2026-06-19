@@ -19,7 +19,12 @@ import {
   findActiveScheduleJobForBatch,
 } from "@/lib/schedule-jobs/client";
 import type { ScheduleJobStatusResponse } from "@/lib/schedule-jobs/types";
-import { refreshUploadBatch, updateBatchSchedule, markBatchFilesScheduled } from "@/lib/upload/client";
+import {
+  ensureBatchWithFiles,
+  refreshUploadBatch,
+  updateBatchSchedule,
+  markBatchFilesScheduled,
+} from "@/lib/upload/client";
 import type { PublishDestination } from "@/lib/multiplatform/types";
 import type { MultiplatformVideoPreview } from "@/lib/multiplatform/types";
 import { DESTINATION_LABELS } from "@/lib/multiplatform/types";
@@ -907,9 +912,24 @@ export function BulkUploadForm({
   async function executeSchedule(partial = false) {
     if (!activeBatch || !destinationReady) return;
 
-    const items = getCompletedUploadItems(liveBatch ?? activeBatch);
+    let batchWithFiles: UploadBatch;
+    try {
+      batchWithFiles = await ensureBatchWithFiles(liveBatch ?? activeBatch);
+      if (batchWithFiles !== (liveBatch ?? activeBatch)) {
+        handleBatchUpdate(batchWithFiles);
+      }
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "Falha ao carregar vídeos do lote.");
+      return;
+    }
+
+    const items = getCompletedUploadItems(batchWithFiles);
     if (!items.length) {
-      setResult("Envie pelo menos um vídeo antes de agendar.");
+      setResult(
+        completedCount > 0
+          ? "Não foi possível carregar a lista de vídeos enviados. Atualize a página e tente novamente."
+          : "Envie pelo menos um vídeo antes de agendar.",
+      );
       return;
     }
 
