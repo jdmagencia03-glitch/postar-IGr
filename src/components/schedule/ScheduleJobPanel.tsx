@@ -39,6 +39,33 @@ function stepLabel(step: (typeof STEP_ORDER)[number], count: number) {
   return "Agendamento concluído";
 }
 
+function scheduleProgressView(status: ScheduleJobStatusResponse | null, videoCount: number) {
+  const total = status?.total ?? videoCount;
+  if (!status || !total) {
+    return { label: "Preparando agendamento…", percent: 0 };
+  }
+
+  if (status.completed > 0 || status.currentStep === "inserting") {
+    return {
+      label: `${status.completed} de ${total} posts salvos no calendário`,
+      percent: Math.round((status.completed / total) * 100),
+    };
+  }
+
+  if (status.planChunksTotal > 0) {
+    const planned = status.processed;
+    return {
+      label: `${planned} de ${total} com legendas e horários · lote ${status.planChunksDone}/${status.planChunksTotal}`,
+      percent: Math.round((status.planChunksDone / status.planChunksTotal) * 100),
+    };
+  }
+
+  return {
+    label: `${status.processed} de ${total} preparados`,
+    percent: Math.round((status.processed / total) * 100),
+  };
+}
+
 export function ScheduleJobPanel({
   jobId,
   videoCount,
@@ -171,7 +198,7 @@ export function ScheduleJobPanel({
   const processedCount = status?.completed ?? 0;
   const failedCount = status?.failed ?? 0;
   const total = status?.total ?? videoCount;
-  const progressPct = total ? Math.round((processedCount / total) * 100) : 0;
+  const progressView = scheduleProgressView(status, videoCount);
   const isDone = status?.status === "completed";
   const isPartial = status?.status === "partial_failed";
   const canResume = Boolean((status?.canResume || (status?.isActive && error)) && !running);
@@ -187,7 +214,7 @@ export function ScheduleJobPanel({
               : "Agendamento em andamento"}
         </p>
         <p className="mt-1 text-sm text-ig-muted">
-          {processedCount} de {total} processados
+          {progressView.label}
           {failedCount > 0 ? ` · ${failedCount} com erro` : ""}
         </p>
         {status && (
@@ -212,7 +239,7 @@ export function ScheduleJobPanel({
       <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
         <div
           className="h-full rounded-full bg-ig-primary transition-all duration-300"
-          style={{ width: `${progressPct}%` }}
+          style={{ width: `${progressView.percent}%` }}
         />
       </div>
 

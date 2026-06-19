@@ -631,9 +631,11 @@ export function BulkUploadForm({
 
     const created = await createScheduleJobApi(buildScheduleJobPayload(partial, batchId));
     setScheduleJobId(created.jobId);
-    if (created.message) setScheduleJobNotice(created.message);
+    setResult(null);
     if (created.reused) {
-      setResult("Retomando agendamento em andamento — progresso salvo no servidor.");
+      setScheduleJobNotice("Retomando agendamento em andamento — progresso salvo no servidor.");
+    } else if (created.message) {
+      setScheduleJobNotice(created.message);
     }
     markStep("captions");
     markStep("hashtags");
@@ -967,6 +969,7 @@ export function BulkUploadForm({
 
     setScheduling(true);
     setResult(null);
+    setScheduleJobNotice(null);
     setProgress(0);
     setCompletedSteps([]);
     setInsertionPreview(null);
@@ -974,6 +977,12 @@ export function BulkUploadForm({
 
     try {
       if (useJobQueue) {
+        if (scheduleJobId) {
+          setScheduleJobNotice("Agendamento já em andamento — acompanhe o progresso abaixo.");
+          setScheduling(false);
+          setLoadingStep("");
+          return;
+        }
         await runScheduleJobFlow(batchId, items, partial, items.length || readyCount);
         setScheduling(false);
         setLoadingStep("");
@@ -1427,9 +1436,11 @@ export function BulkUploadForm({
           ? loadingStep || "Processando..."
           : isUploading
             ? "Aguardando upload..."
-            : canScheduleAll
-              ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
-              : "Aguardando vídeos para agendar"}
+            : scheduleJobId
+              ? "Agendamento em andamento — veja abaixo"
+              : canScheduleAll
+                ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
+                : "Aguardando vídeos para agendar"}
       </button>
 
       {!canScheduleAll && completedCount === 0 && totalCount > 0 && (
@@ -1477,7 +1488,7 @@ export function BulkUploadForm({
         </div>
       )}
 
-      {result && (
+      {result && !scheduleJobId && (
         <p className={`text-sm ${result.includes("agendad") ? "text-ig-text" : "text-ig-danger"}`}>
           {result.includes("agendad") ? "✓ " : ""}
           {result}
