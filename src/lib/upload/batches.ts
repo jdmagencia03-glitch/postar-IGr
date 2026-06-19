@@ -226,6 +226,23 @@ export async function getActiveBatchSummaryForOwner(
   return { ...(data as UploadBatch), upload_files: [] as UploadBatchFile[] };
 }
 
+export async function listUploadBatchesForErrorScan(
+  supabase: SupabaseClient,
+  ownerId: string,
+  limit = 15,
+) {
+  const { data, error } = await supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .in("status", ["uploading", "ready"])
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({ id: row.id as string }));
+}
+
 export async function getActiveBatchForOwner(
   supabase: SupabaseClient,
   ownerId: string,

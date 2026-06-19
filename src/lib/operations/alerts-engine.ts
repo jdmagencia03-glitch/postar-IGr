@@ -104,8 +104,8 @@ export function buildOperationsAlerts(params: {
       severity: "warning",
       title: "Publicação presa em andamento",
       message: `${stuckProcessing.length} post(s) em “publicando” há mais tempo que o normal.`,
-      actionHref: "/dashboard/reports?status=processing",
-      actionLabel: "Ver publicações",
+      actionHref: "/dashboard/errors",
+      actionLabel: "Ver erros",
     });
   }
 
@@ -155,7 +155,7 @@ export function buildOperationsAlerts(params: {
         accountId: account.id,
         accountPlatform: account.platform,
         accountUsername: account.username,
-        actionHref: `/dashboard/reports?status=failed&account=${account.id}`,
+        actionHref: `/dashboard/errors?account=${account.id}`,
         actionLabel: "Ver erros",
       });
     }

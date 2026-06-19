@@ -20,7 +20,7 @@ function isPlatformFilter(value: string | undefined): value is SocialPlatform | 
 export default async function LogsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ account?: string; platform?: string; level?: string; q?: string }>;
+  searchParams: Promise<{ account?: string; platform?: string; level?: string; q?: string; post?: string }>;
 }) {
   const ownerId = await getSessionUserId();
   if (!ownerId) redirect("/login?next=/dashboard/logs");
@@ -60,6 +60,10 @@ export default async function LogsPage({
 
     if (params.level && params.level !== "all") {
       rows = rows.filter((row) => row.level === params.level);
+    }
+
+    if (params.post) {
+      rows = rows.filter((row) => row.postId === params.post);
     }
 
     if (params.q?.trim()) {

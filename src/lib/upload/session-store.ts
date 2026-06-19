@@ -40,6 +40,7 @@ import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSe
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 import { formatBytes } from "@/lib/upload/validate";
+import { reportClientOperationalError } from "@/lib/operations/report-client-error";
 
 type FileInputHandlers = {
   pickFiles: () => void;
@@ -1349,6 +1350,31 @@ class UploadSessionStore {
         const next = reconciled.progressMap[fileId] ?? 0;
         return Math.abs(next - prev) >= 1;
       });
+
+      for (const fileId of Object.keys(reconciled.progressMap)) {
+        const prev = prevProgressMap[fileId] ?? 0;
+        const remote = reconciled.progressMap[fileId] ?? 0;
+        if (remote < prev && prev >= 5) {
+          const file = this.batch?.upload_files?.find((f) => f.id === fileId);
+          reportClientOperationalError({
+            errorType: "upload_progress_regression",
+            title: "Progresso de upload voltou para trás",
+            message: `${file?.filename ?? "Arquivo"}: estava em ${prev}% e caiu para ${remote}%.`,
+            technicalMessage: `reconcile aplicou progresso menor (local=${prev}, remoto=${remote})`,
+            probableCause:
+              "Estado local inconsistente, snapshot antigo ou polling aplicando dado atrasado.",
+            recommendedAction: "O sistema já impede regressão; se persistir, reconcilie o lote.",
+            uploadBatchId: this.batch?.id,
+            uploadFileId: fileId,
+            accountId:
+              this.batch?.platform === "tiktok"
+                ? (this.batch.tiktok_account_id ?? undefined)
+                : (this.batch?.account_id ?? undefined),
+            platform: this.batch?.platform,
+            metadata: { previousPercent: prev, remotePercent: remote },
+          });
+        }
+      }
 
       const stateChanged =
         reconciled.changedFiles > 0 ||

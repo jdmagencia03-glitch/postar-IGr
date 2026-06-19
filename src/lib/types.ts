@@ -272,3 +272,88 @@ export interface CampaignContext {
   campaign?: Campaign | null;
   contentObjective?: string | null;
 }
+
+export type OperationalErrorCategory =
+  | "upload"
+  | "scheduling"
+  | "publishing"
+  | "account"
+  | "ai"
+  | "system";
+
+export type OperationalErrorSeverity = "critical" | "high" | "medium" | "low";
+
+export type OperationalErrorStatus =
+  | "open"
+  | "investigating"
+  | "auto_retrying"
+  | "resolved"
+  | "ignored"
+  | "needs_user_action";
+
+export type OperationalErrorActionType =
+  | "retry_upload"
+  | "reconcile_upload"
+  | "retry_post"
+  | "reschedule_post"
+  | "validate_account"
+  | "reconnect_account"
+  | "regenerate_caption"
+  | "open_batch"
+  | "open_post"
+  | "open_diagnostics"
+  | "open_calendar"
+  | "open_logs"
+  | "cancel_batch"
+  | "resume_account";
+
+export interface OperationalErrorAction {
+  type: OperationalErrorActionType;
+  label: string;
+  href?: string;
+  method?: "GET" | "POST";
+}
+
+export interface OperationalError {
+  id: string;
+  owner_id: string;
+  fingerprint: string;
+  account_id: string | null;
+  platform: SocialPlatform | null;
+  content_type: ContentType | null;
+  upload_batch_id: string | null;
+  upload_file_id: string | null;
+  scheduled_post_id: string | null;
+  error_type: string;
+  category: OperationalErrorCategory;
+  severity: OperationalErrorSeverity;
+  status: OperationalErrorStatus;
+  title: string;
+  message: string;
+  technical_message: string | null;
+  probable_cause: string | null;
+  recommended_action: string | null;
+  metadata: Record<string, unknown>;
+  available_actions: OperationalErrorAction[];
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  retry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationalErrorSummary {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  open: number;
+  autoRetrying: number;
+  needsUserAction: number;
+  resolvedToday: number;
+  stalledUploads: number;
+  failedPublications: number;
+  accountsWithProblems: number;
+}
+
