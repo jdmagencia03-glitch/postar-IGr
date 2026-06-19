@@ -199,7 +199,7 @@ export class UploadEngine {
     const records = [...(batch.upload_files ?? [])]
       .filter((record) => !record.removed)
       .filter((record) => !onlyFileIds || onlyFileIds.includes(record.id))
-      .filter((record) => record.status !== "completed")
+      .filter((record) => record.status !== "completed" && record.status !== "failed")
       .filter((record) => fileMap.has(record.id))
       .sort((a, b) => a.sort_order - b.sort_order);
 

@@ -363,9 +363,14 @@ export function BulkUploadForm({
   const completedCount =
     uploadView?.completedCount ?? liveBatch?.completed_files ?? activeBatch?.completed_files ?? 0;
   const totalCount = uploadView?.totalCount ?? liveBatch?.total_files ?? activeBatch?.total_files ?? 0;
+  const activeUploadCount =
+    uploadView?.pendingFiles.filter(
+      (file) => file.status === "pending" || file.status === "uploading",
+    ).length ?? 0;
   const batchReady = activeBatch?.status === "ready";
-  const canSchedulePartial = completedCount > 0 && !batchReady;
-  const canScheduleAll = batchReady && completedCount > 0;
+  const uploadSettled = !isUploading && !uploadSession?.retrying && activeUploadCount === 0;
+  const canSchedulePartial = completedCount > 0 && !uploadSettled;
+  const canScheduleAll = completedCount > 0 && uploadSettled;
 
   const effectiveScheduleMode = activeBatch?.schedule_mode ?? scheduleMode;
   const effectiveCustomPostsPerDay =
@@ -675,6 +680,7 @@ export function BulkUploadForm({
     const targets = buildMultiplatformTargets();
     const batches = chunkArray(items, API_BATCH_SIZE);
     const allVideos: MultiplatformVideoPreview[] = [];
+    const skippedPreviewErrors: string[] = [];
     let lastScheduleSummary = "";
     let source: "ai" | "fallback" = "ai";
 
@@ -689,42 +695,61 @@ export function BulkUploadForm({
       setProgress(30 + Math.round(((batchIndex + 0.5) / batches.length) * 50));
       markStep("calendar");
 
-      const previewRes = await apiFetch("/api/posts/multiplatform/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targets,
-          schedule_mode: effectiveScheduleMode,
-          items: batchItems,
-          batch_offset: offset,
-          total_count: items.length,
-          ...buildSchedulePayload(),
-          ...buildCampaignPayload(),
-          ...buildInsertionPayload(),
-        }),
-      });
+      try {
+        const previewRes = await apiFetch("/api/posts/multiplatform/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targets,
+            schedule_mode: effectiveScheduleMode,
+            items: batchItems,
+            batch_offset: offset,
+            total_count: items.length,
+            ...buildSchedulePayload(),
+            ...buildCampaignPayload(),
+            ...buildInsertionPayload(),
+          }),
+        });
 
-      const previewData = await readJsonResponse(previewRes);
-      if (!previewRes.ok) {
-        throw new Error(formatApiError(previewData.error) || "Falha ao gerar prévia");
-      }
+        const previewData = await readJsonResponse(previewRes);
+        if (!previewRes.ok) {
+          throw new Error(formatApiError(previewData.error) || "Falha ao gerar prévia");
+        }
 
-      if (previewData.caption_source === "fallback") source = "fallback";
-      allVideos.push(...((previewData.preview as MultiplatformVideoPreview[]) ?? []));
-      lastScheduleSummary = String(previewData.schedule_summary ?? "");
-      if (previewData.warmup_breakdown) {
-        setPreviewWarmupBreakdown(
-          previewData.warmup_breakdown as Array<{
-            day: number;
-            dateLabel: string;
-            posts: number;
-            times: string[];
-          }>,
+        if (previewData.caption_source === "fallback") source = "fallback";
+        allVideos.push(...((previewData.preview as MultiplatformVideoPreview[]) ?? []));
+        lastScheduleSummary = String(previewData.schedule_summary ?? "");
+        if (previewData.warmup_breakdown) {
+          setPreviewWarmupBreakdown(
+            previewData.warmup_breakdown as Array<{
+              day: number;
+              dateLabel: string;
+              posts: number;
+              times: string[];
+            }>,
+          );
+        }
+        if (previewData.insertion_preview && batchIndex === 0) {
+          setInsertionPreview(previewData.insertion_preview as ScheduleInsertionPreview);
+        }
+      } catch (error) {
+        const label = batchItems.map((item) => item.filename).join(", ") || `lote ${batchIndex + 1}`;
+        skippedPreviewErrors.push(
+          `${label}: ${error instanceof Error ? error.message : "Erro desconhecido"}`,
         );
       }
-      if (previewData.insertion_preview && batchIndex === 0) {
-        setInsertionPreview(previewData.insertion_preview as ScheduleInsertionPreview);
-      }
+    }
+
+    if (!allVideos.length) {
+      throw new Error(
+        skippedPreviewErrors[0] ?? "Não foi possível gerar a prévia de agendamento.",
+      );
+    }
+
+    if (skippedPreviewErrors.length) {
+      setResult(
+        `${skippedPreviewErrors.length} vídeo(s) ignorados por erro. Prévia gerada para ${allVideos.length} vídeo(s).`,
+      );
     }
 
     setCaptionSource(source);
@@ -733,7 +758,11 @@ export function BulkUploadForm({
     setPreviewTotalPosts(
       allVideos.reduce((sum, video) => sum + video.destinations.length, 0),
     );
-    setPreviewItems(items);
+    setPreviewItems(
+      items.filter((item) =>
+        allVideos.some((video) => video.filename === item.filename || video.media_urls[0] === item.media_urls[0]),
+      ),
+    );
     if (effectiveScheduleMode !== "warmup" && effectiveScheduleMode !== "auto") {
       setPreviewWarmupBreakdown(null);
     }
@@ -741,7 +770,7 @@ export function BulkUploadForm({
   }
 
   async function confirmMultiplatformPreview() {
-    if (!previewVideos?.length) return 0;
+    if (!previewVideos?.length) return { created: 0, skippedVideos: 0 };
 
     setConfirmingPreview(true);
     try {
@@ -771,13 +800,14 @@ export function BulkUploadForm({
       }
 
       if (activeBatch?.id && previewItems.length) {
-        await markBatchFilesScheduled(
-          activeBatch.id,
-          previewItems.flatMap((item) => item.media_urls),
-        );
+        const scheduledUrls = previewVideos.flatMap((video) => video.media_urls);
+        await markBatchFilesScheduled(activeBatch.id, scheduledUrls).catch(() => undefined);
       }
 
-      return Number(confirmData.created ?? 0);
+      return {
+        created: Number(confirmData.created ?? 0),
+        skippedVideos: Number(confirmData.skipped_videos ?? 0),
+      };
     } finally {
       setConfirmingPreview(false);
     }
@@ -1359,7 +1389,7 @@ export function BulkUploadForm({
           }}
           onConfirm={async () => {
             try {
-              const totalCreated = await confirmMultiplatformPreview();
+              const { created, skippedVideos } = await confirmMultiplatformPreview();
               setPreviewVideos(null);
               setPreviewWarmupBreakdown(null);
               setInsertionPreview(null);
@@ -1369,7 +1399,9 @@ export function BulkUploadForm({
                   : destinationMode === "tiktok"
                     ? "no TikTok"
                     : "no Instagram";
-              setResult(`${totalCreated} publicações agendadas ${destLabel}. ${previewSummary}`);
+              const skippedNote =
+                skippedVideos > 0 ? ` ${skippedVideos} vídeo(s) ignorados por erro.` : "";
+              setResult(`${created} publicações agendadas ${destLabel}.${skippedNote} ${previewSummary}`);
               window.setTimeout(() => {
                 const query = new URLSearchParams({
                   platform: uploadPlatform,

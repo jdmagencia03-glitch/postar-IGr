@@ -13,7 +13,6 @@ import {
   findRecordForUpload,
   matchFileToRecord,
   refreshUploadBatch,
-  resetAllFailedUploadFiles,
   resetFailedUploadFile,
   setBatchPaused,
   setBatchSpeedMode,
@@ -519,22 +518,7 @@ class UploadSessionStore {
   }
 
   private async tryAutoRetryAfterRun(batchId: string, fileMap: Map<string, File>) {
-    if (
-      this.pausedByUser ||
-      this.cancelledBatchIds.has(batchId) ||
-      this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES ||
-      fileMap.size === 0
-    ) {
-      if (this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES && !this.pausedByUser) {
-        this.message = "Aguardando para tentar novamente automaticamente…";
-        this.emit();
-      }
-      this.logUpload("auto_retry_skipped", {
-        pausedByUser: this.pausedByUser,
-        cancelled: this.cancelledBatchIds.has(batchId),
-        pass: this.autoRetryPass,
-        fileMapSize: fileMap.size,
-      });
+    if (this.pausedByUser || this.cancelledBatchIds.has(batchId) || fileMap.size === 0) {
       return;
     }
 
@@ -550,29 +534,45 @@ class UploadSessionStore {
       refreshed.upload_files?.filter(
         (file) =>
           !file.removed &&
-          file.status !== "completed" &&
-          file.status !== "failed" &&
+          (file.status === "pending" || file.status === "uploading") &&
           fileMap.has(file.id),
       ) ?? [];
 
-    if (!failed.length && !pendingInMap.length) {
+    if (!pendingInMap.length) {
       this.autoRetryPass = 0;
+      if (failed.length) {
+        const completed = refreshed.completed_files ?? 0;
+        this.message =
+          completed > 0
+            ? `${failed.length} vídeo(s) falharam e foram ignorados. ${completed} prontos para agendar.`
+            : `${failed.length} vídeo(s) falharam e foram ignorados.`;
+        this.syncBatch(refreshed);
+      }
+      return;
+    }
+
+    if (this.autoRetryPass >= UploadSessionStore.MAX_AUTO_RETRY_PASSES) {
+      if (!this.pausedByUser) {
+        this.message = "Alguns vídeos ainda estão pendentes. Você pode agendar os enviados ou retomar depois.";
+        this.emit();
+      }
+      this.logUpload("auto_retry_skipped", {
+        pausedByUser: this.pausedByUser,
+        cancelled: this.cancelledBatchIds.has(batchId),
+        pass: this.autoRetryPass,
+        fileMapSize: fileMap.size,
+      });
       return;
     }
 
     this.autoRetryPass += 1;
-    const batch = failed.length ? await resetAllFailedUploadFiles(refreshed) : refreshed;
-
-    const retryCount = failed.length || pendingInMap.length;
-    const reason = failed.length ? "file_error" : "pending_stalled";
+    const retryCount = pendingInMap.length;
+    const reason = "pending_stalled";
     this.logUpload("auto_retry_start", { pass: this.autoRetryPass, retryCount, reason });
 
     this.retrying = true;
-    this.message =
-      failed.length > 0
-        ? `Erro em ${failed.length} vídeo(s). Continuando lote… (tentativa ${this.autoRetryPass})`
-        : `Tentando novamente… (tentativa ${this.autoRetryPass})`;
-    this.syncBatch(batch);
+    this.message = `Tentando novamente… (tentativa ${this.autoRetryPass})`;
+    this.syncBatch(refreshed);
     await new Promise((resolve) => setTimeout(resolve, 2000 * this.autoRetryPass));
 
     if (this.pausedByUser || this.cancelledBatchIds.has(batchId)) {
@@ -582,7 +582,7 @@ class UploadSessionStore {
     }
 
     this.retrying = false;
-    await this.startEngine(batch, fileMap);
+    await this.startEngine(refreshed, fileMap);
   }
 
   private async autoContinuePendingIfNeeded(
@@ -615,17 +615,24 @@ class UploadSessionStore {
       refreshed.upload_files?.filter(
         (file) =>
           !file.removed &&
-          file.status !== "completed" &&
+          (file.status === "pending" || file.status === "uploading") &&
           fileMap.has(file.id),
       ) ?? [];
 
-    if (!pendingInMap.length && !failed.length) return;
+    if (!pendingInMap.length) {
+      if (failed.length) {
+        const completed = refreshed.completed_files ?? 0;
+        this.message =
+          completed > 0
+            ? `${failed.length} vídeo(s) falharam e foram ignorados. ${completed} prontos para agendar.`
+            : `${failed.length} vídeo(s) falharam e foram ignorados.`;
+        this.syncBatch(refreshed);
+      }
+      return;
+    }
 
     this.logUpload("auto_continue", { reason, pending: pendingInMap.length, failed: failed.length });
 
-    if (failed.length) {
-      refreshed = await resetAllFailedUploadFiles(refreshed);
-    }
     this.syncBatch(refreshed);
     await this.startEngine(refreshed, fileMap);
   }
@@ -688,7 +695,7 @@ class UploadSessionStore {
         },
         onError: (errorMessage) => {
           this.logUpload("file_error", { message: errorMessage });
-          this.message = formatUploadErrorMessage(errorMessage);
+          this.message = `Vídeo ignorado (${formatUploadErrorMessage(errorMessage)}). Continuando lote…`;
           this.emit();
         },
       });

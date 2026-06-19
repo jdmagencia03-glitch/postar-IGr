@@ -55,21 +55,30 @@ export async function POST(request: NextRequest) {
   const validatedAccounts = new Map<string, "instagram" | "tiktok">();
   const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
   const campaignFields = mergeCampaignFields(campaignContext);
+  const skippedVideos: Array<{ filename?: string; reason: string }> = [];
+  const schedulableVideos = [];
 
   for (const video of parsed.data.videos) {
     const mediaCheck = validateMediaUrlsForOwner(video.media_urls, ownerId);
     if (!mediaCheck.ok) {
-      return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+      skippedVideos.push({
+        filename: video.filename,
+        reason: mediaCheck.error ?? "Mídia inválida",
+      });
+      continue;
     }
 
+    let videoValid = true;
     for (const dest of video.destinations) {
       const knownPlatform = validatedAccounts.get(dest.account_id);
       if (knownPlatform) {
         if (knownPlatform !== dest.platform) {
-          return NextResponse.json(
-            { error: "Conta inválida para a plataforma informada." },
-            { status: 400 },
-          );
+          skippedVideos.push({
+            filename: video.filename,
+            reason: "Conta inválida para a plataforma informada.",
+          });
+          videoValid = false;
+          break;
         }
         continue;
       }
@@ -77,26 +86,45 @@ export async function POST(request: NextRequest) {
       if (dest.platform === "tiktok") {
         const account = await getOwnerTikTokAccountById(supabase, ownerId, dest.account_id);
         if (!account) {
-          return NextResponse.json(
-            { error: "Conta TikTok não encontrada ou sem permissão para agendar." },
-            { status: 403 },
-          );
+          skippedVideos.push({
+            filename: video.filename,
+            reason: "Conta TikTok não encontrada ou sem permissão para agendar.",
+          });
+          videoValid = false;
+          break;
         }
       } else {
         const account = await getOwnerAccountById(supabase, ownerId, dest.account_id);
         if (!account) {
-          return NextResponse.json(
-            { error: "Conta Instagram não encontrada ou sem permissão para agendar." },
-            { status: 403 },
-          );
+          skippedVideos.push({
+            filename: video.filename,
+            reason: "Conta Instagram não encontrada ou sem permissão para agendar.",
+          });
+          videoValid = false;
+          break;
         }
       }
 
       validatedAccounts.set(dest.account_id, dest.platform);
     }
+
+    if (videoValid) {
+      schedulableVideos.push(video);
+    }
   }
 
-  const rows = parsed.data.videos.flatMap((video) =>
+  if (!schedulableVideos.length) {
+    return NextResponse.json(
+      {
+        error: "Nenhum vídeo pôde ser agendado. Todos falharam na validação.",
+        skipped_videos: skippedVideos.length,
+        skipped: skippedVideos,
+      },
+      { status: 409 },
+    );
+  }
+
+  const rows = schedulableVideos.flatMap((video) =>
     video.destinations.map((dest) => ({
       platform: dest.platform,
       account_id: dest.platform === "instagram" ? dest.account_id : null,
@@ -123,6 +151,7 @@ export async function POST(request: NextRequest) {
         error:
           "Todos os vídeos já estão na fila de publicação. Evite clicar em agendar duas vezes.",
         skipped,
+        skipped_videos: skippedVideos.length + schedulableVideos.length,
       },
       { status: 409 },
     );
@@ -138,7 +167,9 @@ export async function POST(request: NextRequest) {
     {
       created: data?.length ?? 0,
       skipped: skipped.length,
-      videos: parsed.data.videos.length,
+      skipped_videos: skippedVideos.length,
+      skipped_details: skippedVideos,
+      videos: schedulableVideos.length,
       posts: data,
     },
     { status: 201 },

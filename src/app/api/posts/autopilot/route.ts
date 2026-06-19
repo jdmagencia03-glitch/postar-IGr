@@ -84,37 +84,49 @@ export async function POST(request: NextRequest) {
       platform,
     );
 
-    for (const item of parsed.data.items) {
+    const validItemIndexes: number[] = [];
+
+    for (let index = 0; index < parsed.data.items.length; index++) {
+      const item = parsed.data.items[index];
       const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
       if (!mediaCheck.ok) {
-        return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+        continue;
       }
+
+      validItemIndexes.push(index);
+    }
+
+    if (!validItemIndexes.length) {
+      return NextResponse.json({ error: "Nenhum vídeo válido para agendar." }, { status: 403 });
     }
 
     const scheduleMode = (parsed.data.schedule_mode ?? "auto") as ScheduleMode;
     const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, parsed.data);
     const campaignFields = mergeCampaignFields(campaignContext);
 
-    const rows = validAccounts.flatMap((account) => {
-      const schedule = parsed.data.schedule.map((slot) => new Date(slot));
+    const rows = validAccounts.flatMap((account) =>
+      validItemIndexes.map((index) => {
+        const item = parsed.data.items[index];
+        const schedule = parsed.data.schedule.map((slot) => new Date(slot));
 
-      return parsed.data.items.map((item, index) => ({
-        platform,
-        account_id: platform === "instagram" ? account.id : null,
-        tiktok_account_id: platform === "tiktok" ? account.id : null,
-        content_type: contentTypeForPlatform(platform),
-        media_type: "REELS" as const,
-        media_urls: item.media_urls,
-        caption: parsed.data.captions[index]?.trim() || null,
-        scheduled_at: sanitizeScheduledAt(
-          schedule[index]?.toISOString() ?? parsed.data.schedule[index],
-        ),
-        product_id: campaignFields.product_id,
-        campaign_id: campaignFields.campaign_id,
-        content_objective: campaignFields.content_objective,
-        upload_batch_id: parsed.data.upload_batch_id ?? null,
-      }));
-    });
+        return {
+          platform,
+          account_id: platform === "instagram" ? account.id : null,
+          tiktok_account_id: platform === "tiktok" ? account.id : null,
+          content_type: contentTypeForPlatform(platform),
+          media_type: "REELS" as const,
+          media_urls: item.media_urls,
+          caption: parsed.data.captions[index]?.trim() || null,
+          scheduled_at: sanitizeScheduledAt(
+            schedule[index]?.toISOString() ?? parsed.data.schedule[index],
+          ),
+          product_id: campaignFields.product_id,
+          campaign_id: campaignFields.campaign_id,
+          content_objective: campaignFields.content_objective,
+          upload_batch_id: parsed.data.upload_batch_id ?? null,
+        };
+      }),
+    );
 
     const { accepted, skipped } = await filterDuplicateScheduleRows(supabase, rows);
 
@@ -141,8 +153,9 @@ export async function POST(request: NextRequest) {
       {
         created: data?.length ?? 0,
         skipped: skipped.length,
+        skipped_videos: parsed.data.items.length - validItemIndexes.length,
         accounts: validAccounts.length,
-        videos: parsed.data.items.length,
+        videos: validItemIndexes.length,
         schedule_mode: scheduleMode,
         caption_source: "preview",
         schedule_summary: describeSmartSchedule(scheduleDates, scheduleMode === "today" ? "today" : "auto"),
