@@ -114,6 +114,7 @@ class UploadSessionStore {
   private lastProgressAt = 0;
   private lastProgressBytes = 0;
   private lastCompletedCount = 0;
+  private lastSettledCount = 0;
   private lastBatchAdvanceAt = 0;
   private batchStalled = false;
   private concurrencyReduced = false;
@@ -146,16 +147,29 @@ class UploadSessionStore {
     }
   }
 
-  private touchBatchAdvance(completed: number) {
-    if (completed > this.lastCompletedCount) {
+  private touchBatchAdvance(completed: number, failed = 0) {
+    const settled = completed + failed;
+    if (settled > this.lastSettledCount) {
+      this.lastSettledCount = settled;
+      if (completed > this.lastCompletedCount) {
+        this.lastCompletionAt = Date.now();
+      }
       this.lastCompletedCount = completed;
       this.lastBatchAdvanceAt = Date.now();
-      this.lastCompletionAt = Date.now();
       this.batchStalled = false;
       this.autoRetryPass = 0;
       this.touchProgress();
-      this.logUpload("batch_advance", { completed });
+      this.logUpload("batch_advance", { completed, failed, settled });
     }
+  }
+
+  private touchBatchAdvanceFromBatch(batch: UploadBatch) {
+    const completed = this.countCompletedFiles(batch);
+    const failed =
+      batch.upload_files?.filter((file) => !file.removed && file.status === "failed").length ??
+      batch.failed_files ??
+      0;
+    this.touchBatchAdvance(completed, failed);
   }
 
   private getConcurrencyConfig() {
@@ -237,7 +251,9 @@ class UploadSessionStore {
     this.batchStalled = evaluation.isStalled || this.batchStalled;
 
     if (evaluation.shouldEnterSafeMode) this.safeMode = true;
-    if (evaluation.shouldPauseUploads) this.uploadPausedByFailures = true;
+    if (!evaluation.shouldPauseUploads && evaluation.stability === "stable") {
+      this.uploadPausedByFailures = false;
+    }
 
     if (this.speedMode === "adaptive") {
       if (evaluation.effectiveMode !== this.adaptiveEffectiveMode) {
@@ -345,10 +361,14 @@ class UploadSessionStore {
     if (!this.batch || this.batch.status === "ready" || this.batch.status === "cancelled") {
       return;
     }
-    if (this.pausedByUser || this.recoveringFromStall) return;
+    if (this.pausedByUser || this.recoveringFromStall || this.uploadPausedByFailures) return;
 
     const completed = this.progress?.completed ?? this.countCompletedFiles();
-    this.touchBatchAdvance(completed);
+    const failed =
+      this.batch?.upload_files?.filter((f) => !f.removed && f.status === "failed").length ??
+      this.progress?.failed ??
+      0;
+    this.touchBatchAdvance(completed, failed);
 
     const pendingWork = this.pendingWorkInSession();
     if (!pendingWork.length) {
@@ -358,10 +378,14 @@ class UploadSessionStore {
 
     const idleMs = Date.now() - this.lastBatchAdvanceAt;
     const retryingOnly =
-      this.hasActiveFileRetry() &&
+      (this.hasActiveFileRetry() || this.retrying) &&
       idleMs < UPLOAD_BATCH_STALL_TIMEOUT_MS + UPLOAD_STALL_TIMEOUT_MS;
 
     if (idleMs < UPLOAD_BATCH_STALL_TIMEOUT_MS || retryingOnly) {
+      return;
+    }
+
+    if (this.uploadPausedByFailures) {
       return;
     }
 
@@ -440,6 +464,7 @@ class UploadSessionStore {
     try {
       if (reason === "manual_recover") {
         this.uploadPausedByFailures = false;
+        this.safeMode = false;
       }
       if (reason !== "manual_recover" && this.stallRecoveryCount < 3) {
         if (this.speedMode === "adaptive") {
@@ -532,6 +557,7 @@ class UploadSessionStore {
     },
   ) {
     this.recentRetryTimestamps.push(Date.now());
+    this.touchProgress();
     const endsAt = Date.now() + detail.delayMs;
     this.setFileRuntime(fileId, {
       status: "retrying",
@@ -618,7 +644,7 @@ class UploadSessionStore {
   }
 
   private async recoverFromStall(idleMs: number) {
-    if (!this.running || this.pausedByUser || this.recoveringFromStall || !this.batch) return;
+    if (!this.running || this.pausedByUser || this.recoveringFromStall || this.uploadPausedByFailures || !this.batch) return;
 
     this.recoveringFromStall = true;
     this.batchStalled = true;
@@ -1112,7 +1138,7 @@ class UploadSessionStore {
 
   private syncBatch(next: UploadBatch | null) {
     if (next) {
-      this.touchBatchAdvance(this.countCompletedFiles(next));
+      this.touchBatchAdvanceFromBatch(next);
     }
     this.batch = next;
     for (const listener of this.batchListeners) listener(next);
@@ -1138,7 +1164,7 @@ class UploadSessionStore {
 
   private scheduleProgressUpdate = (next: UploadEngineProgress) => {
     this.pendingProgress = next;
-    this.touchBatchAdvance(next.completed);
+    this.touchBatchAdvance(next.completed, next.failed);
     if (next.bytesUploaded > this.lastProgressBytes) {
       this.touchProgress(next.bytesUploaded);
     }
@@ -1314,6 +1340,7 @@ class UploadSessionStore {
       this.running ||
       this.engineStarting ||
       this.retrying ||
+      this.uploadPausedByFailures ||
       this.cancelledBatchIds.has(batchId) ||
       fileMap.size === 0
     ) {
@@ -1394,7 +1421,7 @@ class UploadSessionStore {
     if (this.uploadPausedByFailures && !onlyFileIds?.length) {
       this.engineStarting = false;
       this.message =
-        "Muitos arquivos falharam. Novos envios pausados temporariamente. Use Recuperar upload.";
+        "Envio pausado. Clique em Recuperar upload para continuar os vídeos pendentes.";
       this.emit();
       return;
     }
@@ -1932,6 +1959,7 @@ class UploadSessionStore {
         !this.retrying &&
         !this.engineStarting &&
         !this.recoveringFromStall &&
+        !this.uploadPausedByFailures &&
         !this.pausedByUser &&
         this.lastFileMap.size > 0 &&
         this.hasPendingInSession()

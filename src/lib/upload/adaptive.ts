@@ -174,18 +174,20 @@ export function evaluateAdaptiveUpload(
     progressIdleMs >= ADAPTIVE_NO_COMPLETION_MS &&
     completionIdleMs >= ADAPTIVE_NO_COMPLETION_MS;
 
-  const shouldPauseUploads = failed >= 50;
-  const shouldSuggestRecover = failed >= 30;
-  const shouldEnterSafeMode = safeMode || failed >= 20;
-  const shouldAlertLight = failed >= 5 && failed < 10;
+  // Nunca pausar o lote inteiro por falhas — o motor já ignora arquivos failed.
+  const shouldPauseUploads = false;
+  const shouldSuggestRecover = failed >= 30 || (errorRate >= 0.08 && failed >= 10);
+  const shouldEnterSafeMode =
+    safeMode || (total >= 150 ? errorRate >= 0.15 && failed >= 20 : failed >= 20);
+  const shouldAlertLight = failed >= 5 && failed < 10 && errorRate < 0.05;
   const shouldReduce =
     stalled >= 3 ||
-    recentRetryCount >= 5 ||
-    errorRate > 0.05 ||
-    failed >= 10 ||
+    recentRetryCount >= 8 ||
+    errorRate > 0.08 ||
+    (failed >= 15 && errorRate > 0.05) ||
     noRealProgress ||
     speedDropping ||
-    (uploading > 0 && !hasActiveProgress && progressIdleMs >= 90_000);
+    (uploading > 0 && !hasActiveProgress && progressIdleMs >= 120_000);
 
   let effectiveMode = currentEffectiveMode;
   let stability: AdaptiveStabilityStatus = "stable";
@@ -197,15 +199,15 @@ export function evaluateAdaptiveUpload(
     stability = "paused";
     effectiveMode = "economy";
     userMessage =
-      "Muitos arquivos estão falhando. Ativamos modo seguro e pausamos novos envios. Use Recuperar upload ou tente novamente os falhados.";
+      "Muitos arquivos estão falhando. Use Recuperar upload ou tente novamente os falhados.";
     reason = `${failed} falhas no lote`;
   } else if (shouldEnterSafeMode) {
     stability = "safe_mode";
     effectiveMode = "economy";
     userMessage =
-      "Muitos erros detectados. Ativamos modo seguro para continuar com mais estabilidade.";
+      "Taxa de erro elevada. Reduzimos a velocidade — os vídeos pendentes continuam em segundo plano.";
     actionMessage = `Concorrência limitada a ${modeConcurrency("economy", concurrency)} simultâneos.`;
-    reason = `${failed} falhas acumuladas`;
+    reason = `${failed} falhas (${Math.round(errorRate * 100)}% do lote)`;
   } else if (shouldReduce) {
     stability = "unstable";
     const previous = effectiveMode;
@@ -223,7 +225,7 @@ export function evaluateAdaptiveUpload(
     else reason = "uploads sem progresso";
   } else if (shouldSuggestRecover) {
     stability = "degraded";
-    userMessage = "Vários vídeos falharam. O lote continua, mas recomendamos Recuperar upload.";
+    userMessage = `${failed} vídeo(s) com erro (${Math.round(errorRate * 100)}%). O lote continua — falhas não bloqueiam os pendentes.`;
     reason = `${failed} falhas`;
   } else if (shouldAlertLight) {
     stability = "degraded";
