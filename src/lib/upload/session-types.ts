@@ -70,4 +70,6 @@ export type UploadSessionSnapshot = {
   canResumeWithoutPicker: boolean;
   /** Faltam vídeos na sessão — precisa abrir seletor de arquivos. */
   needsFileReselection: boolean;
+  engineStarting: boolean;
+  recoveringFromStall: boolean;
 };

@@ -110,6 +110,8 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
       canResumeWithoutPicker: session.canResumeWithoutPicker,
       needsFileReselection: session.needsFileReselection,
       fileRuntime: session.fileRuntime,
+      engineStarting: session.engineStarting,
+      recoveringFromStall: session.recoveringFromStall,
     });
   }, [session]);
 
@@ -144,11 +146,15 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                 </span>
               </div>
               <p className="mt-1 truncate text-xs text-ig-muted">
-                {hasFileRetry || session.retrying || view.awaitingAutoRecovery
-                  ? session.message ?? "Conexão instável. Tentando novamente…"
-                  : view.currentUploadName
+                {view.isActivelyUploading
+                  ? view.currentUploadName
                     ? `Enviando: ${view.currentUploadName}`
-                    : `@${username} · ${speedPresets[session.speedMode].label}`}
+                    : `@${username} · ${speedPresets[session.speedMode].label}`
+                  : hasFileRetry || session.retrying || view.awaitingAutoRecovery
+                    ? session.message ?? "Retomando envio…"
+                    : view.currentUploadName
+                      ? `Enviando: ${view.currentUploadName}`
+                      : `@${username} · ${speedPresets[session.speedMode].label}`}
               </p>
               <p className="mt-1 text-xs text-ig-muted">
                 {view.completedCount} enviados · {view.remainingCount} faltando · {view.overallPercent}%

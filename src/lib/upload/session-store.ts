@@ -239,7 +239,7 @@ class UploadSessionStore {
       idleMs,
       completed: this.progress?.completed,
     });
-    this.message = "Upload travado detectado. Tentando recuperar…";
+    this.message = "Upload sem progresso. Tentando recuperar…";
     this.stopStallWatchdog();
 
     const batchId = this.batch.id;
@@ -254,7 +254,7 @@ class UploadSessionStore {
     try {
       if (fileMap.size > 0 && !this.pausedByUser) {
         await this.resetStalledUploadingFiles(batchId);
-        this.message = "Reconectando…";
+        this.message = "Continuando envio…";
         this.emit();
         await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
       }
@@ -266,10 +266,13 @@ class UploadSessionStore {
 
   private async resetStalledUploadingFiles(batchId: string) {
     const refreshed = await refreshUploadBatch(batchId);
+    const now = Date.now();
     const stuck =
-      refreshed.upload_files?.filter(
-        (file) => !file.removed && file.status === "uploading",
-      ) ?? [];
+      refreshed.upload_files?.filter((file) => {
+        if (file.removed || file.status !== "uploading") return false;
+        const idleMs = now - new Date(file.updated_at).getTime();
+        return idleMs >= UPLOAD_STALL_TIMEOUT_MS;
+      }) ?? [];
     if (!stuck.length) return;
 
     this.logUpload("reset_stalled_uploading", {
@@ -315,8 +318,8 @@ class UploadSessionStore {
     if (!this.batch) return "idle";
     if (this.batch.status === "ready") return "completed";
     if (this.pausedByUser) return "paused_by_user";
-    if (this.retrying) return "retrying";
-    if (this.running) return "uploading";
+    if (this.retrying || this.recoveringFromStall) return "retrying";
+    if (this.running || this.engineStarting) return "uploading";
     if (this.needsFileReselection()) return "needs_attention";
     const hasPending = (this.batch.upload_files ?? []).some(
       (file) => !file.removed && file.status !== "completed",
@@ -376,6 +379,8 @@ class UploadSessionStore {
       needsFileReselection: Boolean(
         this.batch && this.batch.status !== "ready" && hasPending && pendingInSession.length === 0,
       ),
+      engineStarting: this.engineStarting,
+      recoveringFromStall: this.recoveringFromStall,
     };
   }
 
@@ -413,8 +418,8 @@ class UploadSessionStore {
       phase: this.snapshot.phase,
       running: this.running,
       retrying: this.retrying,
-      progressKeys: Object.keys(this.progressMap).length,
-      fileRuntimeKeys: Object.keys(this.fileRuntime).length,
+      engineStarting: this.engineStarting,
+      recoveringFromStall: this.recoveringFromStall,
       batchStatus: this.batch?.status,
       completed: this.batch?.completed_files,
       failed: this.batch?.failed_files,
@@ -430,12 +435,18 @@ class UploadSessionStore {
       return UploadSessionStore.POLL_INTERVAL_HIDDEN_MS;
     }
 
+    if (this.running && !this.retrying && !this.hasActiveFileRetry()) {
+      const total = this.batch?.total_files ?? 0;
+      if (total > 100) return 15_000;
+      return UploadSessionStore.POLL_INTERVAL_NORMAL_MS;
+    }
+
     const files = this.batch?.upload_files ?? [];
     const hasRetryOrStall =
       this.retrying ||
+      this.recoveringFromStall ||
       this.hasActiveFileRetry() ||
-      files.some((file) => file.status === "retrying") ||
-      Object.values(this.fileRuntime).some((runtime) => runtime.status === "stalled");
+      files.some((file) => file.status === "retrying");
 
     return hasRetryOrStall
       ? UploadSessionStore.POLL_INTERVAL_FAST_MS
@@ -562,6 +573,7 @@ class UploadSessionStore {
       this.running ||
       this.retrying ||
       this.engineStarting ||
+      this.recoveringFromStall ||
       this.resuming ||
       !this.batch ||
       !this.hasPendingInSession() ||
@@ -845,18 +857,14 @@ class UploadSessionStore {
     const reason = "pending_stalled";
     this.logUpload("auto_retry_start", { pass: this.autoRetryPass, retryCount, reason });
 
-    this.retrying = true;
-    this.message = `Tentando novamente… (tentativa ${this.autoRetryPass})`;
     this.syncBatch(refreshed);
-    await new Promise((resolve) => setTimeout(resolve, 2000 * this.autoRetryPass));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(800, 200 * this.autoRetryPass)));
 
     if (this.pausedByUser || this.cancelledBatchIds.has(batchId)) {
-      this.retrying = false;
       this.emit();
       return;
     }
 
-    this.retrying = false;
     await this.startEngine(refreshed, fileMap);
   }
 
@@ -953,9 +961,9 @@ class UploadSessionStore {
         },
         onFileProgress: (fileId, loaded, total) => {
           const percent = Math.round((loaded / total) * 100);
+          this.touchProgress();
           if (this.progressMap[fileId] !== percent) {
             this.progressMap = { ...this.progressMap, [fileId]: percent };
-            this.touchProgress(this.progress?.bytesUploaded);
             this.emit();
           }
         },
@@ -998,6 +1006,7 @@ class UploadSessionStore {
       this.emit();
 
       await this.persistManifest(currentBatch, fileMap);
+      await this.resetStalledUploadingFiles(batchId);
       this.startStallWatchdog();
 
       await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
@@ -1309,13 +1318,6 @@ class UploadSessionStore {
       const bytesMoved = dbBytesTotal > this.lastProgressBytes || sessionBytes > this.lastProgressBytes;
       if (bytesMoved) {
         this.touchProgress(Math.max(dbBytesTotal, sessionBytes));
-      } else if (
-        (this.running || this.retrying || remote.retrying > 0 || remote.stalled > 0) &&
-        Date.now() - this.lastProgressAt >= UPLOAD_STALL_TIMEOUT_MS &&
-        !this.recoveringFromStall &&
-        !this.hasActiveFileRetry()
-      ) {
-        void this.recoverFromStall(Date.now() - this.lastProgressAt);
       }
 
       if (remote.paused && !this.running) {
@@ -1340,10 +1342,16 @@ class UploadSessionStore {
         this.stopPolling();
       }
 
+      const progressMeaningfullyChanged = Object.keys(reconciled.progressMap).some((fileId) => {
+        const prev = prevProgressMap[fileId] ?? 0;
+        const next = reconciled.progressMap[fileId] ?? 0;
+        return Math.abs(next - prev) >= 1;
+      });
+
       const stateChanged =
         reconciled.changedFiles > 0 ||
         reconciled.batchStatusChanged ||
-        JSON.stringify(prevProgressMap) !== JSON.stringify(reconciled.progressMap);
+        progressMeaningfullyChanged;
 
       logUploadEvent("[upload-reconcile]", source, {
         batchId: remote.batchId,
@@ -1369,8 +1377,9 @@ class UploadSessionStore {
         reconciled.batch.status !== "ready" &&
         !this.running &&
         !this.retrying &&
-        !this.pausedByUser &&
+        !this.engineStarting &&
         !this.recoveringFromStall &&
+        !this.pausedByUser &&
         this.lastFileMap.size > 0 &&
         this.hasPendingInSession()
       ) {

@@ -18,6 +18,8 @@ export function deriveUploadSessionView(params: {
   canResumeWithoutPicker?: boolean;
   needsFileReselection?: boolean;
   fileRuntime?: Record<string, { status?: string }>;
+  engineStarting?: boolean;
+  recoveringFromStall?: boolean;
 }) {
   const {
     batch,
@@ -30,6 +32,8 @@ export function deriveUploadSessionView(params: {
     canResumeWithoutPicker = false,
     needsFileReselection = false,
     fileRuntime = {},
+    engineStarting = false,
+    recoveringFromStall = false,
   } = params;
   const files = getUploadFiles(batch);
   const pendingFiles = files
@@ -57,11 +61,14 @@ export function deriveUploadSessionView(params: {
       pendingCount > 0 &&
       !running &&
       !retrying &&
-      !resuming,
+      !resuming &&
+      !engineStarting &&
+      !recoveringFromStall,
   );
   const hasFileRetry = Object.values(fileRuntime).some((runtime) => runtime.status === "retrying");
+  const isActivelyUploading = running || engineStarting || recoveringFromStall;
   const autoRecovering = Boolean(
-    awaitingAutoRecovery || retrying || hasFileRetry || (running && !pausedByUser && canResumeWithoutPicker),
+    awaitingAutoRecovery || retrying || hasFileRetry || (isActivelyUploading && !pausedByUser && canResumeWithoutPicker),
   );
   const overallPercent =
     progress?.overallPercent ?? (totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
@@ -94,7 +101,24 @@ export function deriveUploadSessionView(params: {
   let listFiles: UploadBatchFile[];
   if (batch?.status !== "ready") {
     const seen = new Set(inProgress.map((file) => file.id));
-    listFiles = [...inProgress, ...recentCompleted.filter((file) => !seen.has(file.id))];
+    const active = inProgress.filter(
+      (file) => file.status === "uploading" || file.status === "retrying",
+    );
+    const failedFiles = inProgress.filter((file) => file.status === "failed");
+    const waiting = inProgress.filter((file) => file.status === "pending");
+    const listLimit = totalCount > 50 ? 20 : 40;
+    const activeSlice = active.slice(0, Math.min(8, listLimit));
+    const failedSlice = failedFiles.slice(0, Math.min(4, listLimit - activeSlice.length));
+    const waitingSlice = waiting.slice(
+      0,
+      Math.max(0, listLimit - activeSlice.length - failedSlice.length),
+    );
+    const compactInProgress = [...activeSlice, ...failedSlice, ...waitingSlice];
+    const compactSeen = new Set(compactInProgress.map((file) => file.id));
+    listFiles = [
+      ...compactInProgress,
+      ...recentCompleted.filter((file) => !compactSeen.has(file.id) && !seen.has(file.id)),
+    ];
   } else if (visibleFiles.length > 0) {
     listFiles = visibleFiles;
   } else {
@@ -110,20 +134,20 @@ export function deriveUploadSessionView(params: {
     batch && batch.status !== "ready" && !running && !retrying && failedCount > 0,
   );
 
-  const statusLabel = retrying || awaitingAutoRecovery
+  const statusLabel = retrying || recoveringFromStall
     ? "reconectando"
-    : running
+    : engineStarting || running
       ? "enviando"
-      : batch?.status === "ready"
-        ? "concluído"
-        : failedCount > 0 && !running && !retrying && !autoRecovering
-          ? "erro"
-          : pausedByUser
-            ? "pausado"
-            : canSelectFiles
-              ? "aguardando"
-              : pendingCount > 0
-                ? "reconectando"
+      : awaitingAutoRecovery
+        ? "reconectando"
+        : batch?.status === "ready"
+          ? "concluído"
+          : failedCount > 0 && !isActivelyUploading && !retrying && !autoRecovering
+            ? "erro"
+            : pausedByUser
+              ? "pausado"
+              : canSelectFiles
+                ? "aguardando"
                 : "aguardando";
 
   const hasIncomplete =
@@ -159,5 +183,8 @@ export function deriveUploadSessionView(params: {
     retrying,
     pausedByUser,
     canRetryFailed,
+    isActivelyUploading,
+    engineStarting,
+    recoveringFromStall,
   };
 }
