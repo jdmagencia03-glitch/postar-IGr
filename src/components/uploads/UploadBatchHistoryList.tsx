@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { formatShortDateTime } from "@/lib/operations/compute";
+import { deleteUploadBatchPermanent } from "@/lib/upload/client";
 import type { UploadBatch } from "@/lib/types";
 
 function batchLabel(batch: UploadBatch) {
@@ -28,6 +31,33 @@ function durationLabel(batch: UploadBatch) {
 }
 
 export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) {
+  const router = useRouter();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  async function handleDeleteBatch(batch: UploadBatch) {
+    const label = batchLabel(batch);
+    if (
+      !window.confirm(
+        `Apagar o lote #${batch.batch_number ?? "—"} de ${label}?\n\nIsso remove o lote do histórico e apaga os arquivos do storage. Posts já agendados no calendário não serão afetados.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(batch.id);
+    setErrorMessage(null);
+
+    try {
+      await deleteUploadBatchPermanent(batch.id);
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Erro ao apagar lote");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   if (!batches.length) {
     return (
       <div className="rounded-2xl border border-dashed border-ig-border p-12 text-center text-ig-muted">
@@ -38,12 +68,19 @@ export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) 
 
   return (
     <div className="space-y-4">
+      {errorMessage && (
+        <div className="rounded-xl border border-ig-danger/30 bg-ig-danger/10 px-4 py-3 text-sm text-ig-danger">
+          {errorMessage}
+        </div>
+      )}
+
       {batches.map((batch) => {
         const pending = Math.max(
           0,
           batch.total_files - batch.completed_files - batch.failed_files,
         );
         const partial = batch.failed_files > 0 && batch.completed_files > 0;
+        const isDeleting = deletingId === batch.id;
 
         return (
           <article
@@ -97,6 +134,14 @@ export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) 
               >
                 Ver detalhe
               </Link>
+              <button
+                type="button"
+                className="rounded-lg border border-ig-danger/40 px-4 py-2 text-sm text-ig-danger hover:bg-ig-danger/10 disabled:opacity-50"
+                disabled={isDeleting || batch.status === "uploading"}
+                onClick={() => void handleDeleteBatch(batch)}
+              >
+                {isDeleting ? "Apagando…" : "Apagar lote"}
+              </button>
               {(batch.status === "uploading" || batch.status === "ready") && (
                 <Link href="/dashboard/bulk" className="ig-btn-secondary px-4 py-2 text-sm">
                   {batch.status === "ready" ? "Agendar vídeos" : "Retomar upload"}

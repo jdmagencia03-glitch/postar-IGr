@@ -1,6 +1,10 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
-import { getBatchForOwner, getBatchFileStatusCounts } from "@/lib/upload/batches";
+import {
+  deleteUploadBatchForOwner,
+  getBatchForOwner,
+  getBatchFileStatusCounts,
+} from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -93,7 +97,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   const ownerId = await getSessionUserId();
@@ -107,6 +111,21 @@ export async function DELETE(
 
   if (!batch) {
     return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
+  }
+
+  const permanent = request.nextUrl.searchParams.get("permanent") === "1";
+
+  if (permanent) {
+    try {
+      const result = await deleteUploadBatchForOwner(supabase, ownerId, id);
+      if (!result) {
+        return NextResponse.json({ error: "Lote não encontrado" }, { status: 404 });
+      }
+      return NextResponse.json({ success: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao apagar lote";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   }
 
   const { error } = await supabase

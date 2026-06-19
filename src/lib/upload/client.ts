@@ -479,6 +479,18 @@ export async function cancelUploadBatch(batchId: string) {
   if (!res.ok) throw new Error(String(data.error ?? "Falha ao cancelar lote"));
 }
 
+export async function deleteUploadBatchPermanent(batchId: string) {
+  const res = await apiFetch(`/api/upload/batches/${batchId}?permanent=1`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(String(data.error ?? "Falha ao apagar lote"));
+  return data as {
+    success: boolean;
+    batchId: string;
+    filesDeleted: number;
+    storagePathsRemoved: number;
+  };
+}
+
 export async function refreshUploadBatch(batchId: string) {
   const res = await apiFetch(`/api/upload/batches/${batchId}`, { cache: "no-store" });
   const data = await res.json();

@@ -357,6 +357,59 @@ export async function deleteAccountUploadBatches(
   };
 }
 
+/** Remove um lote do histórico (hard delete) — storage + registro no banco. */
+export async function deleteUploadBatchForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+  batchId: string,
+) {
+  const batch = await getBatchForOwner(supabase, ownerId, batchId);
+  if (!batch) return null;
+
+  if (batch.status === "uploading") {
+    throw new Error("Aguarde o upload terminar ou pause antes de apagar este lote.");
+  }
+
+  const files = await getBatchUploadFiles(supabase, batchId);
+  const storagePaths = [
+    ...new Set(files.map((file) => file.storage_path).filter(Boolean)),
+  ];
+
+  if (storagePaths.length) {
+    for (let offset = 0; offset < storagePaths.length; offset += 100) {
+      const chunk = storagePaths.slice(offset, offset + 100);
+      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
+      if (storageError) {
+        console.warn("[upload-clear] batch_storage_remove_error", {
+          batchId,
+          error: storageError.message,
+        });
+      }
+    }
+  }
+
+  const { error: deleteError } = await supabase
+    .from("upload_batches")
+    .delete()
+    .eq("id", batchId)
+    .eq("owner_id", ownerId);
+
+  if (deleteError) throw new Error(deleteError.message);
+
+  console.info("[upload-clear] batch_deleted", {
+    ownerId,
+    batchId,
+    filesDeleted: files.length,
+    storagePathsRemoved: storagePaths.length,
+  });
+
+  return {
+    batchId,
+    filesDeleted: files.length,
+    storagePathsRemoved: storagePaths.length,
+  };
+}
+
 async function getBatchUploadFilesForIds(supabase: SupabaseClient, batchIds: string[]) {
   if (!batchIds.length) return [] as UploadBatchFile[];
 
