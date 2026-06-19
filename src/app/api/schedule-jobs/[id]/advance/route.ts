@@ -4,7 +4,7 @@ import { advanceScheduleJob } from "@/lib/schedule-jobs/processor";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(
   _request: NextRequest,

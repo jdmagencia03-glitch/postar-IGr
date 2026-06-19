@@ -29,6 +29,18 @@
     },
     "src/app/api/upload/batches/[id]/mark-scheduled/route.ts": {
       "maxDuration": 120
+    },
+    "src/app/api/schedule-jobs/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/schedule-jobs/[id]/advance/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/schedule-jobs/[id]/resume/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/schedule-jobs/[id]/status/route.ts": {
+      "maxDuration": 30
     }
   }
 }

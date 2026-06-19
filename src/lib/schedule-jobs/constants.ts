@@ -1,5 +1,5 @@
 /** Vídeos processados por chamada advance (legendas + plano). */
-export const SCHEDULE_JOB_PLAN_CHUNK = 15;
+export const SCHEDULE_JOB_PLAN_CHUNK = 8;
 
 /** Posts inseridos por transação no advance. */
 export const SCHEDULE_JOB_INSERT_CHUNK = 25;

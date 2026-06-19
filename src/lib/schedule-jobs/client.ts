@@ -15,19 +15,25 @@ async function readJsonResponse(response: Response) {
 
   if (!trimmed) {
     if (response.status === 504 || response.status === 502) {
-      throw new Error(
+      const err = new Error(
         "O servidor demorou demais. O progresso foi salvo — recarregue a página para continuar.",
       );
+      (err as Error & { savedProgress?: boolean }).savedProgress = true;
+      throw err;
     }
     throw new Error("Resposta vazia do servidor.");
   }
 
   if (trimmed.startsWith("<")) {
-    throw new Error(
+    const err = new Error(
       response.status === 504 || response.status === 502
         ? "O servidor demorou demais. O agendamento continua em segundo plano — recarregue a página."
         : "Erro temporário do servidor. Tente novamente em alguns segundos.",
     );
+    if (response.status === 504 || response.status === 502) {
+      (err as Error & { savedProgress?: boolean }).savedProgress = true;
+    }
+    throw err;
   }
 
   try {
@@ -35,6 +41,27 @@ async function readJsonResponse(response: Response) {
   } catch {
     throw new Error(trimmed.slice(0, 160) || "Resposta inválida do servidor");
   }
+}
+
+function isTransientNetworkError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("failed to fetch") ||
+    msg.includes("networkerror") ||
+    msg.includes("load failed") ||
+    msg.includes("network request failed")
+  );
+}
+
+function savedProgressError(message: string) {
+  const err = new Error(message);
+  (err as Error & { savedProgress?: boolean }).savedProgress = true;
+  return err;
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function createScheduleJobApi(body: Record<string, unknown>) {
@@ -56,7 +83,18 @@ export async function fetchScheduleJobStatus(jobId: string) {
 }
 
 export async function advanceScheduleJobApi(jobId: string) {
-  const res = await apiFetch(`/api/schedule-jobs/${jobId}/advance`, { method: "POST" });
+  let res: Response;
+  try {
+    res = await apiFetch(`/api/schedule-jobs/${jobId}/advance`, { method: "POST" });
+  } catch (error) {
+    if (isTransientNetworkError(error)) {
+      throw savedProgressError(
+        "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento.",
+      );
+    }
+    throw error;
+  }
+
   const data = await readJsonResponse(res);
   if (!res.ok) {
     const err = new Error(String(data.userMessage ?? data.error ?? "Falha no agendamento"));
@@ -93,16 +131,40 @@ export async function runScheduleJobUntilDone(
   const terminal = new Set(["completed", "partial_failed", "failed", "cancelled"]);
 
   while (status.isActive && !terminal.has(status.status)) {
-    try {
-      status = await advanceScheduleJobApi(jobId);
-    } catch (error) {
-      status = await fetchScheduleJobStatus(jobId);
-      onUpdate(status);
-      throw error;
+    let advanced = false;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        status = await advanceScheduleJobApi(jobId);
+        advanced = true;
+        break;
+      } catch (error) {
+        status = await fetchScheduleJobStatus(jobId);
+        onUpdate(status);
+
+        if (terminal.has(status.status)) {
+          return status;
+        }
+
+        const canRetry =
+          status.isActive &&
+          attempt < 4 &&
+          (isTransientNetworkError(error) ||
+            Boolean((error as Error & { savedProgress?: boolean }).savedProgress));
+
+        if (canRetry) {
+          await sleep(1500 * attempt);
+          continue;
+        }
+
+        throw error;
+      }
     }
+
+    if (!advanced) break;
+
     onUpdate(status);
     if (terminal.has(status.status)) break;
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await sleep(300);
   }
 
   return status;
