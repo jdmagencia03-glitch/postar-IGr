@@ -11,6 +11,27 @@ export interface UploadFileInput {
   last_modified?: number;
 }
 
+export function uploadFileIdentityKey(file: Pick<UploadFileInput, "filename" | "file_size">) {
+  return `${file.filename}\0${file.file_size}`;
+}
+
+export function dedupeUploadFileInputs(files: UploadFileInput[]) {
+  const seenKeys = new Set<string>();
+  const seenHashes = new Set<string>();
+  const deduped: UploadFileInput[] = [];
+
+  for (const file of files) {
+    const key = uploadFileIdentityKey(file);
+    if (seenKeys.has(key)) continue;
+    if (file.file_hash && seenHashes.has(file.file_hash)) continue;
+    seenKeys.add(key);
+    if (file.file_hash) seenHashes.add(file.file_hash);
+    deduped.push(file);
+  }
+
+  return deduped;
+}
+
 export function buildUploadFileRows(
   ownerId: string,
   batchId: string,
@@ -52,6 +73,73 @@ export async function insertUploadFiles(
   }
 
   return inserted;
+}
+
+/** Insere arquivos novos ou reutiliza registros existentes (evita violar unique batch+filename+size). */
+export async function mergeUploadFilesIntoBatch(
+  supabase: SupabaseClient,
+  ownerId: string,
+  batchId: string,
+  files: UploadFileInput[],
+  sortOrderOffset = 0,
+) {
+  const incoming = dedupeUploadFileInputs(files);
+  if (!incoming.length) {
+    return { added: [] as UploadBatchFile[], skipped: files.length, files: [] as UploadBatchFile[] };
+  }
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from("upload_files")
+    .select("*")
+    .eq("batch_id", batchId)
+    .or("removed.is.null,removed.eq.false");
+
+  if (existingError) throw new Error(existingError.message);
+
+  const existing = (existingRows ?? []) as UploadBatchFile[];
+  const byKey = new Map<string, UploadBatchFile>();
+  const byHash = new Map<string, UploadBatchFile>();
+
+  for (const row of existing) {
+    byKey.set(uploadFileIdentityKey(row), row);
+    if (row.file_hash) byHash.set(row.file_hash, row);
+  }
+
+  const matchedExisting: UploadBatchFile[] = [];
+  const toInsert: UploadFileInput[] = [];
+
+  for (const file of incoming) {
+    if (file.file_hash && byHash.has(file.file_hash)) {
+      matchedExisting.push(byHash.get(file.file_hash)!);
+      continue;
+    }
+
+    const key = uploadFileIdentityKey(file);
+    if (byKey.has(key)) {
+      matchedExisting.push(byKey.get(key)!);
+      continue;
+    }
+
+    toInsert.push(file);
+  }
+
+  let added: UploadBatchFile[] = [];
+  if (toInsert.length) {
+    const rows = buildUploadFileRows(ownerId, batchId, toInsert, sortOrderOffset + matchedExisting.length);
+    added = await insertUploadFiles(supabase, rows);
+    for (const row of added) {
+      byKey.set(uploadFileIdentityKey(row), row);
+      if (row.file_hash) byHash.set(row.file_hash, row);
+    }
+  }
+
+  const skipped = files.length - added.length;
+
+  return {
+    added,
+    skipped,
+    files: [...matchedExisting, ...added],
+  };
 }
 
 export function isActiveBatchStatus(status: UploadBatchStatus) {

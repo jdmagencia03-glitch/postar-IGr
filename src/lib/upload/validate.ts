@@ -38,14 +38,17 @@ export function validateFiles(
   files: File[],
   existingFingerprints: Set<string> = new Set(),
   maxBytes: number = MAX_UPLOAD_BYTES,
+  existingNameSizes: Set<string> = new Set(),
 ): ValidationResult {
   const valid: ValidatedFile[] = [];
   const invalid: InvalidFile[] = [];
   const duplicates: DuplicateFile[] = [];
   const seen = new Set<string>();
+  const seenNameSizes = new Set<string>();
 
   for (const file of files) {
     const fingerprint = buildFileFingerprint(file);
+    const nameSizeKey = `${file.name}|${file.size}`;
 
     if (!hasAllowedExtension(file.name) && !ALLOWED_MIMES.includes(file.type)) {
       invalid.push({ file, reason: "Formato não suportado (use MP4, MOV ou WEBM)" });
@@ -73,12 +76,31 @@ export function validateFiles(
       continue;
     }
 
+    if (seenNameSizes.has(nameSizeKey)) {
+      duplicates.push({
+        file,
+        fingerprint,
+        existingFilename: `${file.name} (mesmo nome e tamanho no lote)`,
+      });
+      continue;
+    }
+
     if (existingFingerprints.has(fingerprint)) {
       duplicates.push({ file, fingerprint, existingFilename: file.name });
       continue;
     }
 
+    if (existingNameSizes.has(nameSizeKey)) {
+      duplicates.push({
+        file,
+        fingerprint,
+        existingFilename: `${file.name} (já está neste lote)`,
+      });
+      continue;
+    }
+
     seen.add(fingerprint);
+    seenNameSizes.add(nameSizeKey);
     valid.push({ file, fingerprint });
   }
 

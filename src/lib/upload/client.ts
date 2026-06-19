@@ -110,6 +110,12 @@ export function matchFileToRecord(file: File, records: UploadBatchFile[]) {
       (record.last_modified == null || record.last_modified === file.lastModified),
   );
   if (byMeta.length === 1) return byMeta[0];
+
+  const byNameSize = records.filter(
+    (record) => record.filename === file.name && Number(record.file_size) === file.size,
+  );
+  if (byNameSize.length === 1) return byNameSize[0];
+
   return undefined;
 }
 

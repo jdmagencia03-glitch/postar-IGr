@@ -1,8 +1,7 @@
 import { formatZodError } from "@/lib/api-errors";
 import { BATCH_CREATE_CHUNK_SIZE, MAX_VIDEOS_TOTAL } from "@/lib/autopilot-constants";
 import {
-  buildUploadFileRows,
-  insertUploadFiles,
+  mergeUploadFilesIntoBatch,
   refreshBatchCounters,
 } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
@@ -89,17 +88,18 @@ export async function POST(
   const sortOrderOffset = lastFile?.sort_order ?? -1;
 
   try {
-    const rows = buildUploadFileRows(
+    const { added: files, skipped } = await mergeUploadFilesIntoBatch(
+      supabase,
       ownerId,
       batch.id,
       parsed.data.files,
       sortOrderOffset + 1,
     );
-    const files = await insertUploadFiles(supabase, rows);
     const counters = await refreshBatchCounters(supabase, batch.id);
 
     return NextResponse.json({
       added: files,
+      skipped,
       counters,
     });
   } catch (error) {

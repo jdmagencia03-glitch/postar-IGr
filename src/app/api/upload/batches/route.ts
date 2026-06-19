@@ -4,12 +4,11 @@ import { formatZodError } from "@/lib/api-errors";
 import { BATCH_CREATE_CHUNK_SIZE, MAX_VIDEOS_TOTAL } from "@/lib/autopilot-constants";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
-  buildUploadFileRows,
   getActiveBatchForOwner,
   getActiveBatchSummaryForOwner,
   getBatchFileStatusCounts,
   getUploadingBatchForOwner,
-  insertUploadFiles,
+  mergeUploadFilesIntoBatch,
 } from "@/lib/upload/batches";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -156,8 +155,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const fileRows = buildUploadFileRows(ownerId, batch.id, parsed.data.files);
-    const files = await insertUploadFiles(supabase, fileRows);
+    const { added: files } = await mergeUploadFilesIntoBatch(
+      supabase,
+      ownerId,
+      batch.id,
+      parsed.data.files,
+    );
 
     return NextResponse.json({
       batch: {

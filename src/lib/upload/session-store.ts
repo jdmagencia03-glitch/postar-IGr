@@ -1024,7 +1024,12 @@ class UploadSessionStore {
   handleFileSelection(selected: FileList | null) {
     if (!selected?.length) return;
     const files = Array.from(selected);
-    const validation = validateFiles(files, new Set(), this.maxUploadBytes);
+    const existingNameSizes = new Set(
+      (this.batch?.upload_files ?? [])
+        .filter((file) => !file.removed)
+        .map((file) => `${file.filename}|${file.file_size}`),
+    );
+    const validation = validateFiles(files, new Set(), this.maxUploadBytes, existingNameSizes);
     this.validationPreview = {
       validCount: validation.valid.length,
       invalid: validation.invalid,
@@ -1045,7 +1050,12 @@ class UploadSessionStore {
     const existingHashes = new Set(
       (this.batch?.upload_files ?? []).map((file) => file.file_hash).filter(Boolean) as string[],
     );
-    const validation = validateFiles(files, existingHashes, this.maxUploadBytes);
+    const existingNameSizes = new Set(
+      (this.batch?.upload_files ?? [])
+        .filter((file) => !file.removed)
+        .map((file) => `${file.filename}|${file.file_size}`),
+    );
+    const validation = validateFiles(files, existingHashes, this.maxUploadBytes, existingNameSizes);
     const toUpload = skipDuplicates
       ? validation.valid
       : [
