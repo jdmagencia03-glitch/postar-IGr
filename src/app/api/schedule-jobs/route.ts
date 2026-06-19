@@ -121,8 +121,10 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao criar agendamento";
-    const hint = /schedule_jobs|schedule_job_items|does not exist|relation/i.test(message)
-      ? " Execute supabase/schedule-jobs.sql no Supabase."
+    const hint = /schedule_jobs|schedule_job_items|does not exist|relation|foreign key|owner_id_fkey/i.test(
+      message,
+    )
+      ? " Execute supabase/schedule-jobs-fix-owner.sql no Supabase (owner_id deve ser text, não auth.users)."
       : "";
     return NextResponse.json({ error: `${message}${hint}` }, { status: 500 });
   }

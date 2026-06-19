@@ -2,7 +2,7 @@
 
 create table if not exists schedule_jobs (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users(id) on delete cascade,
+  owner_id text not null,
   account_id uuid,
   tiktok_account_id uuid,
   upload_batch_id uuid references upload_batches(id) on delete set null,
