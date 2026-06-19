@@ -133,6 +133,7 @@ export async function uploadBatchFile(params: {
   batch: UploadBatch;
   record: UploadBatchFile;
   file: File;
+  workerId?: string;
   signal?: AbortSignal;
   onProgress?: (bytesUploaded: number, bytesTotal: number) => void;
   onRetryScheduled?: (detail: {
@@ -144,12 +145,23 @@ export async function uploadBatchFile(params: {
   }) => void;
   onRecovered?: () => void;
 }): Promise<UploadFilePatchResult> {
-  const { batch, file, onProgress, signal, onRetryScheduled, onRecovered } = params;
+  const { batch, file, onProgress, signal, onRetryScheduled, onRecovered, workerId } = params;
   let record = params.record;
 
   for (let attempt = 0; attempt < UPLOAD_FILE_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) {
       throw new DOMException("Upload pausado", "AbortError");
+    }
+
+    if (workerId) {
+      const claimRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      }).catch(() => null);
+      if (claimRes && claimRes.status === 409) {
+        throw new Error("Arquivo reservado por outro worker — aguardando reconciliação");
+      }
     }
 
     if (attempt > 0) {
@@ -274,7 +286,11 @@ export async function uploadBatchFile(params: {
             void apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status: "uploading", bytes_uploaded: loaded }),
+              body: JSON.stringify({
+                status: "uploading",
+                bytes_uploaded: loaded,
+                ...(workerId ? { worker_id: workerId } : {}),
+              }),
             }).catch(() => undefined);
           }
         },
@@ -290,6 +306,7 @@ export async function uploadBatchFile(params: {
           public_url: prepareData.publicUrl,
           bytes_uploaded: file.size,
           error_message: null,
+          ...(workerId ? { worker_id: workerId } : {}),
         }),
       });
 
@@ -327,6 +344,8 @@ export async function uploadBatchFile(params: {
           body: JSON.stringify({
             status: "failed",
             error_message: userMessageForUploadError(classification),
+            attempt_count: attempt + 1,
+            ...(workerId ? { worker_id: workerId } : {}),
           }),
         });
         const failData = (await failRes.json()) as UploadFilePatchResult & { error?: unknown };
@@ -473,7 +492,7 @@ export async function createUploadBatch(params: {
     tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
     schedule_mode: params.scheduleMode,
     custom_schedule: params.customSchedule ?? undefined,
-    upload_speed_mode: params.uploadSpeedMode ?? "turbo",
+    upload_speed_mode: params.uploadSpeedMode ?? "adaptive",
   };
 
   const firstRes = await apiFetch("/api/upload/batches", {

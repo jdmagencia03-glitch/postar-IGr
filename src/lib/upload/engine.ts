@@ -13,7 +13,11 @@ export interface UploadEngineProgress {
   bytesUploaded: number;
   bytesTotal: number;
   speedBps: number;
+  speedBps30s: number;
+  speedBps2m: number;
   etaSeconds: number;
+  hasActiveUploads: boolean;
+  hasByteProgress: boolean;
   activeFiles: Array<{ id: string; filename: string; percent: number }>;
 }
 
@@ -41,9 +45,10 @@ export class UploadEngine {
   private paused = false;
   private stopped = false;
   private abortControllers = new Map<string, AbortController>();
-  private speedSamples: number[] = [];
+  private speedSamples: Array<{ at: number; bps: number }> = [];
   private lastSpeedAt = Date.now();
   private lastBytes = 0;
+  private lastProgressByteAt = Date.now();
   private bytesUploaded = 0;
   private bytesTotal = 0;
   private liveLoadedBytes = new Map<string, number>();
@@ -130,6 +135,9 @@ export class UploadEngine {
   }
 
   private updateSpeed(bytes: number) {
+    if (bytes > this.lastBytes) {
+      this.lastProgressByteAt = Date.now();
+    }
     if (bytes < this.lastBytes) {
       this.lastBytes = bytes;
       this.lastSpeedAt = Date.now();
@@ -142,18 +150,24 @@ export class UploadEngine {
       const delta = bytes - this.lastBytes;
       if (delta > 0) {
         const bps = delta / elapsed;
-        this.speedSamples.push(bps);
-        if (this.speedSamples.length > 5) this.speedSamples.shift();
+        this.speedSamples.push({ at: now, bps });
+        const cutoff = now - 120_000;
+        this.speedSamples = this.speedSamples.filter((sample) => sample.at >= cutoff);
       }
       this.lastBytes = bytes;
       this.lastSpeedAt = now;
     }
   }
 
+  private averageSpeedInWindow(windowMs: number) {
+    const cutoff = Date.now() - windowMs;
+    const samples = this.speedSamples.filter((sample) => sample.at >= cutoff && sample.bps > 0);
+    if (!samples.length) return 0;
+    return samples.reduce((sum, sample) => sum + sample.bps, 0) / samples.length;
+  }
+
   private getSpeedBps() {
-    const positive = this.speedSamples.filter((value) => value > 0);
-    if (!positive.length) return 0;
-    return positive.reduce((sum, value) => sum + value, 0) / positive.length;
+    return this.averageSpeedInWindow(30_000) || this.averageSpeedInWindow(120_000);
   }
 
   private batchBytesTotal(batch: UploadBatch) {
@@ -198,11 +212,15 @@ export class UploadEngine {
       .slice(0, 4)
       .map(([id, value]) => ({ id, filename: value.filename, percent: value.percent }));
 
-    const speedBps = this.getSpeedBps();
+    const speedBps30s = this.averageSpeedInWindow(30_000);
+    const speedBps2m = this.averageSpeedInWindow(120_000);
+    const speedBps = speedBps30s > 0 ? speedBps30s : speedBps2m;
     const batchTotal = this.batchBytesTotal(batch);
     const loadedBytes = this.sumPersistedAndLiveBytes(batch);
     const remaining = Math.max(0, batchTotal - loadedBytes);
     const etaSeconds = speedBps > 0 ? remaining / speedBps : 0;
+    const hasActiveUploads = uploading > 0 || activeFiles.length > 0;
+    const hasByteProgress = Date.now() - this.lastProgressByteAt < 45_000;
 
     this.callbacks.onProgress?.({
       completed,
@@ -214,7 +232,11 @@ export class UploadEngine {
       bytesUploaded: loadedBytes,
       bytesTotal: batchTotal,
       speedBps,
+      speedBps30s,
+      speedBps2m,
       etaSeconds,
+      hasActiveUploads,
+      hasByteProgress,
       activeFiles,
     });
   }
@@ -223,8 +245,9 @@ export class UploadEngine {
     batch: UploadBatch;
     fileMap: Map<string, File>;
     onlyFileIds?: string[];
+    workerId?: string;
   }) {
-    const { fileMap, onlyFileIds } = params;
+    const { fileMap, onlyFileIds, workerId: runWorkerId } = params;
     let batch = params.batch;
     const records = [...(batch.upload_files ?? [])]
       .filter((record) => !record.removed)
@@ -285,6 +308,7 @@ export class UploadEngine {
           batch,
           record: currentRecord,
           file,
+          workerId: runWorkerId,
           signal: controller.signal,
           onProgress: (loaded, total) => {
             fileProgress.set(currentRecord.id, {

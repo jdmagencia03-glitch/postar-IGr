@@ -12,6 +12,13 @@ import { getFileDisplayPercent } from "@/lib/upload/batch-status";
 import { displayUploadErrorMessage, formatUploadErrorMessage } from "@/lib/upload/errors";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
+import {
+  buildSpeedDisplay,
+  largeBatchAdaptiveMessage,
+  recommendSpeedModeForBatch,
+  turboLargeBatchConfirmMessage,
+} from "@/lib/upload/adaptive";
+import { largeBatchWarning } from "@/lib/upload/queue";
 import { uploadSessionStore } from "@/lib/upload/session-store";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 
@@ -170,6 +177,10 @@ export function SupremeUploadManager({
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
   const speedPresets =
     session.uploadLimits?.speed_presets ?? getSpeedPresets(session.uploadLimits?.concurrency);
+  const batchFileCount =
+    session.batch?.total_files ??
+    session.validationPreview?.validCount ??
+    0;
   const maxUploadLabel =
     session.uploadLimits?.max_upload_mb && session.uploadLimits.max_upload_mb >= 1024
       ? `${session.uploadLimits.max_upload_mb / 1024}GB`
@@ -308,6 +319,7 @@ export function SupremeUploadManager({
             speedMode={session.speedMode}
             speedPresets={speedPresets}
             running={session.running}
+            batchFileCount={batchFileCount}
             onChange={(mode) => uploadSessionStore.setSpeedMode(mode)}
           />
         </div>
@@ -318,6 +330,7 @@ export function SupremeUploadManager({
           speedMode={session.speedMode}
           speedPresets={speedPresets}
           running={session.running}
+          batchFileCount={batchFileCount}
           onChange={(mode) => uploadSessionStore.setSpeedMode(mode)}
         />
       )}
@@ -328,6 +341,21 @@ export function SupremeUploadManager({
             {session.validationPreview.validCount + session.validationPreview.duplicates.length} arquivos
             selecionados
           </p>
+          {(() => {
+            const count =
+              session.validationPreview.validCount + session.validationPreview.duplicates.length;
+            const warning = largeBatchAdaptiveMessage(count) ?? largeBatchWarning(count);
+            const recommended = recommendSpeedModeForBatch(count);
+            if (!warning) return null;
+            return (
+              <p className="mt-2 text-sm text-ig-info">
+                {warning}
+                {recommended === "adaptive" && session.speedMode === "turbo"
+                  ? " Recomendamos Adaptativo ao iniciar."
+                  : ""}
+              </p>
+            );
+          })()}
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
@@ -373,9 +401,53 @@ export function SupremeUploadManager({
                           : "Upload em andamento"}
             </p>
             <p className="mt-1 text-sm text-ig-muted">
-              {view.completedCount} de {view.totalCount} vídeos · Lote #{session.batch.batch_number} · @
-              {username}
+              {view.statusCounterText} · Lote #{session.batch.batch_number} · @{username}
             </p>
+            {(session.batchHealthMessage || view.batchStalled || session.recoveringFromStall) && (
+              <p className="mt-2 text-sm text-ig-info">
+                {session.recoveringFromStall || view.batchStalled
+                  ? "Upload travado detectado. Recuperando automaticamente…"
+                  : session.batchHealthMessage}
+              </p>
+            )}
+            {(session.safeMode ||
+              session.concurrencyReduced ||
+              session.speedMode === "adaptive" ||
+              session.adaptiveStability !== "stable") &&
+              session.batch.status !== "ready" && (
+                <div className="mt-3 rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm">
+                  <p className="font-medium text-ig-text">
+                    Modo atual:{" "}
+                    {session.speedMode === "adaptive"
+                      ? "Adaptativo"
+                      : speedPresets[session.speedMode].label}{" "}
+                    · {session.effectiveConcurrency} simultâneos
+                  </p>
+                  {session.adaptiveStability !== "stable" && (
+                    <p className="mt-1 text-ig-muted">
+                      Status:{" "}
+                      {session.safeMode
+                        ? "modo seguro"
+                        : session.adaptiveStability === "unstable"
+                          ? "instável"
+                          : session.adaptiveStability === "degraded"
+                            ? "degradado"
+                            : session.adaptiveStability}
+                    </p>
+                  )}
+                  {session.adaptiveActionMessage && (
+                    <p className="mt-1 text-ig-info">{session.adaptiveActionMessage}</p>
+                  )}
+                  {session.adaptiveReason && (
+                    <p className="mt-1 text-xs text-ig-muted">Motivo: {session.adaptiveReason}</p>
+                  )}
+                  {session.safeMode && (
+                    <p className="mt-1 text-ig-info">
+                      Muitos erros detectados. Modo seguro ativo para continuar com estabilidade.
+                    </p>
+                  )}
+                </div>
+              )}
             {session.batch.status !== "ready" && (
               <>
                 <div className="mt-4 h-2 overflow-hidden rounded-full bg-ig-secondary">
@@ -384,16 +456,35 @@ export function SupremeUploadManager({
                     style={{ width: `${view.overallPercent}%` }}
                   />
                 </div>
-                {session.progress && view.isActivelyUploading && (
+                {session.progress && view.isActivelyUploading && (() => {
+                  const speed = buildSpeedDisplay({
+                    speedBps30s: session.progress.speedBps30s ?? session.progress.speedBps,
+                    speedBps2m: session.progress.speedBps2m ?? 0,
+                    etaSeconds: session.progress.etaSeconds,
+                    hasActiveUploads: session.progress.hasActiveUploads ?? session.progress.uploading > 0,
+                    hasByteProgress: session.progress.hasByteProgress ?? session.progress.speedBps > 0,
+                  });
+                  return (
                   <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                     <p className="text-ig-muted">
-                      Velocidade: <span className="text-ig-text">{formatSpeed(session.progress.speedBps)}</span>
+                      Velocidade:{" "}
+                      <span className="text-ig-text">
+                        {speed.speedLabel === "no_progress"
+                          ? "sem progresso detectado"
+                          : speed.speedLabel === "calculating"
+                            ? "calculando…"
+                            : formatSpeed(speed.speedBps)}
+                      </span>
                     </p>
                     <p className="text-ig-muted">
-                      Restante: <span className="text-ig-text">{formatEta(session.progress.etaSeconds)}</span>
+                      Restante:{" "}
+                      <span className="text-ig-text">
+                        {speed.etaLabel === "—" ? formatEta(speed.etaSeconds) : speed.etaLabel}
+                      </span>
                     </p>
                   </div>
-                )}
+                  );
+                })()}
               </>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
@@ -528,34 +619,58 @@ function SpeedModePicker({
   speedMode,
   speedPresets,
   running,
+  batchFileCount,
   onChange,
 }: {
   speedMode: UploadSpeedMode;
   speedPresets: ReturnType<typeof getSpeedPresets>;
   running: boolean;
+  batchFileCount: number;
   onChange: (mode: UploadSpeedMode) => void;
 }) {
+  const modes: UploadSpeedMode[] = ["adaptive", "normal", "economy", "turbo"];
+
+  const handleChange = (mode: UploadSpeedMode) => {
+    if (mode === "turbo" && batchFileCount > 300) {
+      const useAdaptive = window.confirm(
+        `Este lote tem ${batchFileCount} vídeos. O modo Turbo pode causar instabilidade.\n\nOK = usar Adaptativo (recomendado)\nCancelar = ver outras opções`,
+      );
+      if (useAdaptive) {
+        onChange("adaptive");
+        return;
+      }
+      if (!window.confirm(turboLargeBatchConfirmMessage(batchFileCount))) {
+        return;
+      }
+    }
+    onChange(mode);
+  };
+
   return (
     <div>
       <p className="mb-2 text-sm font-medium text-ig-text">Velocidade de upload</p>
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(speedPresets) as UploadSpeedMode[]).map((mode) => (
+        {modes.map((mode) => (
           <button
             key={mode}
             type="button"
-            onClick={() => onChange(mode)}
+            onClick={() => handleChange(mode)}
             className={`rounded-full px-4 py-2 text-sm ${
               speedMode === mode
                 ? "bg-ig-primary text-ig-on-primary"
                 : "border border-ig-border bg-ig-secondary text-ig-text"
             }`}
           >
-            {speedPresets[mode].label} · {speedPresets[mode].fileConcurrency}
+            {speedPresets[mode].label}
+            {mode !== "adaptive" ? ` · ${speedPresets[mode].fileConcurrency}` : ""}
           </button>
         ))}
       </div>
       <p className="mt-1 text-xs text-ig-muted">
         {speedPresets[speedMode].description}
+        {batchFileCount > 150 && speedMode !== "adaptive"
+          ? " · Lote grande: Adaptativo recomendado."
+          : ""}
         {running ? " · pode trocar durante o envio" : ""}
       </p>
     </div>

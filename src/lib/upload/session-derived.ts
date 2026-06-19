@@ -6,6 +6,56 @@ export function getUploadFiles(batch: UploadBatch | null) {
   return batch?.upload_files?.filter((file) => !file.removed) ?? [];
 }
 
+export function countUploadFilesByStatus(files: UploadBatchFile[]) {
+  let uploading = 0;
+  let retrying = 0;
+  let stalled = 0;
+  let pending = 0;
+  let completed = 0;
+  let failed = 0;
+
+  for (const file of files) {
+    switch (file.status) {
+      case "uploading":
+        uploading += 1;
+        break;
+      case "retrying":
+        retrying += 1;
+        break;
+      case "stalled":
+        stalled += 1;
+        break;
+      case "completed":
+        completed += 1;
+        break;
+      case "failed":
+        failed += 1;
+        break;
+      default:
+        pending += 1;
+    }
+  }
+
+  return { uploading, retrying, stalled, pending, completed, failed };
+}
+
+export function formatBatchStatusSummary(params: {
+  completed: number;
+  failed: number;
+  pending: number;
+  uploading?: number;
+  retrying?: number;
+  stalled?: number;
+}) {
+  const parts: string[] = [`${params.completed} enviados`];
+  if (params.failed > 0) parts.push(`${params.failed} falharam`);
+  if ((params.uploading ?? 0) > 0) parts.push(`${params.uploading} enviando`);
+  if ((params.retrying ?? 0) > 0) parts.push(`${params.retrying} reconectando`);
+  if ((params.stalled ?? 0) > 0) parts.push(`${params.stalled} travados`);
+  if (params.pending > 0) parts.push(`${params.pending} pendentes`);
+  return parts.join(" · ");
+}
+
 export function deriveUploadSessionView(params: {
   batch: UploadBatch | null;
   progress: UploadEngineProgress | null;
@@ -39,13 +89,27 @@ export function deriveUploadSessionView(params: {
     batchStalled = false,
   } = params;
   const files = getUploadFiles(batch);
+  const statusCounts = countUploadFilesByStatus(files);
   const pendingFiles = files
     .filter((file) => file.status !== "completed")
     .sort((a, b) => a.sort_order - b.sort_order);
-  const completedCount = progress?.completed ?? batch?.completed_files ?? 0;
+  const completedCount = progress?.completed ?? batch?.completed_files ?? statusCounts.completed;
   const totalCount = progress?.total ?? batch?.total_files ?? files.length;
-  const failedCount = progress?.failed ?? batch?.failed_files ?? 0;
-  const pendingCount = pendingFiles.length;
+  const failedCount = progress?.failed ?? batch?.failed_files ?? statusCounts.failed;
+  const uploadingCount = statusCounts.uploading;
+  const retryingCount = statusCounts.retrying;
+  const stalledCount = statusCounts.stalled;
+  const pendingCount =
+    statusCounts.pending + uploadingCount + retryingCount + stalledCount;
+  const queuePendingCount = statusCounts.pending;
+  const statusCounterText = formatBatchStatusSummary({
+    completed: completedCount,
+    failed: failedCount,
+    pending: queuePendingCount,
+    uploading: uploadingCount,
+    retrying: retryingCount,
+    stalled: stalledCount,
+  });
   /** Botão Retomar — somente após pausa manual do usuário. */
   const canResume = Boolean(
     batch && batch.status !== "ready" && !running && !retrying && pausedByUser && pendingCount > 0,
@@ -88,6 +152,7 @@ export function deriveUploadSessionView(params: {
       (file) =>
         file.status === "uploading" ||
         file.status === "retrying" ||
+        file.status === "stalled" ||
         file.status === "failed" ||
         file.status === "pending" ||
         (progressMap[file.id] ?? 0) > 0,
@@ -101,6 +166,7 @@ export function deriveUploadSessionView(params: {
     (file) =>
       file.status === "uploading" ||
       file.status === "retrying" ||
+      file.status === "stalled" ||
       file.status === "failed" ||
       file.status === "pending",
   );
@@ -110,7 +176,8 @@ export function deriveUploadSessionView(params: {
   if (batch?.status !== "ready") {
     const seen = new Set(inProgress.map((file) => file.id));
     const active = inProgress.filter(
-      (file) => file.status === "uploading" || file.status === "retrying",
+      (file) =>
+        file.status === "uploading" || file.status === "retrying" || file.status === "stalled",
     );
     const failedFiles = inProgress.filter((file) => file.status === "failed");
     const waiting = inProgress.filter((file) => file.status === "pending");
@@ -185,6 +252,11 @@ export function deriveUploadSessionView(params: {
     totalCount,
     failedCount,
     pendingCount,
+    uploadingCount,
+    retryingCount,
+    stalledCount,
+    queuePendingCount,
+    statusCounterText,
     canResume,
     canSelectFiles,
     autoRecovering,

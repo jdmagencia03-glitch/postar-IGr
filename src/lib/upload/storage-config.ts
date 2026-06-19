@@ -63,9 +63,13 @@ export const UPLOAD_FILE_CONCURRENCY = {
   turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 6),
 } as const;
 
+/** Concorrência base do modo adaptativo (ponto de partida antes de ajustes). */
+export const ADAPTIVE_BASE_CONCURRENCY = UPLOAD_FILE_CONCURRENCY;
+
 export type UploadConcurrencyConfig = typeof UPLOAD_FILE_CONCURRENCY;
 
-export type UploadSpeedMode = keyof UploadConcurrencyConfig;
+/** Modos fixos de concorrência (adaptativo usa effective mode em runtime). */
+export type UploadSpeedMode = keyof UploadConcurrencyConfig | "adaptive";
 
 export type UploadSpeedPreset = {
   label: string;
@@ -73,7 +77,9 @@ export type UploadSpeedPreset = {
   description: string;
 };
 
-export type UploadSpeedPresets = Record<UploadSpeedMode, UploadSpeedPreset>;
+export type UploadSpeedPresets = Record<Exclude<UploadSpeedMode, "adaptive">, UploadSpeedPreset> & {
+  adaptive: UploadSpeedPreset;
+};
 
 export function clampUploadConcurrency(requested: number) {
   return Math.min(Math.max(1, requested), BROWSER_UPLOAD_CONCURRENCY_CAP);
@@ -97,7 +103,7 @@ export function getSpeedPresets(concurrency: UploadConcurrencyConfig = UPLOAD_FI
       ? ` (máx. ${BROWSER_UPLOAD_CONCURRENCY_CAP} — limite do navegador)`
       : "";
 
-  return {
+  const fixed = {
     economy: {
       label: "Econômico",
       fileConcurrency: clampUploadConcurrency(concurrency.economy),
@@ -114,6 +120,15 @@ export function getSpeedPresets(concurrency: UploadConcurrencyConfig = UPLOAD_FI
       description: `${clampUploadConcurrency(concurrency.turbo)} vídeos simultâneos${capNote}`,
     },
   } as const;
+
+  return {
+    ...fixed,
+    adaptive: {
+      label: "Adaptativo",
+      fileConcurrency: clampUploadConcurrency(concurrency.normal),
+      description: `Ajusta automaticamente (2–${clampUploadConcurrency(concurrency.turbo)} simultâneos)${capNote}`,
+    },
+  };
 }
 
 export function formatMaxUploadSize() {

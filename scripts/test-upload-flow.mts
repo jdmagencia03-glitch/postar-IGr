@@ -7,7 +7,12 @@ import {
   type UploadBatchRemoteStatus,
 } from "../src/lib/upload/batch-status.ts";
 import { dedupeUploadFileInputs, uploadFileIdentityKey } from "../src/lib/upload/batches.ts";
-import { deriveUploadSessionView } from "../src/lib/upload/session-derived.ts";
+import { deriveUploadSessionView, formatBatchStatusSummary } from "../src/lib/upload/session-derived.ts";
+import {
+  defaultSpeedModeForBatch,
+  largeBatchAdaptiveMessage,
+  recommendSpeedModeForBatch,
+} from "../src/lib/upload/adaptive.ts";
 import type { UploadBatch, UploadBatchFile } from "../src/lib/types.ts";
 
 function makeFile(id: string, status: UploadBatchFile["status"], sortOrder: number): UploadBatchFile {
@@ -167,6 +172,91 @@ function makeBatch(fileCount: number, completed = 2): UploadBatch {
     totalCount: 2,
   });
   assert.equal(percent <= 100, true);
+}
+
+// 7) Contador detalhado do lote
+{
+  const summary = formatBatchStatusSummary({
+    completed: 265,
+    failed: 14,
+    pending: 193,
+    uploading: 6,
+    retrying: 0,
+    stalled: 0,
+  });
+  assert.match(summary, /265 enviados/);
+  assert.match(summary, /14 falharam/);
+  assert.match(summary, /6 enviando/);
+  assert.match(summary, /193 pendentes/);
+}
+
+// 8) Recomendação de velocidade para lotes grandes
+{
+  assert.equal(recommendSpeedModeForBatch(478), "adaptive");
+  assert.equal(recommendSpeedModeForBatch(40), "turbo");
+  assert.equal(defaultSpeedModeForBatch(478), "adaptive");
+  assert.ok(largeBatchAdaptiveMessage(478)?.includes("grande"));
+}
+
+// 9) Upload adaptativo reduz em instabilidade
+{
+  const { evaluateAdaptiveUpload } = await import("../src/lib/upload/adaptive.ts");
+  const degraded = evaluateAdaptiveUpload(
+    {
+      total: 478,
+      completed: 300,
+      failed: 28,
+      pending: 140,
+      uploading: 4,
+      retrying: 2,
+      stalled: 4,
+      recentRetryCount: 6,
+      currentEffectiveMode: "turbo",
+      safeMode: false,
+      userSelectedMode: "turbo",
+    },
+    { economy: 2, normal: 4, turbo: 6 },
+  );
+  assert.equal(degraded.effectiveMode, "economy");
+  assert.equal(degraded.shouldEnterSafeMode, true);
+  assert.equal(degraded.stability, "safe_mode");
+  assert.equal(degraded.isDegraded, true);
+}
+
+// 10) Orquestração estrutural — health operacional
+{
+  const { buildHealthOperationalError } = await import("../src/lib/upload/resilience.ts");
+  const health = {
+    batchId: "b1",
+    isStalled: true,
+    isDegraded: true,
+    stability: "safe_mode" as const,
+    completed: 300,
+    total: 478,
+    stalled: 4,
+    expiredLeases: 2,
+    failed: 28,
+    errorRate: 0.058,
+    retrying: 3,
+    recommendedAction: "Recuperar",
+    pending: 0,
+    uploading: 0,
+    paused: false,
+    status: "uploading",
+    activeWorkers: 0,
+    lastProgressAt: null,
+    lastBatchProgressAt: null,
+    currentConcurrency: "adaptive",
+    progressPercent: 63,
+    currentMode: "adaptive",
+    recommendedMode: "adaptive",
+    targetConcurrency: 2,
+    effectiveMode: "economy",
+    retryRate: 0.01,
+  };
+  const err = buildHealthOperationalError(health, 2);
+  assert.ok(err);
+  assert.equal(err?.errorType, "upload_batch_stalled");
 }
 
 console.log("OK — testes do fluxo de upload passaram");

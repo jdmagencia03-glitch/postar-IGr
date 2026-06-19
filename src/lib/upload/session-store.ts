@@ -35,12 +35,25 @@ import {
   isTerminalRemoteBatchStatus,
   reconcileUploadBatchState,
 } from "@/lib/upload/batch-status";
-import { getSpeedPresets, UPLOAD_BATCH_STALL_TIMEOUT_MS, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+import { getSpeedPresets, UPLOAD_BATCH_STALL_TIMEOUT_MS, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS, UPLOAD_FILE_CONCURRENCY, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 import { formatBytes } from "@/lib/upload/validate";
 import { reportClientOperationalError } from "@/lib/operations/report-client-error";
+import { reconcileUploadState, createUploadWorkerId } from "@/lib/upload/reconcile-state";
+import { reconcileBatchStructuralState } from "@/lib/upload/resilience";
+import { largeBatchWarning, recommendUploadSpeedMode } from "@/lib/upload/queue";
+import {
+  ADAPTIVE_RETRY_WINDOW_MS,
+  countBatchFileStatuses,
+  defaultSpeedModeForBatch,
+  evaluateAdaptiveUpload,
+  initialAdaptiveEffectiveMode,
+  largeBatchAdaptiveMessage,
+  type AdaptiveEffectiveMode,
+  type AdaptiveStabilityStatus,
+} from "@/lib/upload/adaptive";
 
 type FileInputHandlers = {
   pickFiles: () => void;
@@ -68,12 +81,19 @@ class UploadSessionStore {
   pausedByUser = false;
   retrying = false;
   resuming = false;
-  speedMode: UploadSpeedMode = "normal";
+  speedMode: UploadSpeedMode = "adaptive";
   progress: UploadEngineProgress | null = null;
   progressMap: Record<string, number> = {};
   fileRuntime: Record<string, UploadFileRuntimeState> = {};
   message: string | null = null;
   validationPreview: ValidationPreview | null = null;
+  batchHealthMessage: string | null = null;
+  adaptiveEffectiveMode: AdaptiveEffectiveMode = "normal";
+  adaptiveStability: AdaptiveStabilityStatus = "stable";
+  adaptiveActionMessage: string | null = null;
+  adaptiveReason: string | null = null;
+  safeMode = false;
+  uploadPausedByFailures = false;
 
   private snapshot: UploadSessionSnapshot = this.buildSnapshot();
 
@@ -100,6 +120,12 @@ class UploadSessionStore {
   private stallRecoveryCount = 0;
   private recoveringFromStall = false;
   private batchWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private workerId: string | null = null;
+  private serverReconcileTick = 0;
+  private recentRetryTimestamps: number[] = [];
+  private lastCompletionAt = 0;
+  private adaptiveEvalTimer: ReturnType<typeof setInterval> | null = null;
+  private lastAdaptiveEvalAt = 0;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
   private static readonly AUTO_RETRY_RESET_MS = 60_000;
   private static readonly STALL_CHECK_INTERVAL_MS = 10_000;
@@ -124,11 +150,158 @@ class UploadSessionStore {
     if (completed > this.lastCompletedCount) {
       this.lastCompletedCount = completed;
       this.lastBatchAdvanceAt = Date.now();
+      this.lastCompletionAt = Date.now();
       this.batchStalled = false;
       this.autoRetryPass = 0;
       this.touchProgress();
       this.logUpload("batch_advance", { completed });
     }
+  }
+
+  private getConcurrencyConfig() {
+    return this.uploadLimits?.concurrency ?? UPLOAD_FILE_CONCURRENCY;
+  }
+
+  private initAdaptiveForBatch(fileCount: number) {
+    if (this.speedMode === "adaptive") {
+      this.adaptiveEffectiveMode = initialAdaptiveEffectiveMode(fileCount);
+      this.adaptiveStability = "stable";
+      this.adaptiveActionMessage = null;
+      this.adaptiveReason = null;
+    }
+  }
+
+  getEffectiveFileConcurrency(): number {
+    const presets = this.speedPresets;
+    const effective = this.adaptiveEffectiveMode ?? "normal";
+    if (this.safeMode || this.uploadPausedByFailures) {
+      return presets.economy.fileConcurrency;
+    }
+    if (this.speedMode === "adaptive") {
+      return presets[effective].fileConcurrency;
+    }
+    return presets[this.speedMode]?.fileConcurrency ?? presets.normal.fileConcurrency;
+  }
+
+  private startAdaptiveMonitor() {
+    this.stopAdaptiveMonitor();
+    this.adaptiveEvalTimer = setInterval(() => {
+      this.evaluateAndApplyAdaptive("interval");
+    }, 15_000);
+  }
+
+  private stopAdaptiveMonitor() {
+    if (this.adaptiveEvalTimer) {
+      clearInterval(this.adaptiveEvalTimer);
+      this.adaptiveEvalTimer = null;
+    }
+  }
+
+  private evaluateAndApplyAdaptive(source: string) {
+    if (!this.batch || this.batch.status === "ready" || this.batch.status === "cancelled") {
+      return;
+    }
+
+    const now = Date.now();
+    if (source === "progress" && now - this.lastAdaptiveEvalAt < 5_000) {
+      return;
+    }
+    this.lastAdaptiveEvalAt = now;
+    this.recentRetryTimestamps = this.recentRetryTimestamps.filter(
+      (at) => now - at < ADAPTIVE_RETRY_WINDOW_MS,
+    );
+
+    const files = (this.batch.upload_files ?? []).filter((file) => !file.removed);
+    const counts = countBatchFileStatuses(files);
+    const wasSafe = this.safeMode;
+    const prevEffective = this.adaptiveEffectiveMode;
+
+    const evaluation = evaluateAdaptiveUpload(
+      {
+        ...counts,
+        recentRetryCount: this.recentRetryTimestamps.length,
+        speedBps30s: this.progress?.speedBps30s ?? 0,
+        speedBps2m: this.progress?.speedBps2m ?? 0,
+        hasActiveProgress: this.progress?.hasByteProgress ?? false,
+        lastProgressAt: this.lastProgressAt || null,
+        lastCompletionAt: this.lastCompletionAt || null,
+        currentEffectiveMode: this.adaptiveEffectiveMode,
+        safeMode: this.safeMode,
+        userSelectedMode: this.speedMode,
+      },
+      this.getConcurrencyConfig(),
+    );
+
+    this.adaptiveStability = evaluation.stability;
+    this.adaptiveReason = evaluation.reason;
+    this.batchStalled = evaluation.isStalled || this.batchStalled;
+
+    if (evaluation.shouldEnterSafeMode) this.safeMode = true;
+    if (evaluation.shouldPauseUploads) this.uploadPausedByFailures = true;
+
+    if (this.speedMode === "adaptive") {
+      if (evaluation.effectiveMode !== this.adaptiveEffectiveMode) {
+        this.adaptiveEffectiveMode = evaluation.effectiveMode;
+        this.concurrencyReduced = true;
+        if (this.running && this.engine) {
+          this.engine.setConcurrency(evaluation.targetConcurrency);
+        }
+      }
+      this.adaptiveActionMessage = evaluation.actionMessage;
+    } else if (evaluation.shouldReduce && this.stallRecoveryCount < 3) {
+      this.reduceConcurrencyOnInstability();
+    } else if (evaluation.shouldEnterSafeMode && this.speedMode !== "economy") {
+      this.safeMode = true;
+      this.setSpeedMode("economy");
+    }
+
+    if (evaluation.userMessage) {
+      if (
+        evaluation.shouldPauseUploads ||
+        evaluation.shouldEnterSafeMode ||
+        evaluation.shouldReduce ||
+        evaluation.shouldSuggestRecover ||
+        evaluation.shouldAlertLight
+      ) {
+        this.message = evaluation.userMessage;
+      }
+    }
+
+    if (evaluation.actionMessage && !this.message?.includes(evaluation.actionMessage)) {
+      this.message = evaluation.actionMessage;
+    }
+
+    if (evaluation.shouldReduce && prevEffective !== evaluation.effectiveMode) {
+      void reportClientOperationalError({
+        errorType: "upload_adaptive_reduced",
+        title: "Upload adaptativo reduziu velocidade",
+        message: evaluation.actionMessage ?? evaluation.userMessage ?? "Velocidade reduzida.",
+        probableCause: evaluation.reason ?? "Instabilidade detectada no lote.",
+        recommendedAction: "Aguarde a estabilização ou use Recuperar upload.",
+        uploadBatchId: this.batch.id,
+        accountId:
+          this.batch.platform === "tiktok"
+            ? (this.batch.tiktok_account_id ?? undefined)
+            : (this.batch.account_id ?? undefined),
+        platform: this.batch.platform,
+        metadata: { source, ...evaluation },
+      });
+    }
+
+    if (evaluation.shouldEnterSafeMode && !wasSafe) {
+      void reportClientOperationalError({
+        errorType: "upload_safe_mode",
+        title: "Modo seguro de upload ativado",
+        message: evaluation.userMessage ?? "Modo seguro ativado.",
+        probableCause: `${counts.failed} falhas no lote.`,
+        recommendedAction: "Continue com modo seguro ou recupere o lote.",
+      uploadBatchId: this.batch.id,
+      metadata: { source, failed: counts.failed },
+      });
+    }
+
+    this.logUpload("adaptive_eval", { source, evaluation });
+    this.emit();
   }
 
   private countCompletedFiles(batch: UploadBatch | null = this.batch) {
@@ -209,6 +382,7 @@ class UploadSessionStore {
     if (this.lastFileMap.size > 0) {
       await this.recoverBatchUpload("batch_watchdog");
     }
+    this.evaluateAndApplyAdaptive("batch_watchdog");
   }
 
   private reduceConcurrencyOnInstability() {
@@ -226,7 +400,21 @@ class UploadSessionStore {
     });
     this.setSpeedMode(next);
     this.message =
-      "Detectamos instabilidade no upload. Reduzimos temporariamente a velocidade para manter o envio estável.";
+      "Detectamos instabilidade no envio. Reduzimos temporariamente a velocidade para manter o lote estável.";
+    void reportClientOperationalError({
+      errorType: "upload_concurrency_reduced",
+      title: "Velocidade de upload reduzida automaticamente",
+      message: this.message,
+      probableCause: "Muitas falhas, timeouts ou travamentos no lote.",
+      recommendedAction: "Aguarde a recuperação automática ou use Recuperar upload.",
+      uploadBatchId: this.batch?.id,
+      accountId:
+        this.batch?.platform === "tiktok"
+          ? (this.batch.tiktok_account_id ?? undefined)
+          : (this.batch?.account_id ?? undefined),
+      platform: this.batch?.platform,
+      metadata: { from: order[idx], to: next, stallRecoveryCount: this.stallRecoveryCount },
+    });
   }
 
   async recoverBatchUpload(reason = "manual_recover") {
@@ -250,31 +438,65 @@ class UploadSessionStore {
     this.stopRetryCountdown();
 
     try {
+      if (reason === "manual_recover") {
+        this.uploadPausedByFailures = false;
+      }
       if (reason !== "manual_recover" && this.stallRecoveryCount < 3) {
-        this.reduceConcurrencyOnInstability();
+        if (this.speedMode === "adaptive") {
+          this.evaluateAndApplyAdaptive("recover");
+        } else {
+          this.reduceConcurrencyOnInstability();
+        }
       }
 
-      await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
-      const refreshed = await refreshUploadBatch(batchId);
-      if (refreshed.status === "ready" || refreshed.status === "cancelled") {
-        this.syncBatch(refreshed);
-        return;
-      }
-
-      this.syncBatch(refreshed);
+      const reconciled = await reconcileBatchStructuralState(batchId);
+      this.syncBatch(reconciled.batch);
+      this.batchHealthMessage = reconciled.health.isStalled
+        ? reconciled.health.recommendedAction
+        : null;
       this.lastBatchAdvanceAt = Date.now();
       this.autoRetryPass = 0;
 
-      if (fileMap.size > 0) {
-        this.message = "Continuando envio…";
+      if (reconciled.releasedLeases > 0) {
+        this.logUpload("batch_reconcile", {
+          releasedLeases: reconciled.releasedLeases,
+          health: reconciled.health,
+        });
+      }
+
+      if (fileMap.size > 0 && reconciled.batch.status !== "ready") {
+        this.message = reconciled.health.isStalled
+          ? "Reconciliando e continuando envio…"
+          : "Continuando envio…";
         this.emit();
         await this.autoContinuePendingIfNeeded(batchId, fileMap, reason);
       }
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : "Falha ao recuperar upload";
     } finally {
       this.recoveringFromStall = false;
       this.batchStalled = false;
       this.logUpload("batch_recovered", { batchId, reason });
       this.emit();
+    }
+  }
+
+  private async reconcileBatchFromServer(batchId: string) {
+    try {
+      const reconciled = await reconcileBatchStructuralState(batchId);
+      this.syncBatch(reconciled.batch);
+      if (reconciled.health.isStalled || reconciled.health.isDegraded) {
+        this.batchStalled = reconciled.health.isStalled;
+        this.batchHealthMessage = reconciled.health.recommendedAction;
+      }
+      this.evaluateAndApplyAdaptive("server_reconcile");
+      return reconciled;
+    } catch (error) {
+      this.logUpload("reconcile_failed", {
+        batchId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
     }
   }
 
@@ -309,6 +531,7 @@ class UploadSessionStore {
       errorKind: string;
     },
   ) {
+    this.recentRetryTimestamps.push(Date.now());
     const endsAt = Date.now() + detail.delayMs;
     this.setFileRuntime(fileId, {
       status: "retrying",
@@ -324,6 +547,7 @@ class UploadSessionStore {
       delayMs: detail.delayMs,
       kind: detail.errorKind as UploadErrorKind,
     });
+    this.evaluateAndApplyAdaptive("file_retry");
     this.stopRetryCountdown();
     this.retryCountdownTimer = setInterval(() => {
       const remaining = Math.max(0, endsAt - Date.now());
@@ -403,7 +627,7 @@ class UploadSessionStore {
       idleMs,
       completed: this.progress?.completed,
     });
-    this.message = "Upload sem progresso. Tentando recuperar…";
+    this.message = "Upload instável detectado. Reduzindo velocidade e tentando recuperar…";
     this.stopStallWatchdog();
 
     const batchId = this.batch.id;
@@ -421,8 +645,8 @@ class UploadSessionStore {
     try {
       this.reduceConcurrencyOnInstability();
       if (fileMap.size > 0 && !this.pausedByUser) {
-        await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
-        this.message = "Continuando envio…";
+        await this.reconcileBatchFromServer(batchId);
+        this.message = "Continuando envio dos próximos vídeos…";
         this.emit();
         this.autoRetryPass = 0;
         await this.autoContinuePendingIfNeeded(batchId, fileMap, "stall_detected");
@@ -563,6 +787,14 @@ class UploadSessionStore {
       recoveringFromStall: this.recoveringFromStall,
       batchStalled: this.batchStalled,
       concurrencyReduced: this.concurrencyReduced,
+      batchHealthMessage: this.batchHealthMessage,
+      adaptiveEffectiveMode: this.adaptiveEffectiveMode,
+      adaptiveStability: this.adaptiveStability,
+      adaptiveActionMessage: this.adaptiveActionMessage,
+      adaptiveReason: this.adaptiveReason,
+      safeMode: this.safeMode,
+      uploadPausedByFailures: this.uploadPausedByFailures,
+      effectiveConcurrency: this.getEffectiveFileConcurrency(),
     };
   }
 
@@ -846,6 +1078,7 @@ class UploadSessionStore {
       this.syncBatch(batch);
 
       if (batch.upload_speed_mode) this.speedMode = batch.upload_speed_mode;
+      this.initAdaptiveForBatch(batch.total_files);
       this.pausedByUser = Boolean(batch.paused);
 
       const initialProgress: Record<string, number> = {};
@@ -857,6 +1090,10 @@ class UploadSessionStore {
         }
       }
       this.progressMap = initialProgress;
+
+      if (batch.status !== "ready" && batch.status !== "cancelled") {
+        await this.reconcileBatchFromServer(batch.id);
+      }
     } catch (error) {
       this.setUserMessage(error, "Erro ao carregar lote da conta");
     } finally {
@@ -910,6 +1147,9 @@ class UploadSessionStore {
       this.progressFrame = null;
       if (!this.pendingProgress) return;
       this.progress = this.pendingProgress;
+      if (this.running) {
+        this.evaluateAndApplyAdaptive("progress");
+      }
       this.emit();
     });
   };
@@ -981,8 +1221,14 @@ class UploadSessionStore {
 
   setSpeedMode(mode: UploadSpeedMode) {
     this.speedMode = mode;
+    if (mode === "adaptive") {
+      this.initAdaptiveForBatch(this.batch?.total_files ?? 0);
+    } else if (mode !== "economy") {
+      this.safeMode = false;
+      this.uploadPausedByFailures = false;
+    }
     if (this.running && this.engine) {
-      this.engine.setConcurrency(this.speedPresets[mode].fileConcurrency);
+      this.engine.setConcurrency(this.getEffectiveFileConcurrency());
     }
     if (this.batch) {
       void setBatchSpeedMode(this.batch.id, mode)
@@ -1131,6 +1377,27 @@ class UploadSessionStore {
     }
     this.engineStarting = true;
     const batchId = currentBatch.id;
+    this.workerId = createUploadWorkerId();
+
+    const totalActive = (currentBatch.upload_files ?? []).filter((f) => !f.removed).length;
+    this.initAdaptiveForBatch(totalActive);
+    const adaptiveWarning = largeBatchAdaptiveMessage(totalActive) ?? largeBatchWarning(totalActive);
+    if (adaptiveWarning && this.speedMode === "turbo" && totalActive > 150) {
+      this.setSpeedMode("adaptive");
+      this.message = adaptiveWarning;
+    } else if (adaptiveWarning && !this.message) {
+      this.message = adaptiveWarning;
+    }
+
+    this.evaluateAndApplyAdaptive("engine_prepare");
+
+    if (this.uploadPausedByFailures && !onlyFileIds?.length) {
+      this.engineStarting = false;
+      this.message =
+        "Muitos arquivos falharam. Novos envios pausados temporariamente. Use Recuperar upload.";
+      this.emit();
+      return;
+    }
 
     try {
       const batchWithFiles = await ensureBatchWithFiles(currentBatch);
@@ -1140,7 +1407,7 @@ class UploadSessionStore {
       }
 
       this.engine?.stop();
-      const engine = new UploadEngine(this.speedPresets[this.speedMode].fileConcurrency, {
+      const engine = new UploadEngine(this.getEffectiveFileConcurrency(), {
         onProgress: this.scheduleProgressUpdate,
         onBatchUpdate: (next) => {
           if (this.cancelledBatchIds.has(next.id)) return;
@@ -1218,8 +1485,14 @@ class UploadSessionStore {
       await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
       this.startStallWatchdog();
       this.startBatchWatchdog();
+      this.startAdaptiveMonitor();
 
-      await engine.run({ batch: currentBatch, fileMap, onlyFileIds });
+      await engine.run({
+        batch: currentBatch,
+        fileMap,
+        onlyFileIds,
+        workerId: this.workerId ?? undefined,
+      });
     } catch (error) {
       this.logUpload("engine_crash", {
         batchId,
@@ -1228,6 +1501,7 @@ class UploadSessionStore {
       this.setUserMessage(error, "Erro durante upload");
     } finally {
       this.stopStallWatchdog();
+      this.stopAdaptiveMonitor();
       this.running = false;
       this.engineStarting = false;
       this.emit();
@@ -1293,6 +1567,20 @@ class UploadSessionStore {
 
     this.validationPreview = null;
     this.message = null;
+
+    const totalInBatch =
+      (this.batch?.upload_files?.filter((f) => !f.removed).length ?? 0) + toUpload.length;
+    const warning = largeBatchAdaptiveMessage(totalInBatch) ?? largeBatchWarning(totalInBatch);
+    if (!this.batch && totalInBatch > 150 && this.speedMode === "turbo") {
+      this.speedMode = defaultSpeedModeForBatch(totalInBatch);
+    }
+    if (warning) {
+      this.message = warning;
+      if (this.speedMode === "turbo" && totalInBatch > 150) {
+        this.setSpeedMode("adaptive");
+      }
+    }
+
     this.emit();
 
     try {
@@ -1494,6 +1782,9 @@ class UploadSessionStore {
   /** Sincroniza progresso ao voltar para a aba (upload segue em segundo plano). */
   async reconcileOnForeground() {
     if (typeof document !== "undefined" && document.hidden) return;
+    if (this.batch && this.batch.status !== "ready" && this.batch.status !== "cancelled") {
+      await this.reconcileBatchFromServer(this.batch.id);
+    }
     await this.reconcileActiveBatch("foreground");
   }
 
@@ -1511,6 +1802,15 @@ class UploadSessionStore {
     const prevProgressMap = this.progressMap;
 
     try {
+      this.serverReconcileTick += 1;
+      const shouldServerReconcile =
+        source === "foreground" ||
+        this.batchStalled ||
+        this.serverReconcileTick % 4 === 0;
+      if (shouldServerReconcile) {
+        await this.reconcileBatchFromServer(this.batch.id);
+      }
+
       const remote = await fetchUploadBatchStatus(this.batch.id);
       const reconciled = reconcileUploadBatchState(this.batch, remote, this.progressMap);
 
@@ -1548,6 +1848,14 @@ class UploadSessionStore {
           this.message = "Não foi possível enviar os vídeos. Você pode tentar reenviar apenas os arquivos com erro.";
         }
         this.stopPolling();
+        this.stopAdaptiveMonitor();
+        const mergedProgressMap = { ...reconciled.progressMap };
+        for (const [fileId, localPercent] of Object.entries(this.progressMap)) {
+          mergedProgressMap[fileId] = Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0);
+        }
+        this.progressMap = mergedProgressMap;
+        this.syncBatch(reconciled.batch);
+        this.emit();
       }
 
       const progressMeaningfullyChanged = Object.keys(reconciled.progressMap).some((fileId) => {
@@ -1599,7 +1907,7 @@ class UploadSessionStore {
         pollingIntervalMs: this.getPollingIntervalMs(),
       });
 
-      if (stateChanged) {
+      if (!batchFinished && stateChanged) {
         const mergedProgressMap = { ...reconciled.progressMap };
         for (const [fileId, localPercent] of Object.entries(this.progressMap)) {
           mergedProgressMap[fileId] = Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0);

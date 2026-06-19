@@ -11,7 +11,7 @@ import { z } from "zod";
 
 const patchSchema = z.object({
   paused: z.boolean().optional(),
-  upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
+  upload_speed_mode: z.enum(["economy", "normal", "turbo", "adaptive"]).optional(),
   schedule_mode: z.enum(["today", "auto", "warmup", "custom"]).optional(),
   custom_schedule: z
     .object({

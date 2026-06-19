@@ -146,8 +146,8 @@ export type AccountPlaybookPayload = Omit<
 >;
 
 export type UploadBatchStatus = "uploading" | "ready" | "scheduling" | "scheduled" | "cancelled";
-export type UploadFileStatus = "pending" | "uploading" | "retrying" | "completed" | "failed";
-export type UploadSpeedMode = "economy" | "normal" | "turbo";
+export type UploadFileStatus = "pending" | "uploading" | "retrying" | "stalled" | "completed" | "failed";
+export type UploadSpeedMode = "economy" | "normal" | "turbo" | "adaptive";
 
 export interface UploadBatchFile {
   id: string;
@@ -163,6 +163,11 @@ export interface UploadBatchFile {
   file_hash?: string | null;
   last_modified?: number | null;
   retry_count?: number;
+  worker_id?: string | null;
+  lease_until?: string | null;
+  last_progress_at?: string | null;
+  completed_at?: string | null;
+  failed_at?: string | null;
   duration_seconds?: number | null;
   removed?: boolean;
   sort_order: number;
@@ -193,6 +198,8 @@ export interface UploadBatch {
   started_at?: string | null;
   finished_at?: string | null;
   auto_schedule_enabled?: boolean;
+  last_progress_at?: string | null;
+  stall_detected_at?: string | null;
   created_at: string;
   updated_at: string;
   upload_files?: UploadBatchFile[];

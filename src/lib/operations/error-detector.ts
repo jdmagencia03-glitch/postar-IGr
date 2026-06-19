@@ -68,8 +68,10 @@ function uploadFileProgress(file: UploadBatchFile) {
 }
 
 function isUploadStalled(file: UploadBatchFile, now = Date.now()) {
+  if (file.status === "stalled") return true;
   if (file.status !== "uploading" && file.status !== "retrying") return false;
-  return now - new Date(file.updated_at).getTime() >= UPLOAD_STALL_TIMEOUT_MS;
+  const ref = file.last_progress_at ?? file.updated_at;
+  return now - new Date(ref).getTime() >= UPLOAD_STALL_TIMEOUT_MS;
 }
 
 function classifyPublishError(post: ScheduledPost): {
@@ -245,9 +247,9 @@ export function detectUploadErrors(batches: UploadBatch[], now = new Date()): De
           filenames: stalledFiles.slice(0, 10).map((f) => f.filename),
         },
         availableActions: [
-          action("reconcile_upload", "Reconciliar status", `/api/upload/batches/${batch.id}/status`),
+          action("reconcile_upload", "Recuperar upload", `/api/upload/batches/${batch.id}/reconcile`, "POST"),
           action("open_batch", "Abrir lote", `/dashboard/uploads/${batch.id}`),
-          action("retry_upload", "Tentar novamente", `/dashboard/uploads/${batch.id}`),
+          action("retry_upload", "Tentar novamente", `/dashboard/bulk`),
         ],
       });
     }
@@ -383,11 +385,61 @@ export function detectUploadErrors(batches: UploadBatch[], now = new Date()): De
         title: `${pendingStuck.length} arquivos presos em pending`,
         message: `Lote #${batch.batch_number} (@${username}) não avança na fila.`,
         probableCause: "Engine de upload parado ou sessão sem arquivos locais.",
-        recommendedAction: "Abra o lote e selecione os arquivos novamente se necessário.",
+        recommendedAction: "Abra o lote e use Recuperar upload.",
         accountId,
         platform,
         uploadBatchId: batch.id,
-        availableActions: [action("open_batch", "Abrir lote", `/dashboard/uploads/${batch.id}`)],
+        availableActions: [
+          action("open_batch", "Abrir lote", `/dashboard/bulk`),
+          action("reconcile_upload", "Recuperar upload", `/api/upload/batches/${batch.id}/reconcile`, "POST"),
+        ],
+      });
+    }
+
+    const totalFiles = files.length;
+    const failedCount = failedFiles.length;
+    if (
+      batch.status === "uploading" &&
+      totalFiles > 300 &&
+      batch.upload_speed_mode === "turbo"
+    ) {
+      errors.push({
+        fingerprint: buildErrorFingerprint(["upload", "turbo_large_batch", batch.id]),
+        errorType: "upload_turbo_large_batch",
+        category: "upload",
+        severity: "medium",
+        status: "open",
+        title: `Turbo em lote grande (#${batch.batch_number})`,
+        message: `${totalFiles} vídeos em Turbo 6 — risco de instabilidade após centenas de envios.`,
+        probableCause: "Concorrência alta em lote muito grande.",
+        recommendedAction: "Use modo Adaptativo ou Normal.",
+        accountId,
+        platform,
+        uploadBatchId: batch.id,
+        metadata: { totalFiles, speedMode: batch.upload_speed_mode },
+        availableActions: [action("open_batch", "Abrir upload", `/dashboard/bulk`)],
+      });
+    }
+
+    if (batch.status === "uploading" && failedCount >= 20) {
+      errors.push({
+        fingerprint: buildErrorFingerprint(["upload", "mass_failures", batch.id]),
+        errorType: "upload_mass_failures",
+        category: "upload",
+        severity: "critical",
+        status: "auto_retrying",
+        title: `Muitas falhas no lote #${batch.batch_number}`,
+        message: `${failedCount} de ${totalFiles} vídeos falharam — modo seguro pode estar ativo.`,
+        probableCause: "Saturação de upload ou instabilidade prolongada.",
+        recommendedAction: "Use Recuperar upload; arquivos com erro não travam o restante.",
+        accountId,
+        platform,
+        uploadBatchId: batch.id,
+        metadata: { failedCount, totalFiles, completed: files.filter((f) => f.status === "completed").length },
+        availableActions: [
+          action("reconcile_upload", "Recuperar upload", `/api/upload/batches/${batch.id}/reconcile`, "POST"),
+          action("open_batch", "Abrir lote", `/dashboard/bulk`),
+        ],
       });
     }
   }

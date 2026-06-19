@@ -2,6 +2,7 @@ import type { UploadEngineProgress } from "@/lib/upload/engine";
 import type { DuplicateFile, InvalidFile } from "@/lib/upload/validate";
 import type { UploadSpeedPresets } from "@/lib/upload/storage-config";
 import type { UploadBatch, UploadSpeedMode } from "@/lib/types";
+import type { AdaptiveEffectiveMode, AdaptiveStabilityStatus } from "@/lib/upload/adaptive";
 
 export type UploadLimits = {
   max_upload_mb: number;
@@ -74,4 +75,12 @@ export type UploadSessionSnapshot = {
   recoveringFromStall: boolean;
   batchStalled: boolean;
   concurrencyReduced: boolean;
+  batchHealthMessage: string | null;
+  adaptiveEffectiveMode: AdaptiveEffectiveMode;
+  adaptiveStability: AdaptiveStabilityStatus;
+  adaptiveActionMessage: string | null;
+  adaptiveReason: string | null;
+  safeMode: boolean;
+  uploadPausedByFailures: boolean;
+  effectiveConcurrency: number;
 };

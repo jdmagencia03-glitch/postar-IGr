@@ -43,7 +43,7 @@ const createSchema = z
         message: `Envie no máximo ${BATCH_CREATE_CHUNK_SIZE} vídeos por requisição.`,
       }),
     total_files: z.number().int().min(1).max(MAX_VIDEOS_TOTAL).optional(),
-    upload_speed_mode: z.enum(["economy", "normal", "turbo"]).optional(),
+    upload_speed_mode: z.enum(["economy", "normal", "turbo", "adaptive"]).optional(),
   })
   .refine(
     (data) =>
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
       tiktok_account_id: platform === "tiktok" ? parsed.data.tiktok_account_id! : null,
       schedule_mode: parsed.data.schedule_mode,
       custom_schedule: parsed.data.custom_schedule ?? null,
-      upload_speed_mode: parsed.data.upload_speed_mode ?? "turbo",
+      upload_speed_mode: parsed.data.upload_speed_mode ?? "adaptive",
       status: "uploading",
       started_at: new Date().toISOString(),
       total_files: totalFiles,

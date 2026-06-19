@@ -158,9 +158,7 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                       : `@${username} · ${speedPresets[session.speedMode].label}`}
               </p>
               <p className="mt-1 text-xs text-ig-muted">
-                {view.completedCount} enviados
-                {view.failedCount > 0 ? ` · ${view.failedCount} falharam` : ""}
-                {view.queueRemaining > 0 ? ` · ${view.queueRemaining} pendentes` : ""}
+                {view.statusCounterText}
                 {" · "}
                 {view.overallPercent}%
               </p>
