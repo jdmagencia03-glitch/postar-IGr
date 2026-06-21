@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
+import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
 
 export type ScheduleJobDiagnostics = {
   ok: true;
@@ -12,6 +14,7 @@ export type ScheduleJobDiagnostics = {
     failed: number;
     createdAt: string;
     updatedAt: string;
+    timing: ReturnType<typeof buildScheduleJobTiming>;
   }>;
   plannedPosts: Array<{ fileId: string; status: string; scheduledAt: string | null }>;
   createdPosts: Array<{
@@ -47,9 +50,7 @@ export async function buildScheduleJobDiagnostics(
 
   const { data: jobs } = await supabase
     .from("schedule_jobs")
-    .select(
-      "id, status, phase, total_items, posts_saved, failed_count, created_at, updated_at",
-    )
+    .select("*")
     .eq("upload_batch_id", batchId)
     .order("created_at", { ascending: false });
 
@@ -125,16 +126,20 @@ export async function buildScheduleJobDiagnostics(
     ok: true,
     batchId,
     jobs:
-      jobs?.map((job) => ({
-        id: job.id as string,
-        status: job.status as string,
-        phase: job.phase as string,
-        totalItems: Number(job.total_items ?? 0),
-        postsSaved: Number(job.posts_saved ?? 0),
-        failed: Number(job.failed_count ?? 0),
-        createdAt: job.created_at as string,
-        updatedAt: job.updated_at as string,
-      })) ?? [],
+      jobs?.map((job) => {
+        const row = job as ScheduleJobRow;
+        return {
+          id: row.id,
+          status: row.status,
+          phase: row.status,
+          totalItems: row.total_items,
+          postsSaved: row.completed_items,
+          failed: row.failed_items,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          timing: buildScheduleJobTiming(row),
+        };
+      }) ?? [],
     plannedPosts,
     createdPosts,
     duplicates,

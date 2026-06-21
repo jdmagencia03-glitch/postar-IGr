@@ -235,11 +235,11 @@ function stepLabelForPhase(phase: ScheduleJobPhase): string {
 
 function headlineForPhase(phase: ScheduleJobPhase): string {
   const headlines: Record<ScheduleJobPhase, string> = {
-    queued: "Preparando agendamento",
-    processing_captions: "Agendamento em andamento",
-    processing_hashtags: "Agendamento em andamento",
-    building_calendar: "Agendamento em andamento",
-    saving_posts: "Agendamento em andamento",
+    queued: "Agendamento iniciado…",
+    processing_captions: "Preparando publicações…",
+    processing_hashtags: "Preparando publicações…",
+    building_calendar: "Montando calendário…",
+    saving_posts: "Salvando posts no calendário…",
     completed: "Agendamento concluído",
     partial_completed: "Agendamento parcialmente concluído",
     failed: "Agendamento falhou",

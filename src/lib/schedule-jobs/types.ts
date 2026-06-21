@@ -94,6 +94,7 @@ import type {
   ScheduleStepId,
   ScheduleStepState,
 } from "@/lib/schedule-jobs/state";
+import type { ScheduleJobTiming } from "@/lib/schedule-jobs/timing";
 
 export type ScheduleJobStatusResponse = {
   jobId: string;
@@ -139,4 +140,5 @@ export type ScheduleJobStatusResponse = {
   postsSummaryLabel: string | null;
   steps: Record<ScheduleStepId, ScheduleStepState>;
   updatedAt: string;
+  timing: ScheduleJobTiming;
 };

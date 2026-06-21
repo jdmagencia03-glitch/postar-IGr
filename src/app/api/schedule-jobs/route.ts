@@ -8,7 +8,7 @@ import {
   bootstrapJobQueue,
 } from "@/lib/schedule-jobs/queue/tasks";
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
-import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch } from "@/lib/schedule-jobs/repository";
+import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch, buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD } from "@/lib/schedule-jobs/constants";
 import { getBatchForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
         total: existing.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
         message: "Agendamento em andamento — acompanhe o progresso abaixo.",
+        status: buildJobStatusFromJob(existing),
       });
     }
 
@@ -94,6 +95,7 @@ export async function POST(request: NextRequest) {
         total: completedJob.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
         message: "Agendamento já concluído para este lote.",
+        status: buildJobStatusFromJob(completedJob),
       });
     }
 
@@ -141,15 +143,18 @@ export async function POST(request: NextRequest) {
       }),
     );
 
+    const header = await getScheduleJobHeader(supabase, ownerId, created.job.id);
+
     return NextResponse.json(
       {
         jobId: created.job.id,
         total: created.job.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
+        status: buildJobStatusFromJob(header ?? created.job),
         message:
           files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD
             ? "Agendamento criado e enviado para fila. Você pode fechar esta aba."
-            : "Agendamento criado e enviado para fila.",
+            : "Agendamento iniciado — acompanhe o progresso abaixo.",
       },
       { status: 201 },
     );

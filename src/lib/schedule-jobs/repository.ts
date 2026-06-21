@@ -14,6 +14,7 @@ import {
   deriveScheduleJobView,
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
+import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
   return {
@@ -284,6 +285,7 @@ export async function updateJobItem(
 
 export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusResponse {
   const view = deriveScheduleJobView(job);
+  const timing = buildScheduleJobTiming(job);
 
   return {
     jobId: job.id,
@@ -327,6 +329,7 @@ export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusRes
     postsSummaryLabel: view.postsSummaryLabel,
     steps: view.steps,
     updatedAt: job.updated_at,
+    timing,
   };
 }
 

@@ -1,5 +1,6 @@
 import type { ScheduleJobStatusResponse } from "@/lib/schedule-jobs/types";
 import { safeFetch } from "@/lib/api/client";
+import { isSmallScheduleJob, nextScheduleJobPollDelayMs } from "@/lib/schedule-jobs/polling";
 
 async function readScheduleJobResponse<T extends Record<string, unknown>>(result: Awaited<ReturnType<typeof safeFetch<T>>>) {
   if (!result.ok) throw new Error(result.message);
@@ -19,7 +20,13 @@ async function safeFetchScheduleJobStatus(jobId: string, fallback?: ScheduleJobS
 }
 
 export async function createScheduleJobApi(body: Record<string, unknown>) {
-  const result = await safeFetch<{ jobId: string; message?: string; reused?: boolean }>(
+  const result = await safeFetch<{
+    jobId: string;
+    message?: string;
+    reused?: boolean;
+    alreadyCompleted?: boolean;
+    status?: ScheduleJobStatusResponse;
+  }>(
     "/api/schedule-jobs",
     {
       method: "POST",
@@ -30,6 +37,19 @@ export async function createScheduleJobApi(body: Record<string, unknown>) {
   );
   if (!result.ok) throw new Error(result.message);
   return result.data;
+}
+
+/** Dispara processamento imediato no servidor (fire-and-forget para lotes pequenos). */
+export function kickScheduleJobInBackground(jobId: string) {
+  void kickScheduleJobApi(jobId).catch(() => undefined);
+}
+
+/** Primeiro status + kick opcional para lotes pequenos. */
+export async function bootstrapScheduleJobTracking(jobId: string, videoCount: number) {
+  if (isSmallScheduleJob(videoCount)) {
+    kickScheduleJobInBackground(jobId);
+  }
+  return fetchScheduleJobStatus(jobId);
 }
 
 export async function fetchScheduleJobStatus(jobId: string) {
@@ -98,16 +118,21 @@ export async function findActiveScheduleJobForBatch(uploadBatchId: string) {
 export async function pollScheduleJobUntilDone(
   jobId: string,
   onUpdate: (status: ScheduleJobStatusResponse) => void,
-  options?: { intervalMs?: number },
+  options?: { intervalMs?: number; videoCount?: number },
 ) {
-  const intervalMs = options?.intervalMs ?? 5000;
-  const terminal = new Set(["completed", "partial_failed", "failed", "cancelled"]);
+  const smallBatch = isSmallScheduleJob(options?.videoCount ?? 0);
+  const terminal = new Set(["completed", "partial_completed", "failed", "cancelled"]);
 
+  let pollIndex = 0;
   let status = await fetchScheduleJobStatus(jobId);
   onUpdate(status);
 
-  while (status.isActive && !terminal.has(status.status)) {
-    await sleep(intervalMs);
+  while (status.isActive && !terminal.has(status.phase)) {
+    pollIndex += 1;
+    const delayMs =
+      options?.intervalMs ??
+      nextScheduleJobPollDelayMs(pollIndex, smallBatch);
+    await sleep(delayMs);
     status = (await safeFetchScheduleJobStatus(jobId, status)) ?? status;
     onUpdate(status);
   }

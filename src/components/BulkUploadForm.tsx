@@ -15,6 +15,7 @@ import {
 import { ScheduleJobPanel } from "@/components/schedule/ScheduleJobPanel";
 import { SCHEDULE_JOB_FORCE_THRESHOLD } from "@/lib/schedule-jobs/constants";
 import {
+  bootstrapScheduleJobTracking,
   createScheduleJobApi,
   findActiveScheduleJobForBatch,
 } from "@/lib/schedule-jobs/client";
@@ -313,6 +314,8 @@ export function BulkUploadForm({
   const [result, setResult] = useState<string | null>(null);
   const [captionSource, setCaptionSource] = useState<"ai" | "fallback" | null>(null);
   const [scheduleJobId, setScheduleJobId] = useState<string | null>(null);
+  const [scheduleJobInitialStatus, setScheduleJobInitialStatus] =
+    useState<ScheduleJobStatusResponse | null>(null);
   const [scheduleJobNotice, setScheduleJobNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -632,7 +635,16 @@ export function BulkUploadForm({
 
     const created = await createScheduleJobApi(buildScheduleJobPayload(partial, batchId));
     setScheduleJobId(created.jobId);
+    setScheduleJobInitialStatus(created.status ?? null);
     setResult(null);
+    setLoadingStep("Agendamento iniciado…");
+
+    void bootstrapScheduleJobTracking(created.jobId, videoCount).then((initialStatus) => {
+      setScheduleJobInitialStatus(initialStatus);
+      setProgress(Math.min(90, Math.max(15, initialStatus.progressPercent)));
+      setLoadingStep(initialStatus.progressLabel || "Preparando publicações…");
+    });
+
     if (created.reused) {
       const msg =
         "alreadyCompleted" in created && created.alreadyCompleted
@@ -646,7 +658,7 @@ export function BulkUploadForm({
     markStep("hashtags");
     markStep("calendar");
     setProgress(15);
-    setLoadingStep(`Agendamento em segundo plano — ${videoCount} vídeo(s) no servidor.`);
+    setLoadingStep("Preparando publicações…");
   }
 
   async function confirmAutopilotBatch(params: {
@@ -1465,6 +1477,7 @@ export function BulkUploadForm({
         <ScheduleJobPanel
           jobId={scheduleJobId}
           videoCount={completedCount || totalCount}
+          initialStatus={scheduleJobInitialStatus}
           onComplete={handleScheduleJobComplete}
           onBatchRefresh={() => void refreshActiveBatch()}
         />

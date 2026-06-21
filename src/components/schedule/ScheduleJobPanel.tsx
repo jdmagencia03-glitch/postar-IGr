@@ -24,12 +24,20 @@ import {
   fetchScheduleJobStatus,
   finalizePostsScheduleJobApi,
   forceContinueScheduleJobApi,
+  kickScheduleJobInBackground,
   resumeScheduleJobApi,
 } from "@/lib/schedule-jobs/client";
+import {
+  buildOptimisticScheduleJobStatus,
+  isScheduleJobTerminal,
+  shouldPollScheduleJob,
+} from "@/lib/schedule-jobs/optimistic-status";
+import { isSmallScheduleJob, scheduleJobPollIntervalMs } from "@/lib/schedule-jobs/polling";
 
 type Props = {
   jobId: string;
   videoCount: number;
+  initialStatus?: ScheduleJobStatusResponse | null;
   onComplete?: (status: ScheduleJobStatusResponse) => void;
   onBatchRefresh?: () => void;
 };
@@ -98,10 +106,14 @@ function statusBanner(
 export function ScheduleJobPanel({
   jobId,
   videoCount,
+  initialStatus = null,
   onComplete,
   onBatchRefresh,
 }: Props) {
-  const [status, setStatus] = useState<ScheduleJobStatusResponse | null>(null);
+  const smallBatch = isSmallScheduleJob(videoCount);
+  const [status, setStatus] = useState<ScheduleJobStatusResponse | null>(
+    () => initialStatus ?? buildOptimisticScheduleJobStatus(jobId, videoCount),
+  );
   const [pollDisplay, setPollDisplay] = useState<PollingDisplayState | null>(null);
   const pollTrackerRef = useRef(new PollingStateTracker());
   const [action, setAction] = useState<
@@ -182,27 +194,63 @@ export function ScheduleJobPanel({
   );
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (initialStatus) {
+      setStatus(initialStatus);
+    }
+  }, [initialStatus]);
 
   useEffect(() => {
-    if (!status?.isActive && status?.phase !== "queued") return;
+    completedRef.current = false;
+    pollTrackerRef.current = new PollingStateTracker();
+    setStatus(initialStatus ?? buildOptimisticScheduleJobStatus(jobId, videoCount));
 
-    const pollMs = status?.isStalled ? 8000 : document.hidden ? 15000 : 4000;
-    const poll = () => void refresh();
-    poll();
-    const id = window.setInterval(poll, pollMs);
+    if (smallBatch) {
+      kickScheduleJobInBackground(jobId);
+    }
+  }, [jobId, videoCount, smallBatch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let pollIndex = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = (stalled: boolean) => {
+      if (cancelled) return;
+      const delayMs = scheduleJobPollIntervalMs({
+        pollIndex,
+        smallBatch,
+        hidden: typeof document !== "undefined" && document.hidden,
+        stalled,
+      });
+      pollIndex += 1;
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        const next = await refresh();
+        if (next && isScheduleJobTerminal(next)) return;
+        if (next && !shouldPollScheduleJob(next)) return;
+        scheduleNext(Boolean(next?.isStalled));
+      }, delayMs);
+    };
+
+    void refresh().then((next) => {
+      if (cancelled || !next) return;
+      if (isScheduleJobTerminal(next) || !shouldPollScheduleJob(next)) return;
+      scheduleNext(Boolean(next.isStalled));
+    });
 
     const onVisibility = () => {
-      if (!document.hidden) poll();
+      if (!document.hidden && !cancelled) {
+        void refresh();
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      window.clearInterval(id);
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [status?.isActive, status?.isStalled, status?.phase, refresh]);
+  }, [jobId, refresh, smallBatch]);
 
   const total = status?.total ?? videoCount;
   const banner = status ? statusBanner(status, pollDisplay) : null;
@@ -456,6 +504,28 @@ export function ScheduleJobPanel({
               <dt>Último erro</dt>
               <dd className="text-ig-danger">{status.lastError}</dd>
             </div>
+          )}
+          {status.timing && (
+            <>
+              <div>
+                <dt>Duração total</dt>
+                <dd className="text-ig-text">
+                  {status.timing.durationMs != null
+                    ? `${Math.round(status.timing.durationMs / 1000)}s`
+                    : status.timing.queueWaitMs != null
+                      ? `fila ${Math.round(status.timing.queueWaitMs / 1000)}s · em andamento`
+                      : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>Processamento</dt>
+                <dd className="text-ig-text">
+                  {status.timing.processingMs != null
+                    ? `${Math.round(status.timing.processingMs / 1000)}s`
+                    : "—"}
+                </dd>
+              </div>
+            </>
           )}
           {diagnostics && (
             <div className="sm:col-span-2">
