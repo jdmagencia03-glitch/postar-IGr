@@ -101,7 +101,11 @@ export async function validateTikTokConnection(
       key: "creator",
       label: "Creator Info",
       level: "ok",
-      message: `@${creator.username ?? "conta"} pode publicar via Direct Post`,
+      message: `@${creator.username ?? "conta"} pode publicar via Direct Post${
+        creator.privacy_level_options?.length
+          ? ` · Privacidade: ${creator.privacy_level_options.join(", ")}`
+          : ""
+      }`,
     });
 
     if (creator.max_video_post_duration_sec) {

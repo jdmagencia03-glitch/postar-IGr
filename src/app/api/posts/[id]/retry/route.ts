@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { canRetryPost, getOwnerPostById } from "@/lib/posts";
+import { logPublishEvent } from "@/lib/publish/cron";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(
@@ -53,8 +54,8 @@ export async function POST(
     .from("scheduled_posts")
     .update({
       status: "pending",
-      error_message: null,
       next_retry_at: null,
+      container_id: null,
     })
     .eq("id", id)
     .is("media_id", null)
@@ -63,6 +64,15 @@ export async function POST(
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (post.container_id) {
+    await logPublishEvent(
+      supabase,
+      id,
+      "info",
+      `Retry manual: container anterior ${post.container_id} descartado (novo container será criado). Erro anterior preservado: ${post.error_message ?? "n/a"}`,
+    );
   }
 
   return NextResponse.json(data);

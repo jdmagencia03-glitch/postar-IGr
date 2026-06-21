@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAccountAccessToken } from "@/lib/accounts";
-import { resolveImportAccount } from "@/lib/ai/resolve-import-account";
+import { getAccountAccessToken, getOwnerAccountById } from "@/lib/accounts";
 import { fetchInstagramProfileSnapshot } from "@/lib/meta/instagram-profile";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
+import { queryCreatorInfoForAccount } from "@/lib/tiktok/creator";
 
 export async function POST(request: NextRequest) {
   const ownerId = await getSessionUserId();
@@ -18,29 +20,60 @@ export async function POST(request: NextRequest) {
     accountId = undefined;
   }
 
-  const account = await resolveImportAccount(ownerId, accountId);
+  if (!accountId) {
+    return NextResponse.json({ error: "Selecione uma conta antes de importar." }, { status: 400 });
+  }
 
-  const accessToken = account ? getAccountAccessToken(account) : null;
+  const supabase = createAdminClient();
+  const igAccount = await getOwnerAccountById(supabase, ownerId, accountId);
+  const accessToken = igAccount ? getAccountAccessToken(igAccount) : null;
 
-  if (!accessToken || !account?.ig_user_id) {
-    return NextResponse.json(
-      { error: "Conecte uma conta do Instagram em Contas antes de importar." },
-      { status: 400 },
-    );
+  if (accessToken && igAccount?.ig_user_id) {
+    try {
+      const snapshot = await fetchInstagramProfileSnapshot({
+        accessToken,
+        igUserId: igAccount.ig_user_id,
+        provider: igAccount.auth_provider ?? "instagram",
+        mediaLimit: 12,
+      });
+
+      return NextResponse.json({ snapshot, platform: "instagram" });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Não foi possível importar o perfil." },
+        { status: 502 },
+      );
+    }
+  }
+
+  const tiktokAccount = await getOwnerTikTokAccountById(supabase, ownerId, accountId);
+  if (!tiktokAccount) {
+    return NextResponse.json({ error: "Conta não encontrada." }, { status: 404 });
   }
 
   try {
-    const snapshot = await fetchInstagramProfileSnapshot({
-      accessToken,
-      igUserId: account.ig_user_id,
-      provider: account.auth_provider ?? "instagram",
-      mediaLimit: 12,
-    });
+    const creator = await queryCreatorInfoForAccount(supabase, tiktokAccount).catch(() => null);
+    const username =
+      creator?.creator_username ??
+      tiktokAccount.creator_username ??
+      tiktokAccount.username ??
+      "";
+    const name = creator?.creator_nickname ?? tiktokAccount.display_name ?? "";
 
-    return NextResponse.json({ snapshot });
+    return NextResponse.json({
+      platform: "tiktok",
+      snapshot: {
+        username,
+        name,
+        biography: "",
+        captions: [],
+        hashtags: [],
+        themes: [],
+      },
+    });
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Não foi possível importar o perfil." },
+      { error: err instanceof Error ? err.message : "Não foi possível importar o perfil TikTok." },
       { status: 502 },
     );
   }

@@ -13,6 +13,12 @@ import type {
 const POST_SELECT_PUBLIC =
   "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url), products(id, name, main_cta), campaigns(id, name, default_cta, objective)";
 
+/** Fallback quando joins opcionais (products/campaigns) falham no PostgREST. */
+const POST_SELECT_OWNER =
+  "*, instagram_accounts(ig_username, profile_picture_url), tiktok_accounts(username, display_name, profile_picture_url)";
+
+const POST_SELECT_MINIMAL = "*";
+
 /** Consulta completa para logs quando todas as migrations estão aplicadas. */
 const POST_SELECT_LOGS_FULL =
   "id, platform, account_id, tiktok_account_id, caption, scheduled_at, content_type, media_type, instagram_accounts(ig_username), tiktok_accounts(username, display_name)";
@@ -88,17 +94,30 @@ async function queryInstagramPosts(
 ) {
   if (!igIds.length) return [] as ScheduledPost[];
 
-  let query = supabase
-    .from("scheduled_posts")
-    .select(POST_SELECT_PUBLIC)
-    .eq("platform", "instagram")
-    .in("account_id", igIds);
+  const run = (select: string) => {
+    let query = supabase
+      .from("scheduled_posts")
+      .select(select)
+      .eq("platform", "instagram")
+      .in("account_id", igIds);
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.hiddenFromReport === false) query = query.eq("hidden_from_report", false);
+    return query;
+  };
 
-  if (filters.status) query = query.eq("status", filters.status);
-  if (filters.hiddenFromReport === false) query = query.eq("hidden_from_report", false);
+  const full = await run(POST_SELECT_PUBLIC);
+  if (!full.error) return ((full.data ?? []) as unknown as ScheduledPost[]);
 
-  const { data } = await query;
-  return (data as ScheduledPost[]) ?? [];
+  console.warn("[posts] instagram query fallback (public select failed):", full.error.message);
+
+  const owner = await run(POST_SELECT_OWNER);
+  if (!owner.error) return ((owner.data ?? []) as unknown as ScheduledPost[]);
+
+  const minimal = await run(POST_SELECT_MINIMAL);
+  if (!minimal.error) return ((minimal.data ?? []) as unknown as ScheduledPost[]);
+
+  console.error("[posts] instagram query failed:", minimal.error?.message ?? full.error.message);
+  return [];
 }
 
 async function queryTikTokPosts(
@@ -108,17 +127,95 @@ async function queryTikTokPosts(
 ) {
   if (!ttIds.length) return [] as ScheduledPost[];
 
+  const run = (select: string) => {
+    let query = supabase
+      .from("scheduled_posts")
+      .select(select)
+      .eq("platform", "tiktok")
+      .in("tiktok_account_id", ttIds);
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.hiddenFromReport === false) query = query.eq("hidden_from_report", false);
+    return query;
+  };
+
+  const full = await run(POST_SELECT_PUBLIC);
+  if (!full.error) return ((full.data ?? []) as unknown as ScheduledPost[]);
+
+  console.warn("[posts] tiktok query fallback (public select failed):", full.error.message);
+
+  const owner = await run(POST_SELECT_OWNER);
+  if (!owner.error) return ((owner.data ?? []) as unknown as ScheduledPost[]);
+
+  const minimal = await run(POST_SELECT_MINIMAL);
+  if (!minimal.error) return ((minimal.data ?? []) as unknown as ScheduledPost[]);
+
+  console.error("[posts] tiktok query failed:", minimal.error?.message ?? full.error.message);
+  return [];
+}
+
+function dedupePosts(posts: ScheduledPost[]) {
+  const seen = new Set<string>();
+  const out: ScheduledPost[] = [];
+  for (const post of posts) {
+    if (seen.has(post.id)) continue;
+    seen.add(post.id);
+    out.push(post);
+  }
+  return out;
+}
+
+/** Posts do lote do owner — fallback quando account_id não bate na listagem. */
+async function queryPostsByOwnerUploadBatches(
+  supabase: SupabaseClient,
+  ownerId: string,
+  filters: OwnerPostFilters,
+) {
+  const { data: batches, error: batchError } = await supabase
+    .from("upload_batches")
+    .select("id")
+    .eq("owner_id", ownerId);
+
+  if (batchError || !batches?.length) return [] as ScheduledPost[];
+
+  const batchIds = batches.map((row) => row.id as string);
+  const selects = [POST_SELECT_PUBLIC, POST_SELECT_OWNER, POST_SELECT_MINIMAL];
+
+  for (const select of selects) {
+    let query = supabase
+      .from("scheduled_posts")
+      .select(select)
+      .in("upload_batch_id", batchIds);
+    if (filters.status) query = query.eq("status", filters.status);
+    if (filters.hiddenFromReport === false) query = query.eq("hidden_from_report", false);
+
+    const { data, error } = await query;
+    if (!error) return ((data ?? []) as unknown as ScheduledPost[]);
+  }
+
+  return [];
+}
+
+/** Sem filtro platform (DB legado sem coluna platform). */
+async function queryInstagramPostsLegacy(
+  supabase: SupabaseClient,
+  igIds: string[],
+  filters: OwnerPostFilters,
+) {
+  if (!igIds.length) return [] as ScheduledPost[];
+
   let query = supabase
     .from("scheduled_posts")
-    .select(POST_SELECT_PUBLIC)
-    .eq("platform", "tiktok")
-    .in("tiktok_account_id", ttIds);
-
+    .select(POST_SELECT_MINIMAL)
+    .in("account_id", igIds);
   if (filters.status) query = query.eq("status", filters.status);
   if (filters.hiddenFromReport === false) query = query.eq("hidden_from_report", false);
 
-  const { data } = await query;
-  return (data as ScheduledPost[]) ?? [];
+  const { data, error } = await query;
+  if (error) return [] as ScheduledPost[];
+  return ((data ?? []) as unknown as ScheduledPost[]).map((post) => ({
+    ...post,
+    platform: post.platform ?? "instagram",
+  }));
 }
 
 export async function getOwnerScheduledPosts(
@@ -149,12 +246,17 @@ export async function getOwnerScheduledPosts(
     igIds = [];
   }
 
-  const [igPosts, ttPosts] = await Promise.all([
+  const [igPosts, ttPosts, batchPosts, igLegacyPosts] = await Promise.all([
     platform === "tiktok" ? [] : queryInstagramPosts(supabase, igIds, filters),
     platform === "instagram" ? [] : queryTikTokPosts(supabase, ttIds, filters),
+    platform === "tiktok" ? [] : queryPostsByOwnerUploadBatches(supabase, ownerId, filters),
+    platform === "tiktok" ? [] : queryInstagramPostsLegacy(supabase, igIds, filters),
   ]);
 
-  const merged = mergePosts([...igPosts, ...ttPosts], order);
+  const merged = mergePosts(
+    dedupePosts([...igPosts, ...ttPosts, ...batchPosts, ...igLegacyPosts]),
+    order,
+  );
 
   let filtered = merged;
   if (filters.contentType && filters.contentType !== "all") {

@@ -5,7 +5,7 @@ import { getOwnerAccountById } from "@/lib/accounts";
 import { checkInstagramStoryPublishCapability } from "@/lib/meta/instagram-stories";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls } from "@/lib/storage/schedule-media-guard";
 import { decryptPageAccessToken } from "@/lib/security/tokens";
 import { mergeCampaignFields, resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
@@ -55,9 +55,13 @@ export async function POST(request: NextRequest) {
   }
 
   for (const item of parsed.data.items) {
-    const mediaCheck = validateMediaUrlsForOwner([item.media_url], ownerId);
+    const mediaCheck = await validateScheduledMediaUrls({
+      supabase,
+      ownerId,
+      urls: [item.media_url],
+    });
     if (!mediaCheck.ok) {
-      return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+      return NextResponse.json({ error: mediaCheck.message, code: mediaCheck.code }, { status: 400 });
     }
   }
 

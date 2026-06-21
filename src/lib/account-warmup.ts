@@ -2,6 +2,7 @@ import {
   atHourInAppTz,
   atHourOnDayOffsetInAppTz,
   getAppDateParts,
+  zonedDateTimeToUtc,
 } from "@/lib/timezone";
 
 export const DEFAULT_WARMUP_DAYS = 5;
@@ -77,7 +78,73 @@ export const WARMUP_DAY_TIME_SLOTS: readonly (readonly TimeSlot[])[] = [
 
 export const POST_WARMUP_TIME_SLOTS: readonly TimeSlot[] = WARMUP_DAY_TIME_SLOTS[4];
 
+/** Mesmos horários para todos os dias com igual volume na rampa (3→3, 4→4, 7→7). */
+export const WARMUP_PHASE_TIME_SLOTS = {
+  3: WARMUP_DAY_TIME_SLOTS[1],
+  4: WARMUP_DAY_TIME_SLOTS[2],
+  7: POST_WARMUP_TIME_SLOTS,
+} as const;
+
 const BUFFER_MINUTES = 15;
+
+export function warmupDateKey(date: Date) {
+  const parts = getAppDateParts(date);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+export function slotsForPostsPerDay(postsPerDay: number): TimeSlot[] {
+  if (postsPerDay >= POST_WARMUP_POSTS_PER_DAY) {
+    return [...WARMUP_PHASE_TIME_SLOTS[7]];
+  }
+  if (postsPerDay === 4) {
+    return [...WARMUP_PHASE_TIME_SLOTS[4]];
+  }
+  const template = [...WARMUP_PHASE_TIME_SLOTS[3]];
+  return template.slice(0, Math.max(1, Math.min(3, postsPerDay)));
+}
+
+export type WarmupCalendarStart = {
+  warmupStartDate: string;
+  calendarStart: Date;
+  partialFirstDay: boolean;
+  slotCutoff: Date;
+  firstScheduledAt: Date;
+};
+
+/** Ancora a rampa no dia local do primeiro post, não no horário exato do slot. */
+export function resolveWarmupCalendarStart(params: {
+  firstScheduledAt: Date;
+  now?: Date;
+}): WarmupCalendarStart {
+  const now = params.now ?? new Date();
+  const firstParts = getAppDateParts(params.firstScheduledAt);
+  const todayParts = getAppDateParts(now);
+
+  const calendarStart = zonedDateTimeToUtc(
+    firstParts.year,
+    firstParts.month,
+    firstParts.day,
+    0,
+    0,
+  );
+
+  const sameLocalDay =
+    firstParts.year === todayParts.year &&
+    firstParts.month === todayParts.month &&
+    firstParts.day === todayParts.day;
+
+  const partialFirstDay = sameLocalDay;
+  const earliest = new Date(now.getTime() + BUFFER_MINUTES * 60_000);
+  const slotCutoff = partialFirstDay ? earliest : calendarStart;
+
+  return {
+    warmupStartDate: warmupDateKey(params.firstScheduledAt),
+    calendarStart,
+    partialFirstDay,
+    slotCutoff,
+    firstScheduledAt: params.firstScheduledAt,
+  };
+}
 
 export type WarmupDayBreakdown = {
   day: number;
@@ -103,16 +170,16 @@ export function describeWarmupDayPlan(warmupDays = DEFAULT_WARMUP_DAYS): WarmupD
   return ramp.map((posts, index) => ({
     day: index + 1,
     posts,
-    times: WARMUP_DAY_TIME_SLOTS[index].slice(0, posts).map(formatWarmupTimeSlot),
+    times: slotsForPostsPerDay(posts).map(formatWarmupTimeSlot),
   }));
 }
 
 function slotsForAbsoluteDay(absoluteDay: number, rampLength: number): TimeSlot[] {
   if (absoluteDay < rampLength) {
     const postsToday = buildWarmupRamp(rampLength)[absoluteDay] ?? 0;
-    return [...WARMUP_DAY_TIME_SLOTS[absoluteDay]].slice(0, postsToday);
+    return slotsForPostsPerDay(postsToday);
   }
-  return [...POST_WARMUP_TIME_SLOTS];
+  return slotsForPostsPerDay(POST_WARMUP_POSTS_PER_DAY);
 }
 
 export function getWarmupDayOffset(warmupStartedAt: string | Date | null, now = new Date()) {
@@ -246,13 +313,109 @@ function ensureAfterPrevious(scheduled: Date, previous: Date | undefined) {
   return new Date(previous.getTime() + 30 * 60_000);
 }
 
+const PARTIAL_DAY_MIN_GAP_MS = 30 * 60_000;
+
+function roundUpTo30Minutes(date: Date) {
+  const next = new Date(date);
+  const mins = next.getMinutes();
+  const rounded = Math.ceil(mins / 30) * 30;
+  next.setMinutes(rounded, 0, 0);
+  return next;
+}
+
+function generateEvenlySpacedDaySlots(params: {
+  count: number;
+  from: Date;
+  to: Date;
+  minGapMs: number;
+  seedSlots: Date[];
+}): Date[] {
+  if (params.count <= 0) return [];
+
+  const sortedSeeds = [...params.seedSlots].sort((a, b) => a.getTime() - b.getTime());
+  const result: Date[] = [];
+
+  for (const seed of sortedSeeds) {
+    if (result.length >= params.count) break;
+    if (seed < params.from || seed > params.to) continue;
+    const prev = result[result.length - 1];
+    const slot = prev && seed.getTime() - prev.getTime() < params.minGapMs
+      ? new Date(prev.getTime() + params.minGapMs)
+      : seed;
+    if (slot <= params.to) result.push(slot);
+  }
+
+  let cursor = result.length
+    ? new Date(result[result.length - 1].getTime() + params.minGapMs)
+    : roundUpTo30Minutes(params.from);
+
+  while (result.length < params.count && cursor <= params.to) {
+    result.push(new Date(cursor));
+    cursor = new Date(cursor.getTime() + params.minGapMs);
+  }
+
+  return result.slice(0, params.count);
+}
+
+function buildPartialFirstDayWarmupSlots(params: {
+  templateSlots: TimeSlot[];
+  postsNeeded: number;
+  slotCutoff: Date;
+  calendarStart: Date;
+  previousScheduled?: Date;
+}): { slots: Date[]; skippedPast: string[]; autoGenerated: boolean } {
+  const skippedPast: string[] = [];
+  const futureTemplate: Date[] = [];
+
+  for (const slot of params.templateSlots) {
+    const slotDate = atHourOnDayOffsetInAppTz(
+      params.calendarStart,
+      0,
+      slot.hour,
+      slot.minute,
+    );
+    if (slotDate < params.slotCutoff) {
+      skippedPast.push(formatWarmupTimeSlot(slot));
+    } else {
+      futureTemplate.push(slotDate);
+    }
+  }
+
+  futureTemplate.sort((a, b) => a.getTime() - b.getTime());
+  const endOfDay = atHourOnDayOffsetInAppTz(params.calendarStart, 0, 23, 0);
+  const autoGenerated = futureTemplate.length < params.postsNeeded;
+
+  const rawSlots = autoGenerated
+    ? generateEvenlySpacedDaySlots({
+        count: params.postsNeeded,
+        from: params.slotCutoff,
+        to: endOfDay,
+        minGapMs: PARTIAL_DAY_MIN_GAP_MS,
+        seedSlots: futureTemplate,
+      })
+    : futureTemplate.slice(0, params.postsNeeded);
+
+  let previous = params.previousScheduled;
+  const slots = rawSlots.map((slot) => {
+    const next = ensureAfterPrevious(slot, previous);
+    previous = next;
+    return next;
+  });
+
+  return { slots, skippedPast, autoGenerated };
+}
+
 export function generateWarmupSchedule(params: {
   count: number;
   warmupDays?: number;
   warmupDayOffset?: number;
-  /** Ancora o Dia 1 do plano (continuação de lote/calendário). */
+  /** @deprecated Prefer firstScheduledAt — ancora pelo dia local, não pelo horário exato. */
   startDate?: Date;
+  /** Primeiro post da fila/lote; define o dia 1 da rampa. */
+  firstScheduledAt?: Date;
   now?: Date;
+  /** Recebe avisos sobre horários passados ou slots gerados automaticamente. */
+  warnings?: string[];
 }) {
   const count = params.count;
   if (count <= 0) return [];
@@ -260,20 +423,83 @@ export function generateWarmupSchedule(params: {
   const warmupDays = clampWarmupDays(params.warmupDays ?? DEFAULT_WARMUP_DAYS);
   const warmupDayOffset = params.warmupDayOffset ?? 0;
   const ramp = buildWarmupRamp(warmupDays);
-  const startDate = params.startDate ?? resolveStartDate(params.now);
+  const now = params.now ?? new Date();
+
+  const anchorSource =
+    params.firstScheduledAt ?? params.startDate ?? resolveStartDate(now);
+  const calendar = resolveWarmupCalendarStart({ firstScheduledAt: anchorSource, now });
 
   const schedule: Date[] = [];
   let calendarDay = 0;
+  let warnedPastSlots = false;
+  let warnedAutoSlots = false;
+  let warnedSplitDays = false;
 
   while (schedule.length < count) {
     const absoluteWarmupDay = warmupDayOffset + calendarDay;
     const slotTimes = slotsForAbsoluteDay(absoluteWarmupDay, ramp.length);
+    const dayCapacity =
+      absoluteWarmupDay < ramp.length
+        ? (ramp[absoluteWarmupDay] ?? POST_WARMUP_POSTS_PER_DAY)
+        : POST_WARMUP_POSTS_PER_DAY;
+    const remaining = count - schedule.length;
+
+    if (calendar.partialFirstDay && calendarDay === 0) {
+      const postsForToday = Math.min(remaining, dayCapacity);
+      const partial = buildPartialFirstDayWarmupSlots({
+        templateSlots: slotTimes,
+        postsNeeded: postsForToday,
+        slotCutoff: calendar.slotCutoff,
+        calendarStart: calendar.calendarStart,
+        previousScheduled: schedule[schedule.length - 1],
+      });
+
+      if (partial.skippedPast.length && params.warnings && !warnedPastSlots) {
+        params.warnings.push(
+          "Alguns horários de hoje já passaram. O cronograma foi ajustado para os próximos horários disponíveis.",
+        );
+        for (const time of partial.skippedPast) {
+          params.warnings.push(`Horário ignorado: ${time} — já passou`);
+        }
+        warnedPastSlots = true;
+      }
+
+      if (partial.autoGenerated && params.warnings && !warnedAutoSlots) {
+        params.warnings.push(
+          "Horários intermediários foram gerados automaticamente para caber todos os posts hoje.",
+        );
+        warnedAutoSlots = true;
+      }
+
+      schedule.push(...partial.slots);
+      calendarDay++;
+
+      if (remaining > postsForToday && params.warnings && !warnedSplitDays) {
+        params.warnings.push(
+          `${remaining - postsForToday} publicação(ões) foi(foram) movida(s) para o próximo dia porque a capacidade diária ou os horários disponíveis hoje não comportam todos os vídeos.`,
+        );
+        warnedSplitDays = true;
+      }
+      continue;
+    }
 
     for (const { hour, minute } of slotTimes) {
       if (schedule.length >= count) break;
 
-      let scheduled = atHourOnDayOffsetInAppTz(startDate, calendarDay, hour, minute);
-      if (scheduled < startDate) continue;
+      let scheduled = atHourOnDayOffsetInAppTz(
+        calendar.calendarStart,
+        calendarDay,
+        hour,
+        minute,
+      );
+
+      if (
+        calendar.partialFirstDay &&
+        calendarDay === 0 &&
+        scheduled < calendar.slotCutoff
+      ) {
+        continue;
+      }
 
       scheduled = ensureAfterPrevious(scheduled, schedule[schedule.length - 1]);
       schedule.push(scheduled);
@@ -293,10 +519,11 @@ export function generateWarmupScheduleSlice(params: {
   warmupDayOffset?: number;
   startDate?: Date;
   now?: Date;
+  warnings?: string[];
 }) {
   const offset = params.planSlotOffset ?? 0;
   const total = offset + params.count;
-  const full = generateWarmupSchedule({ ...params, count: total });
+  const full = generateWarmupSchedule({ ...params, count: total, warnings: params.warnings });
   return full.slice(offset);
 }
 

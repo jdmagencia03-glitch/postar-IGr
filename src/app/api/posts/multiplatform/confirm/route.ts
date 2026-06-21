@@ -7,7 +7,7 @@ import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mergeCampaignFields, resolveSchedulingCampaignContext } from "@/lib/campaigns/context";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls } from "@/lib/storage/schedule-media-guard";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import { z } from "zod";
 
@@ -59,11 +59,15 @@ export async function POST(request: NextRequest) {
   const schedulableVideos = [];
 
   for (const video of parsed.data.videos) {
-    const mediaCheck = validateMediaUrlsForOwner(video.media_urls, ownerId);
+    const mediaCheck = await validateScheduledMediaUrls({
+      supabase,
+      ownerId,
+      urls: video.media_urls,
+    });
     if (!mediaCheck.ok) {
       skippedVideos.push({
         filename: video.filename,
-        reason: mediaCheck.error ?? "Mídia inválida",
+        reason: `${mediaCheck.code}: ${mediaCheck.message}`,
       });
       continue;
     }

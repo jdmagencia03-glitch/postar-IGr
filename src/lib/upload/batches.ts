@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DB_INSERT_CHUNK_SIZE, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+import { safeRemoveStorageObjects } from "@/lib/media/storage-delete-guard";
 import type { SocialPlatform, UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
 import type { UploadBatchRemoteStatus } from "@/lib/upload/batch-status";
 
@@ -323,16 +324,14 @@ export async function clearAccountUploadedVideos(
   ];
 
   if (storagePaths.length) {
-    for (let offset = 0; offset < storagePaths.length; offset += 100) {
-      const chunk = storagePaths.slice(offset, offset + 100);
-      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
-      if (storageError) {
-        console.warn("[upload-clear] storage_remove_error", {
-          platform,
-          accountId,
-          error: storageError.message,
-        });
-      }
+    const removal = await safeRemoveStorageObjects(supabase, storagePaths);
+    if (removal.blocked.length) {
+      console.warn("[upload-clear] storage_delete_blocked", {
+        platform,
+        accountId,
+        blocked: removal.blocked.length,
+        removed: removal.removed,
+      });
     }
   }
 
@@ -431,17 +430,7 @@ export async function deleteAccountUploadBatches(
   ];
 
   if (storagePaths.length) {
-    for (let offset = 0; offset < storagePaths.length; offset += 100) {
-      const chunk = storagePaths.slice(offset, offset + 100);
-      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
-      if (storageError) {
-        console.warn("[upload-clear] batch_storage_remove_error", {
-          platform,
-          accountId,
-          error: storageError.message,
-        });
-      }
-    }
+    await safeRemoveStorageObjects(supabase, storagePaths);
   }
 
   const { error: deleteError } = await supabase.from("upload_batches").delete().in("id", batchIds);
@@ -482,16 +471,7 @@ export async function deleteUploadBatchForOwner(
   ];
 
   if (storagePaths.length) {
-    for (let offset = 0; offset < storagePaths.length; offset += 100) {
-      const chunk = storagePaths.slice(offset, offset + 100);
-      const { error: storageError } = await supabase.storage.from("media").remove(chunk);
-      if (storageError) {
-        console.warn("[upload-clear] batch_storage_remove_error", {
-          batchId,
-          error: storageError.message,
-        });
-      }
-    }
+    await safeRemoveStorageObjects(supabase, storagePaths);
   }
 
   const { error: deleteError } = await supabase
@@ -632,11 +612,13 @@ export async function getBatchFileStatusCounts(
   batchId: string,
 ) {
   const notRemoved = "removed.is.null,removed.eq.false";
-  const statuses = ["completed", "pending", "uploading", "failed"] as const;
+  const statuses = ["completed", "pending", "uploading", "retrying", "stalled", "failed"] as const;
   const counts: Record<(typeof statuses)[number], number> = {
     completed: 0,
     pending: 0,
     uploading: 0,
+    retrying: 0,
+    stalled: 0,
     failed: 0,
   };
 

@@ -9,6 +9,7 @@ const styles: Record<PostStatus, string> = {
   retrying: "bg-amber-500/15 text-amber-700",
   failed_persistent: "bg-ig-danger/20 text-ig-danger",
   cancelled: "bg-ig-secondary text-ig-muted line-through",
+  needs_media: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
 };
 
 const labels: Record<PostStatus, string> = {
@@ -19,6 +20,7 @@ const labels: Record<PostStatus, string> = {
   retrying: "Reagendando",
   failed_persistent: "Falha persistente",
   cancelled: "Cancelado",
+  needs_media: "Mídia ausente",
 };
 
 export function StatusBadge({

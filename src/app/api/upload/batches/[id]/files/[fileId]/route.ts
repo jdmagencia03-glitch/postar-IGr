@@ -72,6 +72,35 @@ export async function PATCH(
       parsed.data.status === "completed" ||
       parsed.data.status === "failed"
     ) {
+      if (parsed.data.status === "completed") {
+        if (!parsed.data.public_url) {
+          return NextResponse.json(
+            { error: "public_url obrigatório para concluir upload.", code: "upload_incomplete" },
+            { status: 400 },
+          );
+        }
+
+        const { validateMediaAssetFromUrl } = await import("@/lib/media/assets");
+        const validation = await validateMediaAssetFromUrl({
+          supabase,
+          ownerId,
+          videoUrl: parsed.data.public_url,
+          uploadFileId: fileId,
+          fileHash: null,
+        });
+
+        if (!validation.ok) {
+          return NextResponse.json(
+            {
+              error: validation.message,
+              code: validation.code,
+              action: validation.action,
+            },
+            { status: 400 },
+          );
+        }
+      }
+
       const { file, counters } = await releaseUploadFileLease(supabase, {
         batchId: id,
         fileId,

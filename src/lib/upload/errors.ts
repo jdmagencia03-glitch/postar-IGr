@@ -1,3 +1,4 @@
+import { formatUploadErrorByState } from "@/lib/connection-state";
 import { formatBytes } from "@/lib/upload/validate";
 
 type TusLikeError = Error & {
@@ -10,16 +11,19 @@ type TusLikeError = Error & {
 export function humanizeFetchError(error: unknown): string {
   if (error instanceof Error) {
     const message = error.message.trim();
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return "Sua conexão caiu. Tentando reconectar…";
+    }
     if (
       /failed to fetch|networkerror|network error|load failed|fetch failed|network request failed|err_internet_disconnected|aborted|timeout/i.test(
         message,
       )
     ) {
-      return "Falha de conexão com o servidor. Verifique sua internet, aguarde alguns segundos e tente de novo.";
+      return "Servidor demorou para responder. Tentando novamente…";
     }
-    return message || "Erro de conexão ao contactar o servidor.";
+    return message || "Não foi possível completar a ação agora.";
   }
-  return "Erro de conexão ao contactar o servidor.";
+  return "Não foi possível completar a ação agora.";
 }
 
 /** Extrai mensagem legível de erros TUS / fetch. */
@@ -98,14 +102,8 @@ export function formatUploadErrorMessage(
     return `Arquivo${sizeHint} excede o limite do Supabase Storage.${limitHint} Detalhe: ${trimmed}`;
   }
 
-  if (/network|failed to fetch|timeout|aborted|offline|connection|falha de conexão|muitas requisições|429|sem progresso|reconectando|conexão lenta/i.test(trimmed)) {
-    if (/sem progresso|reconectando|conexão lenta/i.test(trimmed)) {
-      return "Conexão lenta — o envio continua automaticamente em segundo plano.";
-    }
-    if (/429|muitas requisições/i.test(trimmed)) {
-      return "Servidor ocupado — aguarde alguns segundos. O upload vai retomar automaticamente.";
-    }
-    return "Falha de conexão — o sistema vai tentar de novo automaticamente.";
+  if (/network|failed to fetch|timeout|aborted|offline|connection|falha de conexão|muitas requisições|429|sem progresso|reconectando|conexão lenta|upload_stall/i.test(trimmed)) {
+    return formatUploadErrorByState(trimmed);
   }
 
   if (/unauthorized|403|401|signature|token|jwt|expired/i.test(trimmed)) {

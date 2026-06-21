@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { OperationsCenter } from "@/components/operations/OperationsCenter";
 import { computeOperationsSnapshot } from "@/lib/operations/compute";
-import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
+import { buildAllAccountOperationalSummaries } from "@/lib/operations/operational-summary";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
 import { buildErrorReport } from "@/lib/operations/error-report";
 import {
@@ -52,7 +52,13 @@ export default async function ReportsPage({
 
   filters.accountId = selectedAccountId;
 
-  const allPosts = await getOwnerScheduledPosts(supabase, ownerId, {
+  const ownerAllPosts = await getOwnerScheduledPosts(supabase, ownerId, {
+    hiddenFromReport: false,
+    order: "asc",
+    limit: 5000,
+  });
+
+  const filteredPosts = await getOwnerScheduledPosts(supabase, ownerId, {
     platform: filters.platform,
     accountId: selectedAccountId,
     contentType: filters.contentType,
@@ -69,21 +75,28 @@ export default async function ReportsPage({
     listOwnerCampaigns(supabase, ownerId),
   ]);
 
-  const accountsOverview = await buildAllAccountOperationsSummaries({
+  const accountsOverview = await buildAllAccountOperationalSummaries({
     refs: accountRefs,
     igAccounts,
     tiktokAccounts,
-    posts: allPosts,
+    posts: ownerAllPosts,
     ownerId,
   });
 
-  const snapshot = computeOperationsSnapshot(allPosts);
-  const publicationMetrics = computePublicationMetrics(allPosts);
-  const platformMetrics = computePlatformMetrics(allPosts);
-  const contentTypeMetrics = computeContentTypeMetrics(allPosts);
-  const multiplatformMetrics = computeMultiplatformGroupMetrics(allPosts);
-  const errorReport = buildErrorReport(allPosts);
-  const publicationAudit = buildPublicationAudit(allPosts, {
+  const displayPosts =
+    selectedAccountId || filters.platform !== "all" || filters.contentType !== "all"
+      ? filteredPosts
+      : ownerAllPosts;
+
+  const snapshot = computeOperationsSnapshot(displayPosts);
+  const globalSnapshot = computeOperationsSnapshot(ownerAllPosts);
+  const publicationMetrics = computePublicationMetrics(displayPosts);
+  const globalPublicationMetrics = computePublicationMetrics(ownerAllPosts);
+  const platformMetrics = computePlatformMetrics(displayPosts);
+  const contentTypeMetrics = computeContentTypeMetrics(displayPosts);
+  const multiplatformMetrics = computeMultiplatformGroupMetrics(displayPosts);
+  const errorReport = buildErrorReport(ownerAllPosts);
+  const publicationAudit = buildPublicationAudit(displayPosts, {
     platform: filters.platform,
     contentType: filters.contentType,
     accountId: selectedAccountId,
@@ -91,7 +104,7 @@ export default async function ReportsPage({
     auditDate: filters.auditDate,
   });
 
-  const postIds = new Set(allPosts.map((post) => post.id));
+  const postIds = new Set(ownerAllPosts.map((post) => post.id));
   const { data: recentLogs } = postIds.size
     ? await supabase
         .from("publish_logs")
@@ -104,19 +117,23 @@ export default async function ReportsPage({
 
   const operationsAlerts = buildOperationsAlerts({
     accounts: accountsOverview,
-    posts: allPosts,
-    coverageDays: snapshot.coverageDays,
+    posts: ownerAllPosts,
+    coverageDays: globalSnapshot.coverageDays,
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
     lastPublishAt: recentLogs?.[0]?.created_at ?? null,
     activeUploadBatchId: activeBatch?.id ?? null,
   });
 
   const visiblePosts = sortReportPosts(
-    applyReportFilters(allPosts, filters),
+    applyReportFilters(filteredPosts, filters),
     filters,
   );
 
-  const campaignRows = buildCampaignOperationsRows(campaigns, allPosts);
+  const campaignRows = buildCampaignOperationsRows(campaigns, displayPosts);
+  const selectedAccountOverview =
+    selectedAccountId
+      ? accountsOverview.find((account) => account.id === selectedAccountId) ?? null
+      : null;
 
   return (
     <>
@@ -134,11 +151,15 @@ export default async function ReportsPage({
         accountsOverview={accountsOverview}
         operationsAlerts={operationsAlerts}
         selectedAccountId={selectedAccountId ?? ""}
+        selectedAccountOverview={selectedAccountOverview}
         filters={filters}
         posts={visiblePosts as ScheduledPost[]}
-        allPosts={allPosts as ScheduledPost[]}
+        allPosts={displayPosts as ScheduledPost[]}
+        ownerAllPosts={ownerAllPosts as ScheduledPost[]}
         snapshot={snapshot}
+        globalSnapshot={globalSnapshot}
         publicationMetrics={publicationMetrics}
+        globalPublicationMetrics={globalPublicationMetrics}
         platformMetrics={platformMetrics}
         contentTypeMetrics={contentTypeMetrics}
         multiplatformMetrics={multiplatformMetrics}

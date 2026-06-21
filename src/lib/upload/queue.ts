@@ -84,6 +84,46 @@ export function largeBatchWarning(fileCount: number): string | null {
   return "Lote muito grande (300+ vídeos): use modo estável e considere dividir em lotes menores.";
 }
 
+export type UploadFileClaimConflict = {
+  file: UploadBatchFile;
+  leasedToOther: boolean;
+  isStale: boolean;
+};
+
+/** Inspeciona estado de claim antes de tentar reservar. */
+export async function inspectUploadFileClaim(
+  supabase: SupabaseClient,
+  params: { batchId: string; fileId: string; workerId: string },
+): Promise<UploadFileClaimConflict | null> {
+  const now = new Date();
+
+  const { data: current } = await supabase
+    .from("upload_files")
+    .select("*")
+    .eq("id", params.fileId)
+    .eq("batch_id", params.batchId)
+    .maybeSingle();
+
+  if (!current || current.removed) return null;
+  const file = current as UploadBatchFile;
+
+  if (file.status === "completed" || file.status === "failed") {
+    return { file, leasedToOther: false, isStale: false };
+  }
+
+  const leaseActive =
+    Boolean(file.worker_id) &&
+    Boolean(file.lease_until) &&
+    new Date(file.lease_until as string).getTime() > now.getTime();
+
+  const leasedToOther = leaseActive && file.worker_id !== params.workerId;
+  const isStale =
+    Boolean(file.worker_id) &&
+    (!file.lease_until || new Date(file.lease_until).getTime() <= now.getTime());
+
+  return { file, leasedToOther, isStale };
+}
+
 export async function claimUploadFileLease(
   supabase: SupabaseClient,
   params: {
@@ -96,23 +136,12 @@ export async function claimUploadFileLease(
   const now = new Date();
   const leaseUntil = new Date(now.getTime() + (params.leaseMs ?? UPLOAD_FILE_LEASE_MS)).toISOString();
 
-  const { data: current } = await supabase
-    .from("upload_files")
-    .select("*")
-    .eq("id", params.fileId)
-    .eq("batch_id", params.batchId)
-    .maybeSingle();
-
-  if (!current || current.removed) return null;
-  if (current.status === "completed" || current.status === "failed") return current as UploadBatchFile;
-
-  const leasedToOther =
-    current.worker_id &&
-    current.worker_id !== params.workerId &&
-    current.lease_until &&
-    new Date(current.lease_until).getTime() > now.getTime();
-
-  if (leasedToOther) return null;
+  const inspected = await inspectUploadFileClaim(supabase, params);
+  if (!inspected) return null;
+  if (inspected.file.status === "completed" || inspected.file.status === "failed") {
+    return inspected.file;
+  }
+  if (inspected.leasedToOther) return null;
 
   const { data, error } = await supabase
     .from("upload_files")

@@ -216,7 +216,7 @@ export function playbookToContentForm(playbook: Partial<AiPlaybook> | null): Con
       (CTA_PRIORITY_OPTIONS.find((c) => (playbook.cta_style ?? "").includes(c)) as CtaPriorityOption) ||
       DEFAULT_CONTENT_FORM.ctaPriority,
     profileImported: meta?.profileImported ?? false,
-    profileSummary: meta?.profileSummary ?? "",
+    profileSummary: meta?.profileSummary ?? playbook.viral_hooks?.trim() ?? "",
     selectedAccountId: meta?.selectedAccountId ?? "",
   };
 }
@@ -336,12 +336,23 @@ export function buildPreviewCaptions(form: ContentAssistantForm, count = 10) {
 
 export interface ConnectedAccountOption {
   id: string;
-  ig_username: string | null;
+  platform: "instagram" | "tiktok";
+  username: string | null;
+  display_name?: string | null;
   profile_picture_url: string | null;
+  /** @deprecated use username */
+  ig_username?: string | null;
+}
+
+export function accountUsername(account: ConnectedAccountOption) {
+  return account.username ?? account.ig_username ?? null;
 }
 
 export function accountPageLabel(account: ConnectedAccountOption) {
-  return account.ig_username ? `@${account.ig_username}` : "Conta sem nome";
+  const username = accountUsername(account);
+  if (username) return `@${username}`;
+  if (account.display_name?.trim()) return account.display_name.trim();
+  return account.platform === "tiktok" ? "Conta TikTok" : "Conta sem nome";
 }
 
 export function resolveSelectedAccountId(
@@ -354,7 +365,9 @@ export function resolveSelectedAccountId(
 
   const normalized = form.pageName.trim().replace(/^@/, "").toLowerCase();
   if (normalized) {
-    const match = accounts.find((account) => account.ig_username?.toLowerCase() === normalized);
+    const match = accounts.find(
+      (account) => accountUsername(account)?.toLowerCase() === normalized,
+    );
     if (match) return match.id;
   }
 

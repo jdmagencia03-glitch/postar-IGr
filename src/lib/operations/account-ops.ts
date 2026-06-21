@@ -1,7 +1,8 @@
 import { isToday, parseISO } from "date-fns";
 import { getPlaybookForAccount, playbookHasContent, resolveNicheFromPlaybook } from "@/lib/ai/playbook";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
-import { computeAccountWindowMetrics } from "@/lib/operations/metrics";
+import { computeAccountWindowMetrics, computeOutcomeRates } from "@/lib/operations/metrics";
+import { deriveAccountTokenStatus } from "@/lib/operations/token-status";
 import type { OwnerAccountRef } from "@/lib/posts";
 import type { ContentType, InstagramAccount, ScheduledPost, SocialPlatform, TikTokAccount } from "@/lib/types";
 
@@ -48,18 +49,13 @@ function accountPosts(posts: ScheduledPost[], accountId: string, platform: Socia
 function deriveHealth(params: {
   tokenStatus: TokenStatus;
   failedCount: number;
+  failedPersistentCount: number;
   storiesBlocked: number;
   publishingPaused: boolean;
 }): AccountHealthLevel {
-  if (params.tokenStatus === "expired" || params.failedCount >= 3) return "error";
+  if (params.tokenStatus === "expired" || params.failedPersistentCount >= 3) return "error";
   if (params.failedCount > 0 || params.storiesBlocked > 0 || params.publishingPaused) return "attention";
   return "healthy";
-}
-
-function tiktokTokenStatus(account: TikTokAccount): TokenStatus {
-  if (account.status === "error") return "expired";
-  if (!account.token_expires_at) return "unknown";
-  return new Date(account.token_expires_at).getTime() > Date.now() ? "valid" : "expired";
 }
 
 export async function buildAccountOperationsSummary(params: {
@@ -130,15 +126,23 @@ export async function buildAccountOperationsSummary(params: {
 
   const tokenStatus =
     params.tokenStatus ??
-    (ref.platform === "tiktok" && params.tiktokAccount
-      ? tiktokTokenStatus(params.tiktokAccount)
-      : "unknown");
+    deriveAccountTokenStatus({
+      platform: ref.platform,
+      igAccount: params.igAccount,
+      tiktokAccount: params.tiktokAccount,
+    });
 
   const publishingPaused = Boolean(
     params.igAccount?.publishing_paused ?? params.tiktokAccount?.publishing_paused,
   );
 
-  const health = deriveHealth({ tokenStatus, failedCount, storiesBlocked, publishingPaused });
+  const health = deriveHealth({
+    tokenStatus,
+    failedCount,
+    failedPersistentCount,
+    storiesBlocked,
+    publishingPaused,
+  });
 
   return {
     id: ref.id,

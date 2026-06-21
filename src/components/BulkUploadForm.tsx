@@ -372,16 +372,17 @@ export function BulkUploadForm({
   const liveBatch =
     uploadSession?.batch?.id === activeBatch?.id ? uploadSession?.batch ?? activeBatch : activeBatch;
 
-  const completedCount =
-    uploadView?.completedCount ?? liveBatch?.completed_files ?? activeBatch?.completed_files ?? 0;
+  const completedCount = uploadView?.completedCount ?? liveBatch?.completed_files ?? activeBatch?.completed_files ?? 0;
   const totalCount = uploadView?.totalCount ?? liveBatch?.total_files ?? activeBatch?.total_files ?? 0;
-  const activeUploadCount =
-    uploadView?.pendingFiles.filter(
-      (file) =>
-        file.status === "pending" || file.status === "uploading" || file.status === "retrying",
-    ).length ?? 0;
+  const failedCount = uploadView?.failedCount ?? liveBatch?.failed_files ?? activeBatch?.failed_files ?? 0;
+  const remainingUploadCount = uploadView
+    ? uploadView.stats.pendingFiles +
+      uploadView.stats.uploadingFiles +
+      uploadView.stats.retryingFiles +
+      uploadView.stats.stalledFiles
+    : Math.max(0, totalCount - completedCount - (liveBatch?.failed_files ?? activeBatch?.failed_files ?? 0));
   const batchReady = activeBatch?.status === "ready";
-  const uploadSettled = !isUploading && !uploadSession?.retrying && activeUploadCount === 0;
+  const uploadSettled = !isUploading && !uploadSession?.retrying && remainingUploadCount === 0;
   const canSchedulePartial = completedCount > 0 && !uploadSettled;
   const canScheduleAll = completedCount > 0 && uploadSettled;
 
@@ -610,11 +611,11 @@ export function BulkUploadForm({
   }, [activeBatch?.id]);
 
   function handleScheduleJobComplete(status: ScheduleJobStatusResponse) {
-    if (status.status === "completed") {
-      setResult(`✓ ${status.completed} vídeo(s) agendados com sucesso.`);
-    } else if (status.status === "partial_failed") {
+    if (status.phase === "completed") {
+      setResult(`✓ ${status.postsSaved} posts salvos no calendário.`);
+    } else if (status.phase === "partial_completed") {
       setResult(
-        `${status.completed} vídeo(s) agendados. ${status.failed} com erro — use Retomar agendamento.`,
+        `${status.postsSaved} posts salvos. ${status.failed} com erro — use Retomar agendamento.`,
       );
     }
     void refreshActiveBatch();
@@ -633,7 +634,11 @@ export function BulkUploadForm({
     setScheduleJobId(created.jobId);
     setResult(null);
     if (created.reused) {
-      setScheduleJobNotice("Retomando agendamento em andamento — progresso salvo no servidor.");
+      const msg =
+        "alreadyCompleted" in created && created.alreadyCompleted
+          ? "Agendamento já concluído para este lote."
+          : "Agendamento em andamento — acompanhe o progresso abaixo.";
+      setScheduleJobNotice(msg);
     } else if (created.message) {
       setScheduleJobNotice(created.message);
     }
@@ -641,7 +646,7 @@ export function BulkUploadForm({
     markStep("hashtags");
     markStep("calendar");
     setProgress(15);
-    setLoadingStep(`Processando ${videoCount} vídeo(s) em segundo plano...`);
+    setLoadingStep(`Agendamento em segundo plano — ${videoCount} vídeo(s) no servidor.`);
   }
 
   async function confirmAutopilotBatch(params: {
@@ -977,12 +982,6 @@ export function BulkUploadForm({
 
     try {
       if (useJobQueue) {
-        if (scheduleJobId) {
-          setScheduleJobNotice("Agendamento já em andamento — acompanhe o progresso abaixo.");
-          setScheduling(false);
-          setLoadingStep("");
-          return;
-        }
         await runScheduleJobFlow(batchId, items, partial, items.length || readyCount);
         setScheduling(false);
         setLoadingStep("");
@@ -996,7 +995,7 @@ export function BulkUploadForm({
       const message = error instanceof Error ? error.message : "Erro desconhecido";
       if (message.toLowerCase().includes("failed to fetch")) {
         setResult(
-          "O agendamento demorou mais que o esperado. Salvamos o progresso — use Retomar agendamento se necessário.",
+          'Ainda estamos finalizando seu agendamento. Seu progresso foi salvo com segurança. Se a tela não atualizar em alguns segundos, clique em "Retomar agendamento".',
         );
       } else {
         setResult(message);
@@ -1205,7 +1204,15 @@ export function BulkUploadForm({
 
           {totalCount > 0 && (
             <div className="mt-4 rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm">
-              <p className="font-semibold text-ig-text">{completedCount} de {totalCount} vídeos enviados</p>
+              <p className="font-semibold text-ig-text">
+                {uploadView?.headlineText ?? `${completedCount} de ${totalCount} vídeos enviados`}
+              </p>
+              {uploadView && (
+                <p className="mt-1 text-ig-muted">{uploadView.statusCounterText}</p>
+              )}
+              {uploadView?.bytesSummaryText && uploadView.bytesSummaryText !== "—" && (
+                <p className="mt-1 text-ig-muted">{uploadView.bytesSummaryText}</p>
+              )}
               {durationPreview.days && <p className="mt-1 text-ig-muted">{durationPreview.days}</p>}
             </div>
           )}
@@ -1393,6 +1400,7 @@ export function BulkUploadForm({
               <dt className="text-ig-muted">Vídeos</dt>
               <dd className="font-medium text-ig-text">
                 {completedCount}/{totalCount}
+                {failedCount > 0 ? ` (${failedCount} falharam)` : ""}
               </dd>
             </div>
             <div className="flex justify-between gap-4">
@@ -1436,11 +1444,9 @@ export function BulkUploadForm({
           ? loadingStep || "Processando..."
           : isUploading
             ? "Aguardando upload..."
-            : scheduleJobId
-              ? "Agendamento em andamento — veja abaixo"
-              : canScheduleAll
-                ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
-                : "Aguardando vídeos para agendar"}
+            : canScheduleAll
+              ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
+              : "Aguardando vídeos para agendar"}
       </button>
 
       {!canScheduleAll && completedCount === 0 && totalCount > 0 && (

@@ -35,6 +35,7 @@ import {
   isTerminalRemoteBatchStatus,
   reconcileUploadBatchState,
 } from "@/lib/upload/batch-status";
+import { resetUploadBatchStatsMonotonic } from "@/lib/upload/batch-stats";
 import { getSpeedPresets, UPLOAD_BATCH_STALL_TIMEOUT_MS, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS, UPLOAD_FILE_CONCURRENCY, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
@@ -43,6 +44,13 @@ import { formatBytes } from "@/lib/upload/validate";
 import { reportClientOperationalError } from "@/lib/operations/report-client-error";
 import { reconcileUploadState, createUploadWorkerId } from "@/lib/upload/reconcile-state";
 import { reconcileBatchStructuralState } from "@/lib/upload/resilience";
+import {
+  claimBackoffWithJitter,
+  isClaimConflictMessage,
+  UPLOAD_CLAIM_BACKOFF_MS,
+  type UploadClaimConflictError,
+} from "@/lib/upload/claim-conflict";
+import { isUploadDebugEnabled } from "@/lib/upload/debug";
 import { largeBatchWarning, recommendUploadSpeedMode } from "@/lib/upload/queue";
 import {
   ADAPTIVE_RETRY_WINDOW_MS,
@@ -104,6 +112,10 @@ class UploadSessionStore {
   private engineStarting = false;
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryScheduled = false;
+  private autoRecoveryInProgress = new Set<string>();
+  private claimConflictTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private reconcileNetworkBackoffMs = 0;
+  private reconcileNetworkErrorAt = 0;
   private autoRetryResetTimer: ReturnType<typeof setTimeout> | null = null;
   private stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private retryCountdownTimer: ReturnType<typeof setInterval> | null = null;
@@ -127,14 +139,30 @@ class UploadSessionStore {
   private lastCompletionAt = 0;
   private adaptiveEvalTimer: ReturnType<typeof setInterval> | null = null;
   private lastAdaptiveEvalAt = 0;
+  private lastStallRecoveryAt = 0;
+  private lastRecoveredMessageAt = 0;
+  private static readonly MAX_CLAIM_CONFLICT_ATTEMPTS = UPLOAD_CLAIM_BACKOFF_MS.length;
   private static readonly MAX_AUTO_RETRY_PASSES = 10;
   private static readonly AUTO_RETRY_RESET_MS = 60_000;
   private static readonly STALL_CHECK_INTERVAL_MS = 10_000;
+  /** Evita abortar/reiniciar o motor em loop quando a conexão é lenta mas ainda envia bytes. */
+  private static readonly STALL_RECOVERY_COOLDOWN_MS = 120_000;
+  /** Bytes recentes = upload ativo; não recuperar só porque nenhum arquivo terminou ainda. */
+  private static readonly RECENT_BYTE_PROGRESS_MS = 180_000;
   private static readonly POLL_INTERVAL_NORMAL_MS = 10_000;
   private static readonly POLL_INTERVAL_FAST_MS = 5_000;
   private static readonly POLL_INTERVAL_HIDDEN_MS = 30_000;
 
   private logUpload(event: string, detail?: Record<string, unknown>) {
+    if (!isUploadDebugEnabled()) {
+      const noisy =
+        event === "adaptive_eval" ||
+        event === "batch_reconcile" ||
+        event.startsWith("auto_") ||
+        event === "engine_start" ||
+        event === "start_engine_blocked";
+      if (noisy) return;
+    }
     if (typeof console !== "undefined") {
       console.info(`[upload-session] ${event}`, detail ?? "");
     }
@@ -145,6 +173,19 @@ class UploadSessionStore {
     if (bytesUploaded != null) {
       this.lastProgressBytes = bytesUploaded;
     }
+    this.batchStalled = false;
+  }
+
+  private hasRecentByteProgress(withinMs = UploadSessionStore.RECENT_BYTE_PROGRESS_MS) {
+    return Date.now() - this.lastProgressAt < withinMs;
+  }
+
+  private canRunStallRecovery(idleMs: number) {
+    const sinceLastRecovery = Date.now() - this.lastStallRecoveryAt;
+    if (sinceLastRecovery < UploadSessionStore.STALL_RECOVERY_COOLDOWN_MS) {
+      return idleMs >= UPLOAD_BATCH_STALL_TIMEOUT_MS * 1.5;
+    }
+    return true;
   }
 
   private touchBatchAdvance(completed: number, failed = 0) {
@@ -248,7 +289,11 @@ class UploadSessionStore {
 
     this.adaptiveStability = evaluation.stability;
     this.adaptiveReason = evaluation.reason;
-    this.batchStalled = evaluation.isStalled || this.batchStalled;
+    if (evaluation.isStalled) {
+      this.batchStalled = true;
+    } else if (this.hasRecentByteProgress() || this.running) {
+      this.batchStalled = false;
+    }
 
     if (evaluation.shouldEnterSafeMode) this.safeMode = true;
     if (!evaluation.shouldPauseUploads && evaluation.stability === "stable") {
@@ -385,6 +430,14 @@ class UploadSessionStore {
       return;
     }
 
+    if (this.running && this.hasRecentByteProgress()) {
+      return;
+    }
+
+    if (!this.canRunStallRecovery(idleMs)) {
+      return;
+    }
+
     if (this.uploadPausedByFailures) {
       return;
     }
@@ -443,7 +496,9 @@ class UploadSessionStore {
 
   async recoverBatchUpload(reason = "manual_recover") {
     if (!this.batch || this.pausedByUser || this.recoveringFromStall) return;
+    if (!this.canRunStallRecovery(UPLOAD_BATCH_STALL_TIMEOUT_MS)) return;
 
+    this.lastStallRecoveryAt = Date.now();
     this.recoveringFromStall = true;
     this.batchStalled = true;
     this.message = "Upload travado detectado. Tentando recuperar…";
@@ -507,8 +562,17 @@ class UploadSessionStore {
   }
 
   private async reconcileBatchFromServer(batchId: string) {
+    const now = Date.now();
+    if (
+      this.reconcileNetworkBackoffMs > 0 &&
+      now - this.reconcileNetworkErrorAt < this.reconcileNetworkBackoffMs
+    ) {
+      return null;
+    }
+
     try {
       const reconciled = await reconcileBatchStructuralState(batchId);
+      this.reconcileNetworkBackoffMs = 0;
       this.syncBatch(reconciled.batch);
       if (reconciled.health.isStalled || reconciled.health.isDegraded) {
         this.batchStalled = reconciled.health.isStalled;
@@ -517,9 +581,20 @@ class UploadSessionStore {
       this.evaluateAndApplyAdaptive("server_reconcile");
       return reconciled;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isNetwork =
+        /failed to fetch|network|connection|err_connection|aborted/i.test(message);
+      if (isNetwork) {
+        this.reconcileNetworkErrorAt = now;
+        this.reconcileNetworkBackoffMs = Math.min(
+          60_000,
+          (this.reconcileNetworkBackoffMs || 5_000) * 2,
+        );
+      }
       this.logUpload("reconcile_failed", {
         batchId,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
+        backoffMs: this.reconcileNetworkBackoffMs,
       });
       return null;
     }
@@ -604,7 +679,11 @@ class UploadSessionStore {
   private handleFileRecovered(fileId: string) {
     this.stopRetryCountdown();
     this.clearFileRuntime(fileId);
-    this.message = "Upload recuperado. Continuando envio…";
+    const now = Date.now();
+    if (now - this.lastRecoveredMessageAt > 30_000) {
+      this.message = "Continuando envio…";
+      this.lastRecoveredMessageAt = now;
+    }
     logUploadEvent("[upload-recovered]", "file_recovered", {
       batchId: this.batch?.id,
       fileId,
@@ -629,9 +708,13 @@ class UploadSessionStore {
       const batchIdleMs = Date.now() - this.lastBatchAdvanceAt;
       const byteStall = idleMs >= UPLOAD_STALL_TIMEOUT_MS;
       const batchStall = batchIdleMs >= UPLOAD_BATCH_STALL_TIMEOUT_MS;
+      const recentBytes = this.hasRecentByteProgress();
 
-      if (byteStall || batchStall) {
-        void this.recoverFromStall(Math.max(idleMs, batchIdleMs));
+      if (byteStall || (batchStall && !recentBytes)) {
+        const stallMs = Math.max(idleMs, batchIdleMs);
+        if (this.canRunStallRecovery(stallMs)) {
+          void this.recoverFromStall(stallMs);
+        }
       }
     }, UploadSessionStore.STALL_CHECK_INTERVAL_MS);
   }
@@ -645,7 +728,10 @@ class UploadSessionStore {
 
   private async recoverFromStall(idleMs: number) {
     if (!this.running || this.pausedByUser || this.recoveringFromStall || this.uploadPausedByFailures || !this.batch) return;
+    if (!this.canRunStallRecovery(idleMs)) return;
+    if (this.hasRecentByteProgress() && idleMs < UPLOAD_STALL_TIMEOUT_MS) return;
 
+    this.lastStallRecoveryAt = Date.now();
     this.recoveringFromStall = true;
     this.batchStalled = true;
     this.logUpload("stall_detected", {
@@ -1017,7 +1103,8 @@ class UploadSessionStore {
       this.resuming ||
       !this.batch ||
       !this.hasPendingInSession() ||
-      this.lastFileMap.size === 0
+      this.lastFileMap.size === 0 ||
+      this.autoRecoveryInProgress.has(this.batch.id)
     ) {
       return;
     }
@@ -1115,6 +1202,7 @@ class UploadSessionStore {
         }
       }
       this.progressMap = initialProgress;
+      resetUploadBatchStatsMonotonic(batch.id);
 
       if (batch.status !== "ready" && batch.status !== "cancelled") {
         await this.reconcileBatchFromServer(batch.id);
@@ -1199,7 +1287,7 @@ class UploadSessionStore {
         this.message = "Não foi possível carregar limites de upload. Usando padrão de 500 MB.";
       }
     } catch {
-      this.message = "Não foi possível carregar limites de upload. Verifique sua conexão.";
+      this.message = "Não foi possível carregar limites de upload. Usando padrão de 500 MB.";
     }
 
     try {
@@ -1265,7 +1353,12 @@ class UploadSessionStore {
   }
 
   private async tryAutoRetryAfterRun(batchId: string, fileMap: Map<string, File>) {
-    if (this.pausedByUser || this.cancelledBatchIds.has(batchId) || fileMap.size === 0) {
+    if (
+      this.pausedByUser ||
+      this.cancelledBatchIds.has(batchId) ||
+      fileMap.size === 0 ||
+      this.autoRecoveryInProgress.has(batchId)
+    ) {
       return;
     }
 
@@ -1340,7 +1433,8 @@ class UploadSessionStore {
       this.retrying ||
       this.uploadPausedByFailures ||
       this.cancelledBatchIds.has(batchId) ||
-      fileMap.size === 0
+      fileMap.size === 0 ||
+      this.autoRecoveryInProgress.has(batchId)
     ) {
       return;
     }
@@ -1386,21 +1480,95 @@ class UploadSessionStore {
     this.emit();
   }
 
+  private handleClaimConflict(fileId: string, error: UploadClaimConflictError) {
+    const prevAttempts = this.fileRuntime[fileId]?.claimAttempts ?? 0;
+    const attempt = prevAttempts + 1;
+    const maxAttempts = UploadSessionStore.MAX_CLAIM_CONFLICT_ATTEMPTS;
+
+    this.setFileRuntime(fileId, {
+      status: error.payload.isStale ? "reconciling" : "waiting_claim",
+      claimAttempts: attempt,
+      message: "Aguardando reconciliação do upload…",
+    });
+    this.message = "Aguardando reconciliação do upload…";
+    this.emit();
+
+    if (attempt >= maxAttempts) {
+      this.uploadPausedByFailures = true;
+      this.message = 'Upload pausado para segurança. Clique em "Retomar upload".';
+      this.emit();
+      return;
+    }
+
+    const delayMs = error.payload.retryAfterMs || claimBackoffWithJitter(attempt - 1);
+    const existing = this.claimConflictTimers.get(fileId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.claimConflictTimers.delete(fileId);
+      if (this.pausedByUser || !this.batch) return;
+      this.setFileRuntime(fileId, { status: "reconciling" });
+      void this.reconcileAndMaybeContinue(fileId, "claim_conflict");
+    }, delayMs);
+    this.claimConflictTimers.set(fileId, timer);
+  }
+
+  private handleLocalCompletedPending(fileId: string) {
+    this.setFileRuntime(fileId, {
+      status: "completed_local_pending_server_confirm",
+      message: "Aguardando confirmação…",
+    });
+    this.emit();
+    void this.reconcileAndMaybeContinue(fileId, "tus_completed_pending");
+  }
+
+  private async reconcileAndMaybeContinue(fileId: string, source: string) {
+    if (!this.batch) return;
+    try {
+      await this.reconcileBatchFromServer(this.batch.id);
+    } catch {
+      this.setFileRuntime(fileId, {
+        status: "reconcile_network_error",
+        message: "Aguardando confirmação…",
+      });
+      this.emit();
+      return;
+    }
+
+    const file = this.batch.upload_files?.find((item) => item.id === fileId);
+    if (file?.status === "completed") {
+      this.clearFileRuntime(fileId);
+      this.emit();
+      return;
+    }
+
+    if (
+      file &&
+      (file.status === "pending" || file.status === "retrying") &&
+      this.lastFileMap.has(fileId) &&
+      !this.running &&
+      !this.engineStarting &&
+      !this.pausedByUser
+    ) {
+      await this.startEngine(this.batch, this.lastFileMap, [fileId]);
+    }
+  }
+
   private async startEngine(
     currentBatch: UploadBatch,
     fileMap: Map<string, File>,
     onlyFileIds?: string[],
   ) {
-    if (this.engineStarting) {
+    if (this.engineStarting || this.running) {
       this.logUpload("start_engine_blocked", { batchId: currentBatch.id, reason: "already_starting" });
-      setTimeout(() => {
-        if (!this.running && !this.pausedByUser && this.batch?.id === currentBatch.id) {
-          void this.startEngine(currentBatch, fileMap, onlyFileIds);
-        }
-      }, 500);
+      return;
+    }
+    if (this.autoRecoveryInProgress.has(currentBatch.id)) {
+      this.logUpload("start_engine_blocked", { batchId: currentBatch.id, reason: "auto_recovery_active" });
       return;
     }
     this.engineStarting = true;
+    this.autoRecoveryInProgress.add(currentBatch.id);
     const batchId = currentBatch.id;
     this.workerId = createUploadWorkerId();
 
@@ -1418,6 +1586,7 @@ class UploadSessionStore {
 
     if (this.uploadPausedByFailures && !onlyFileIds?.length) {
       this.engineStarting = false;
+      this.autoRecoveryInProgress.delete(batchId);
       this.message =
         "Envio pausado. Clique em Recuperar upload para continuar os vídeos pendentes.";
       this.emit();
@@ -1453,6 +1622,8 @@ class UploadSessionStore {
         },
         onFileRetryScheduled: (fileId, detail) => this.handleFileRetryScheduled(fileId, detail),
         onFileRecovered: (fileId) => this.handleFileRecovered(fileId),
+        onClaimConflict: (fileId, error) => this.handleClaimConflict(fileId, error),
+        onLocalCompletedPending: (fileId) => this.handleLocalCompletedPending(fileId),
         onComplete: async (latest) => {
           if (this.cancelledBatchIds.has(latest.id)) return;
           const refreshed = await refreshUploadBatch(latest.id);
@@ -1467,13 +1638,25 @@ class UploadSessionStore {
           this.emit();
         },
         onError: (errorMessage, fileId) => {
+          if (isClaimConflictMessage(errorMessage)) {
+            if (fileId) {
+              this.setFileRuntime(fileId, {
+                status: "waiting_claim",
+                message: "Aguardando reconciliação do upload…",
+              });
+            }
+            this.message = "Aguardando reconciliação do upload…";
+            this.emit();
+            return;
+          }
           this.logUpload("file_error", { message: errorMessage, fileId });
           if (fileId) this.clearFileRuntime(fileId);
-          const isStallLike = /sem progresso|reconectando|conexão lenta|stall/i.test(
+          const isStallLike = /upload_stall|sem progresso|stall_timeout|upload travado/i.test(
             errorMessage.toLowerCase(),
           );
           if (isStallLike) {
-            this.message = "Conexão lenta detectada. Retomando envio automaticamente…";
+            this.message =
+              "Upload sem progresso detectado. Tentando recuperar este arquivo…";
             this.emit();
             return;
           }
@@ -1486,12 +1669,14 @@ class UploadSessionStore {
           this.emit();
         },
         onEngineIdle: async (latest) => {
+          await this.reconcileBatchFromServer(batchId).catch(() => undefined);
           const orphaned =
             latest.upload_files?.filter(
               (file) =>
                 !file.removed &&
                 (file.status === "uploading" || file.status === "retrying") &&
-                fileMap.has(file.id),
+                fileMap.has(file.id) &&
+                !this.fileRuntime[file.id]?.status?.startsWith("completed_local"),
             ) ?? [];
           if (orphaned.length && !this.pausedByUser && !this.cancelledBatchIds.has(batchId)) {
             this.logUpload("engine_idle_orphans", {
@@ -1499,7 +1684,7 @@ class UploadSessionStore {
               count: orphaned.length,
               fileIds: orphaned.map((file) => file.id),
             });
-            await this.resetStalledUploadingFiles(batchId, { includeRetrying: true });
+            await this.resetStalledUploadingFiles(batchId, { includeRetrying: false });
           }
         },
       });
@@ -1537,6 +1722,7 @@ class UploadSessionStore {
       this.stopAdaptiveMonitor();
       this.running = false;
       this.engineStarting = false;
+      this.autoRecoveryInProgress.delete(batchId);
       this.emit();
     }
     if (!this.pausedByUser && !this.cancelledBatchIds.has(batchId)) {
@@ -2087,10 +2273,12 @@ class UploadSessionStore {
     }
 
     this.cancelledBatchIds.add(this.batch.id);
+    const cancelledBatchId = this.batch.id;
     this.engine?.stop();
     try {
       await cancelUploadBatch(this.batch.id);
       await clearManifestBatch(this.batch.id);
+      resetUploadBatchStatsMonotonic(cancelledBatchId);
       this.batch = null;
       this.progress = null;
       this.progressMap = {};

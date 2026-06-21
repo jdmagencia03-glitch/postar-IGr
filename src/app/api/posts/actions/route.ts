@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
         platform,
         accountId,
         contentType: post.content_type ?? contentTypeForPlatform(platform),
-        requestedAt: new Date(baseTime + index * 60_000).toISOString(),
+        requestedAt: new Date(baseTime).toISOString(),
         excludePostId: postId,
       });
 
@@ -134,24 +134,34 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "duplicate") {
-      const duplicateAt = ensureFutureScheduleSlot(
-        new Date(post.scheduled_at),
-      );
-      duplicateAt.setDate(duplicateAt.getDate() + 1 + index);
+      const platform = post.platform ?? "instagram";
+      const accountId = platform === "tiktok" ? post.tiktok_account_id : post.account_id;
+      if (!accountId) {
+        results.push({ id: postId, ok: false, error: "Conta do post não encontrada" });
+        continue;
+      }
+
+      const resolved = await resolveRescheduleSlot({
+        supabase,
+        platform,
+        accountId,
+        contentType: post.content_type ?? contentTypeForPlatform(platform),
+        requestedAt: ensureFutureScheduleSlot(new Date(post.scheduled_at)).toISOString(),
+      });
 
       const { error } = await supabase.from("scheduled_posts").insert({
-        platform: post.platform ?? "instagram",
+        platform,
         account_id: post.account_id,
         tiktok_account_id: post.tiktok_account_id,
         content_type: post.content_type ?? "reel",
         media_type: post.media_type,
         media_urls: post.media_urls,
         caption: post.caption,
-        scheduled_at: sanitizeScheduledAt(duplicateAt.toISOString()),
+        scheduled_at: sanitizeScheduledAt(resolved.scheduled_at),
         status: "pending",
       });
 
-      results.push({ id: postId, ok: !error, error: error?.message });
+      results.push({ id: postId, ok: !error, error: error?.message ?? resolved.warning });
     }
   }
 

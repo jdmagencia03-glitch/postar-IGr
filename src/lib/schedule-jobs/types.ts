@@ -61,6 +61,9 @@ export type ScheduleJobRow = {
   config: ScheduleJobConfig;
   error_message: string | null;
   schedule_summary: string | null;
+  locked_by?: string | null;
+  lock_until?: string | null;
+  last_heartbeat_at?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -86,22 +89,54 @@ export type ScheduleJobItemRow = {
   updated_at: string;
 };
 
+import type {
+  ScheduleJobPhase,
+  ScheduleStepId,
+  ScheduleStepState,
+} from "@/lib/schedule-jobs/state";
+
 export type ScheduleJobStatusResponse = {
   jobId: string;
   status: ScheduleJobStatus;
+  phase: ScheduleJobPhase;
   currentStep: ScheduleJobStep;
   total: number;
+  /** Itens com legendas/horários prontos (legado: processed). */
   processed: number;
+  /** Posts salvos em scheduled_posts (legado: completed). */
   completed: number;
   failed: number;
   pending: number;
+  captionsDone: number;
+  hashtagsDone: number;
+  calendarDone: number;
+  postsSaved: number;
   planChunksTotal: number;
   planChunksDone: number;
   insertChunksTotal: number;
   insertChunksDone: number;
   scheduleSummary: string | null;
+  planReady: boolean;
   errorMessage: string | null;
   isActive: boolean;
+  workerActive: boolean;
+  workerStatus: "processing" | "queued_next" | "stalled" | "idle";
+  workerLabel: string;
   canResume: boolean;
+  canForceContinue: boolean;
+  canFinalizePosts: boolean;
+  isStalled: boolean;
+  canCancel: boolean;
+  canOpenCalendar: boolean;
+  hasActiveError: boolean;
+  lastHeartbeatAt: string | null;
+  lastError: string | null;
   stepLabel: string;
+  headline: string;
+  progressLabel: string;
+  progressPercent: number;
+  planSummaryLabel: string | null;
+  postsSummaryLabel: string | null;
+  steps: Record<ScheduleStepId, ScheduleStepState>;
+  updatedAt: string;
 };

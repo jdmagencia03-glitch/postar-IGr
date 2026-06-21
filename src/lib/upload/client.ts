@@ -2,6 +2,11 @@ import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadSpeedMode }
 import { BATCH_CREATE_CHUNK_SIZE, TUS_CHUNK_SIZE, UPLOAD_PROGRESS_DB_SYNC_BYTES } from "@/lib/upload/storage-config";
 import { extractUploadErrorMessage, humanizeFetchError } from "@/lib/upload/errors";
 import {
+  UploadClaimConflictError,
+  type UploadClaimConflictPayload,
+  UPLOAD_CLAIM_CONFLICT_ERROR,
+} from "@/lib/upload/claim-conflict";
+import {
   classifyUploadError,
   logUploadEvent,
   UPLOAD_FILE_MAX_ATTEMPTS,
@@ -10,6 +15,69 @@ import {
 } from "@/lib/upload/network-retry";
 import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
+
+export class UploadLocalCompletedPendingError extends Error {
+  readonly fileId: string;
+  readonly batchId: string;
+
+  constructor(batchId: string, fileId: string) {
+    super("Upload concluído localmente — aguardando confirmação do servidor");
+    this.name = "UploadLocalCompletedPendingError";
+    this.batchId = batchId;
+    this.fileId = fileId;
+  }
+}
+
+async function parseClaimConflictResponse(
+  response: Response,
+  batchId: string,
+  fileId: string,
+  attempt: number,
+): Promise<UploadClaimConflictError | null> {
+  if (response.status !== 409) return null;
+  let body: Partial<UploadClaimConflictPayload> & { error?: string; message?: string } = {};
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    return new UploadClaimConflictError(
+      {
+        ok: false,
+        error: UPLOAD_CLAIM_CONFLICT_ERROR,
+        message: "Arquivo reservado por outro worker — aguardando reconciliação",
+        batchId,
+        fileId,
+        currentStatus: "uploading",
+        claimedBy: null,
+        claimedAt: null,
+        claimExpiresAt: null,
+        isStale: false,
+        retryAfterMs: 5_000,
+        recommendedAction: "wait_and_reconcile",
+      },
+      attempt,
+    );
+  }
+  if (body.error === UPLOAD_CLAIM_CONFLICT_ERROR || body.ok === false) {
+    return new UploadClaimConflictError(
+      {
+        ok: false,
+        error: UPLOAD_CLAIM_CONFLICT_ERROR,
+        message: body.message ?? "Arquivo reservado por outro worker — aguardando reconciliação",
+        batchId,
+        fileId,
+        currentStatus: body.currentStatus ?? "uploading",
+        claimedBy: body.claimedBy ?? null,
+        claimedAt: body.claimedAt ?? null,
+        claimExpiresAt: body.claimExpiresAt ?? null,
+        isStale: body.isStale ?? false,
+        retryAfterMs: body.retryAfterMs ?? 5_000,
+        recommendedAction: "wait_and_reconcile",
+      },
+      attempt,
+    );
+  }
+  return null;
+}
 
 export interface UploadFilePatchResult {
   file: UploadBatchFile;
@@ -144,9 +212,12 @@ export async function uploadBatchFile(params: {
     errorKind: string;
   }) => void;
   onRecovered?: () => void;
+  onTusCompleted?: () => void;
 }): Promise<UploadFilePatchResult> {
-  const { batch, file, onProgress, signal, onRetryScheduled, onRecovered, workerId } = params;
+  const { batch, file, onProgress, signal, onRetryScheduled, onRecovered, onTusCompleted, workerId } =
+    params;
   let record = params.record;
+  let claimConflictAttempts = 0;
 
   for (let attempt = 0; attempt < UPLOAD_FILE_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) {
@@ -159,8 +230,31 @@ export async function uploadBatchFile(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workerId }),
       }).catch(() => null);
-      if (claimRes && claimRes.status === 409) {
-        throw new Error("Arquivo reservado por outro worker — aguardando reconciliação");
+
+      if (claimRes) {
+        if (claimRes.status === 409) {
+          const conflict = await parseClaimConflictResponse(
+            claimRes,
+            batch.id,
+            record.id,
+            claimConflictAttempts,
+          );
+          if (conflict) {
+            claimConflictAttempts += 1;
+            throw conflict;
+          }
+        } else if (!claimRes.ok) {
+          const errBody = (await claimRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(String(errBody.error ?? "Falha ao reservar arquivo"));
+        } else {
+          const claimBody = (await claimRes.json()) as {
+            file?: UploadBatchFile;
+            alreadyCompleted?: boolean;
+          };
+          if (claimBody.alreadyCompleted && claimBody.file) {
+            return { file: claimBody.file, counters: null };
+          }
+        }
       }
     }
 
@@ -298,6 +392,7 @@ export async function uploadBatchFile(params: {
       });
 
       await promise;
+      onTusCompleted?.();
 
       const patchRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
         method: "PATCH",
@@ -313,12 +408,15 @@ export async function uploadBatchFile(params: {
 
       const patchData = (await patchRes.json()) as UploadFilePatchResult & { error?: unknown };
       if (!patchRes.ok) {
-        throw new Error(String(patchData.error ?? "Falha ao salvar upload"));
+        throw new UploadLocalCompletedPendingError(batch.id, record.id);
       }
 
       return patchData;
     } catch (error) {
       if (signal?.aborted) throw error;
+      if (error instanceof UploadClaimConflictError || error instanceof UploadLocalCompletedPendingError) {
+        throw error;
+      }
 
       const classification = classifyUploadError(error);
       const rawError = classification.message;
@@ -667,8 +765,22 @@ export function getCompletedUploadItems(batch: UploadBatch) {
 
 export function fileStatusLabel(
   status: UploadBatchFile["status"],
-  options?: { stalled?: boolean; retrying?: boolean },
+  options?: {
+    stalled?: boolean;
+    retrying?: boolean;
+    runtimeStatus?: string;
+  },
 ) {
+  const runtime = options?.runtimeStatus;
+  if (runtime === "waiting_claim" || runtime === "reserved_by_worker") {
+    return "Aguardando reconciliação…";
+  }
+  if (runtime === "reconciling" || runtime === "reconcile_network_error") {
+    return "Aguardando confirmação…";
+  }
+  if (runtime === "completed_local_pending_server_confirm") {
+    return "Processando…";
+  }
   if (options?.stalled && status !== "completed") return "Sem progresso";
   if (options?.retrying || status === "retrying") return "Tentando novamente…";
   switch (status) {

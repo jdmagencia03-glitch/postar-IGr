@@ -37,7 +37,7 @@ export default async function AccountsPage({
             Configure TIKTOK_CLIENT_KEY e TIKTOK_CLIENT_SECRET na Vercel para habilitar OAuth.
           </p>
         )}
-        <TikTokAccountsSection connectHref="/api/tiktok/connect?next=/dashboard/accounts&add_account=1" compact />
+        <TikTokAccountsSection connectHref="/api/auth/tiktok?next=/dashboard/accounts&add_account=1" compact />
       </section>
     </div>
   );

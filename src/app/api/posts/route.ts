@@ -5,7 +5,7 @@ import { getOwnerAccountById, getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logSecurityEvent } from "@/lib/security/audit";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls, scheduleMediaGuardJsonError } from "@/lib/storage/schedule-media-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
@@ -49,9 +49,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
   }
 
-  const mediaCheck = validateMediaUrlsForOwner(parsed.data.media_urls, userId);
+  const mediaCheck = await validateScheduledMediaUrls({
+    supabase,
+    ownerId: userId,
+    urls: parsed.data.media_urls,
+  });
   if (!mediaCheck.ok) {
-    return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+    return NextResponse.json(scheduleMediaGuardJsonError(mediaCheck), { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -60,6 +64,7 @@ export async function POST(request: NextRequest) {
       account_id: parsed.data.account_id,
       media_type: parsed.data.media_type,
       media_urls: parsed.data.media_urls,
+      media_asset_id: mediaCheck.mediaAssetIds[0] ?? null,
       caption: parsed.data.caption ?? null,
       scheduled_at: sanitizeScheduledAt(parsed.data.scheduled_at),
     })

@@ -13,6 +13,7 @@ import { PublisherOperationsBanner } from "@/components/operations/PublisherOper
 import { PublicationAuditPanel } from "@/components/operations/PublicationAuditPanel";
 import { PublicationMetricsBar } from "@/components/operations/PublicationMetricsBar";
 import { ReportFiltersBar } from "@/components/operations/ReportFiltersBar";
+import type { AccountOperationalSummary } from "@/lib/operations/operational-summary";
 import type { AccountOperationsSummary } from "@/lib/operations/account-ops";
 import type { OperationsAlert } from "@/lib/operations/alerts-engine";
 import type { ErrorReportSummary } from "@/lib/operations/error-report";
@@ -54,14 +55,18 @@ interface RankingRow {
 
 interface Props {
   accounts: AccountOption[];
-  accountsOverview?: AccountOperationsSummary[];
+  accountsOverview?: AccountOperationalSummary[];
   operationsAlerts?: OperationsAlert[];
   selectedAccountId: string;
+  selectedAccountOverview?: AccountOperationalSummary | null;
   filters: ReportFilters;
   posts: ScheduledPost[];
   allPosts: ScheduledPost[];
+  ownerAllPosts?: ScheduledPost[];
   snapshot: ReturnType<typeof computeOperationsSnapshot>;
+  globalSnapshot?: ReturnType<typeof computeOperationsSnapshot>;
   publicationMetrics: PublicationMetrics;
+  globalPublicationMetrics?: PublicationMetrics;
   platformMetrics: PlatformMetrics[];
   contentTypeMetrics: ContentTypeMetricsRow[];
   multiplatformMetrics: MultiplatformGroupMetrics;
@@ -112,11 +117,15 @@ export function OperationsCenter({
   accountsOverview = [],
   operationsAlerts = [],
   selectedAccountId,
+  selectedAccountOverview = null,
   filters,
   posts,
   allPosts,
+  ownerAllPosts,
   snapshot,
+  globalSnapshot,
   publicationMetrics,
+  globalPublicationMetrics,
   platformMetrics,
   contentTypeMetrics,
   multiplatformMetrics,
@@ -136,9 +145,21 @@ export function OperationsCenter({
   const [likes7d, setLikes7d] = useState(0);
   const [rankingRows, setRankingRows] = useState<RankingRow[]>([]);
 
-  const selectedAccount = accounts.find((account) => account.id === accountId) ?? accounts[0];
-  const username = selectedAccount?.ig_username ?? "conta";
+  const selectedAccount = accounts.find((account) => account.id === accountId) ?? null;
+  const activeOverview =
+    selectedAccountOverview ??
+    (accountId ? accountsOverview.find((account) => account.id === accountId) : null) ??
+    null;
+  const username =
+    activeOverview?.username ??
+    selectedAccount?.ig_username ??
+    "conta";
   const isInstagramAccount = selectedAccount?.platform !== "tiktok";
+  const ownerSnapshot = globalSnapshot ?? snapshot;
+  const metricsBarSource = globalPublicationMetrics ?? publicationMetrics;
+  const hasMetricsScopeFilter = Boolean(
+    accountId || filters.platform !== "all" || filters.contentType !== "all",
+  );
 
   const loadLiveMetrics = useCallback(async () => {
     if (!accountId || !isInstagramAccount) {
@@ -187,14 +208,37 @@ export function OperationsCenter({
   const health = useMemo(
     () =>
       computeHealthChecks({
-        tokenValid,
-        pendingCount: snapshot.pendingCount,
-        failedCount: snapshot.failedCount,
+        tokenValid: activeOverview
+          ? activeOverview.tokenStatus === "valid"
+          : isInstagramAccount
+            ? tokenValid
+            : false,
+        pendingCount: activeOverview?.pendingCount ?? snapshot.pendingCount,
+        failedCount:
+          (activeOverview?.failedCount ?? snapshot.failedCount) +
+          (activeOverview?.failedPersistentCount ?? 0),
+        retryingCount: activeOverview?.retryingCount ?? 0,
+        duplicateSlotCount: activeOverview?.duplicateSlotCount ?? 0,
+        playbookConfigured: activeOverview?.playbookConfigured ?? true,
+        health: activeOverview?.health,
       }),
-    [tokenValid, snapshot.pendingCount, snapshot.failedCount],
+    [activeOverview, tokenValid, isInstagramAccount, snapshot.pendingCount, snapshot.failedCount],
   );
 
-  const publishedToday = accountsOverview.reduce((sum, account) => sum + account.publishedToday, 0);
+  const publishedToday = activeOverview
+    ? activeOverview.publishedToday
+    : accountsOverview.reduce((sum, account) => sum + account.publishedToday, 0);
+  const heroHealthy = activeOverview?.health === "healthy";
+  const heroStatusMessage =
+    activeOverview?.statusMessage ??
+    (heroHealthy
+      ? "Sua automação está funcionando normalmente."
+      : "Revise alertas e fila de publicação.");
+  const heroTitle = heroHealthy
+    ? `🚀 Sua conta está ativa pelos próximos ${snapshot.coverageDays} dias`
+    : activeOverview?.health === "error"
+      ? "⚠️ Conta em erro — ação necessária"
+      : "⚠️ Conta em atenção — revise a fila";
   const nextHours = hoursUntilNextPost(snapshot.nextPost);
   const growthPercent =
     followers7d > 0 ? Math.round(((followersToday * 7) / Math.max(followers7d, 1)) * 100 - 100) : 0;
@@ -249,7 +293,11 @@ export function OperationsCenter({
         </section>
       )}
 
-      <PublicationMetricsBar metrics={publicationMetrics} />
+      <PublicationMetricsBar
+        metrics={metricsBarSource}
+        scopeFiltered={hasMetricsScopeFilter}
+        filteredMetrics={hasMetricsScopeFilter ? publicationMetrics : undefined}
+      />
 
       {view !== "audit" && (
         <ReportFiltersBar
@@ -328,17 +376,29 @@ export function OperationsCenter({
         <p className="text-sm font-semibold uppercase tracking-wide text-ig-primary">
           Central de Operações da IA
         </p>
-        <h1 className="mt-2 text-3xl font-bold text-ig-text">
-          🚀 Sua conta está ativa pelos próximos {snapshot.coverageDays} dias
-        </h1>
-        <p className="mt-3 max-w-3xl text-ig-muted">
-          A IA já programou todo o conteúdo necessário para manter sua página publicando automaticamente.
-        </p>
+        <h1 className="mt-2 text-3xl font-bold text-ig-text">{heroTitle}</h1>
+        <p className="mt-3 max-w-3xl text-ig-muted">{heroStatusMessage}</p>
+        {activeOverview?.recommendedAction && (
+          <p className="mt-2 text-sm font-medium text-amber-700">{activeOverview.recommendedAction}</p>
+        )}
+        {activeOverview?.lastError && (
+          <p className="mt-2 text-sm text-ig-danger">{activeOverview.lastError}</p>
+        )}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <p className="text-xs uppercase tracking-wide text-ig-muted">Conta</p>
             <p className="mt-1 text-lg font-semibold text-ig-text">@{username}</p>
+            {activeOverview && (
+              <p className="text-xs text-ig-muted">
+                {activeOverview.platform === "tiktok" ? "TikTok" : "Instagram"} ·{" "}
+                {activeOverview.health === "healthy"
+                  ? "Saudável"
+                  : activeOverview.health === "attention"
+                    ? "Atenção"
+                    : "Erro"}
+              </p>
+            )}
           </div>
           <div>
             <p className="text-xs uppercase tracking-wide text-ig-muted">Próximo post</p>
@@ -393,10 +453,20 @@ export function OperationsCenter({
 
         <MetricCard title="🤖 Trabalho da IA">
           <div className="space-y-2 text-sm">
-            <StatLine label="Legendas geradas" value={formatCount(snapshot.scheduledCount)} />
-            <StatLine label="Hashtags criadas" value={formatCount(snapshot.scheduledCount)} />
-            <StatLine label="Horários definidos" value={formatCount(snapshot.scheduledCount)} />
-            <StatLine label="Publicações programadas" value={formatCount(snapshot.scheduledCount)} />
+            <StatLine
+              label="Publicações programadas"
+              value={formatCount(activeOverview?.pendingCount ?? snapshot.pendingCount)}
+            />
+            <StatLine label="Publicados" value={formatCount(snapshot.publishedCount)} />
+            {activeOverview?.incompletePosts ? (
+              <StatLine
+                label="Publicações incompletas"
+                value={formatCount(activeOverview.incompletePosts)}
+              />
+            ) : null}
+            {accountId ? null : (
+              <StatLine label="Total owner" value={formatCount(ownerSnapshot.pendingCount)} />
+            )}
           </div>
         </MetricCard>
 
@@ -415,7 +485,9 @@ export function OperationsCenter({
         </MetricCard>
 
         <MetricCard title="🟢 Saúde da Conta">
-          <p className="text-4xl font-bold text-ig-text">{health.percent}%</p>
+          <p className="text-4xl font-bold text-ig-text">
+            {activeOverview?.healthPercent ?? health.percent}%
+          </p>
           <ul className="mt-3 space-y-1 text-sm">
             {health.checks.map((check) => (
               <li key={check.label} className={check.ok ? "text-ig-text" : "text-ig-danger"}>
@@ -500,11 +572,19 @@ export function OperationsCenter({
           <div className="space-y-3 text-sm">
             <p>
               <span className="text-ig-muted">Melhor horário:</span>{" "}
-              <span className="font-semibold text-ig-text">{snapshot.scheduleInsights.bestHour}</span>
+              <span className="font-semibold text-ig-text">
+                {snapshot.scheduleInsights.hasEnoughData
+                  ? snapshot.scheduleInsights.bestHour
+                  : "Ainda não há dados suficientes para calcular melhor horário."}
+              </span>
             </p>
             <p>
               <span className="text-ig-muted">Melhor dia:</span>{" "}
-              <span className="font-semibold text-ig-text">{snapshot.scheduleInsights.bestDay}</span>
+              <span className="font-semibold text-ig-text">
+                {snapshot.scheduleInsights.hasEnoughData
+                  ? snapshot.scheduleInsights.bestDay
+                  : "—"}
+              </span>
             </p>
             <p className="text-ig-muted">
               Vídeos com legendas completas geram mais engajamento quando publicados nos horários que a IA escolheu para sua conta.

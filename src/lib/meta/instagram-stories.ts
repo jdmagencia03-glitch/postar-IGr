@@ -1,4 +1,5 @@
 import type { AuthProvider } from "@/lib/meta/instagram";
+import { waitForInstagramContainer } from "@/lib/meta/instagram-container";
 
 function getGraphBase(provider: AuthProvider = "instagram") {
   return provider === "facebook"
@@ -110,22 +111,6 @@ async function graphGet(path: string, token: string, provider: AuthProvider = "i
   return data;
 }
 
-async function waitForContainer(
-  containerId: string,
-  token: string,
-  provider: AuthProvider = "instagram",
-) {
-  for (let i = 0; i < 30; i++) {
-    const data = await graphGet(`/${containerId}?fields=status_code`, token, provider);
-    if (data.status_code === "FINISHED") return;
-    if (data.status_code === "ERROR") {
-      throw new Error("Processamento do Story falhou no Instagram");
-    }
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-  throw new Error("Timeout aguardando processamento do Story");
-}
-
 export async function publishInstagramStory(params: {
   igUserId: string;
   token: string;
@@ -139,7 +124,11 @@ export async function publishInstagramStory(params: {
   };
 
   const container = await graphPost(`/${params.igUserId}/media`, params.token, body, params.provider);
-  await waitForContainer(container.id, params.token, params.provider);
+  await waitForInstagramContainer({
+    containerId: container.id,
+    token: params.token,
+    provider: params.provider,
+  });
   const published = await graphPost(
     `/${params.igUserId}/media_publish`,
     params.token,

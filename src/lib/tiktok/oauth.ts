@@ -26,7 +26,7 @@ export const TIKTOK_SCOPES = DEFAULT_TIKTOK_SCOPES.join(",");
 export function getTikTokRedirectUri() {
   const fromEnv = process.env.TIKTOK_REDIRECT_URI?.trim().replace(/\/$/, "");
   if (fromEnv) return fromEnv;
-  return `${getAppUrl()}/api/tiktok/callback`;
+  return `${getAppUrl()}/api/auth/tiktok/callback`;
 }
 
 export function isTikTokOAuthConfigured() {

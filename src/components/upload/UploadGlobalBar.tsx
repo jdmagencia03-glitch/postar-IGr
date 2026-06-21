@@ -17,7 +17,7 @@ import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { uploadSessionStore } from "@/lib/upload/session-store";
 import { fileStatusLabel } from "@/lib/upload/client";
 import { displayUploadErrorMessage } from "@/lib/upload/errors";
-import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
+import { formatBytes } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import type { UploadBatchFile } from "@/lib/types";
 
@@ -25,7 +25,9 @@ function statusBadge(label: string) {
   switch (label) {
     case "enviando":
       return "bg-ig-primary/15 text-ig-primary";
-    case "reconectando":
+    case "recuperando":
+      return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
+    case "tentando_novamente":
       return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
     case "concluído":
       return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
@@ -42,8 +44,10 @@ function statusText(label: string) {
   switch (label) {
     case "enviando":
       return "Enviando";
-    case "reconectando":
-      return "Reconectando";
+    case "recuperando":
+      return "Recuperando";
+    case "tentando_novamente":
+      return "Tentando novamente";
     case "concluído":
       return "Concluído";
     case "erro":
@@ -59,10 +63,12 @@ const QueueRow = memo(function QueueRow({
   file,
   percent,
   maxUploadBytes,
+  runtimeStatus,
 }: {
   file: UploadBatchFile;
   percent: number;
   maxUploadBytes: number;
+  runtimeStatus?: string;
 }) {
   const errorText = displayUploadErrorMessage(
     file.error_message,
@@ -77,6 +83,7 @@ const QueueRow = memo(function QueueRow({
         <span className="shrink-0 text-ig-muted">
           {fileStatusLabel(file.status, {
             retrying: file.status === "retrying",
+            runtimeStatus,
           })}
         </span>
       </div>
@@ -152,7 +159,7 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                     ? `Enviando: ${view.currentUploadName}`
                     : `@${username} · ${speedPresets[session.speedMode].label}`
                   : hasFileRetry || session.retrying || view.awaitingAutoRecovery
-                    ? session.message ?? "Retomando envio…"
+                    ? session.message ?? "Tentando enviar novamente…"
                     : view.currentUploadName
                       ? `Enviando: ${view.currentUploadName}`
                       : `@${username} · ${speedPresets[session.speedMode].label}`}
@@ -162,6 +169,9 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                 {" · "}
                 {view.overallPercent}%
               </p>
+              {view.bytesSummaryText !== "—" && (
+                <p className="mt-1 text-xs text-ig-muted">{view.bytesSummaryText}</p>
+              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
@@ -228,10 +238,13 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
             />
           </div>
 
-          {session.progress && (session.running || session.retrying) && (
+          {(session.running || session.retrying || view.stats.hasActiveUploads) && (
             <p className="mt-2 text-[11px] text-ig-muted">
-              {formatSpeed(session.progress.speedBps)} · restam {formatEta(session.progress.etaSeconds)} ·{" "}
-              {formatBytes(session.progress.bytesUploaded)} / {formatBytes(session.progress.bytesTotal)}
+              {view.speedSummaryText}
+              {view.etaSummaryText !== "Calculando tempo restante…" && (
+                <> · {view.etaSummaryText}</>
+              )}
+              {view.bytesSummaryText !== "—" && <> · {view.bytesSummaryText}</>}
             </p>
           )}
         </div>
@@ -246,6 +259,7 @@ export const UploadGlobalBar = memo(function UploadGlobalBar() {
                   file={file}
                   percent={session.progressMap[file.id] ?? (file.status === "completed" ? 100 : 0)}
                   maxUploadBytes={maxUploadBytes}
+                  runtimeStatus={session.fileRuntime[file.id]?.status}
                 />
               ))}
               {view.listFiles.length > 30 && (

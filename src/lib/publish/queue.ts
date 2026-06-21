@@ -12,6 +12,8 @@ function accountKey(post: QueuedPost) {
   return `ig:${post.account_id ?? ""}`;
 }
 
+export { accountKey };
+
 /** No máximo 1 post por conta por execução do cron — evita rajadas no Instagram. */
 export function pickPostsForCronRun<T extends QueuedPost>(posts: T[], maxPosts: number): T[] {
   const picked: T[] = [];

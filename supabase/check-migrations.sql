@@ -190,6 +190,34 @@ with checks as (
         and table_name = 'upload_batches'
         and column_name = 'tiktok_account_id'
     )),
+    ('tiktok-integration-enhance.sql', 'coluna scheduled_posts.provider_publish_id', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'scheduled_posts'
+        and column_name = 'provider_publish_id'
+    )),
+    ('tiktok-integration-enhance.sql', 'coluna tiktok_accounts.status', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'tiktok_accounts'
+        and column_name = 'status'
+    )),
+    ('operations-phase3.sql', 'coluna tiktok_accounts.publishing_paused', exists(
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'tiktok_accounts'
+        and column_name = 'publishing_paused'
+    )),
+    ('scheduled-posts-retry-status.sql', 'status retrying permitido', exists(
+      select 1
+      from pg_constraint c
+      join pg_class rel on rel.oid = c.conrelid
+      join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public'
+        and rel.relname = 'scheduled_posts'
+        and c.conname = 'scheduled_posts_status_check'
+        and pg_get_constraintdef(c.oid) ilike '%retrying%'
+    )),
     ('scheduled-posts-updated-at.sql', 'coluna scheduled_posts.updated_at', exists(
       select 1 from information_schema.columns
       where table_schema = 'public'

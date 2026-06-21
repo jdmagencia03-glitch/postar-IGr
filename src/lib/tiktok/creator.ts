@@ -47,13 +47,27 @@ export async function tiktokApiFetch<T>(
 }
 
 export async function queryCreatorInfo(accessToken: string) {
-  const data = await tiktokApiFetch<{ data?: { creator_info?: TikTokCreatorInfo } }>(
-    "/v2/post/publish/creator_info/query/",
-    accessToken,
-    { method: "POST", body: JSON.stringify({}) },
-  );
+  const data = await tiktokApiFetch<{
+    data?: TikTokCreatorInfo & { creator_info?: TikTokCreatorInfo };
+  }>("/v2/post/publish/creator_info/query/", accessToken, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 
-  return data.data?.creator_info ?? null;
+  const payload = data.data;
+  if (!payload) return null;
+
+  // API oficial: campos flat em `data` (não aninhados em creator_info).
+  if (payload.creator_info) return payload.creator_info;
+  if (
+    payload.creator_username ||
+    payload.creator_nickname ||
+    payload.privacy_level_options?.length
+  ) {
+    return payload;
+  }
+
+  return null;
 }
 
 export async function queryCreatorInfoForAccount(
@@ -64,11 +78,63 @@ export async function queryCreatorInfoForAccount(
   return queryCreatorInfo(accessToken);
 }
 
+export type TikTokCreatorInfoLog = {
+  creator_username: string;
+  privacy_level_options: string[];
+  comment_disabled: boolean;
+  duet_disabled: boolean;
+  stitch_disabled: boolean;
+  max_video_post_duration_sec: number;
+};
+
+export function formatCreatorInfoLog(creator: TikTokCreatorInfo): TikTokCreatorInfoLog {
+  return {
+    creator_username: creator.creator_username ?? "",
+    privacy_level_options: creator.privacy_level_options ?? [],
+    comment_disabled: creator.comment_disabled ?? false,
+    duet_disabled: creator.duet_disabled ?? false,
+    stitch_disabled: creator.stitch_disabled ?? false,
+    max_video_post_duration_sec: creator.max_video_post_duration_sec ?? 0,
+  };
+}
+
 export function pickDefaultPrivacyLevel(options: string[] | undefined) {
   const privacyOptions = options ?? [];
   if (privacyOptions.includes("PUBLIC_TO_EVERYONE")) return "PUBLIC_TO_EVERYONE";
+  if (privacyOptions.includes("MUTUAL_FOLLOW_FRIENDS")) return "MUTUAL_FOLLOW_FRIENDS";
   if (privacyOptions.includes("SELF_ONLY")) return "SELF_ONLY";
   return privacyOptions[0] ?? "SELF_ONLY";
+}
+
+/** Privacidade segura para testes com app TikTok não auditado. */
+export function pickTestPrivacyLevel(options: string[] | undefined) {
+  const privacyOptions = options ?? [];
+  if (privacyOptions.includes("SELF_ONLY")) return "SELF_ONLY";
+  if (privacyOptions.includes("MUTUAL_FOLLOW_FRIENDS")) return "MUTUAL_FOLLOW_FRIENDS";
+  return privacyOptions[0] ?? "SELF_ONLY";
+}
+
+export function resolvePrivacyLevel(params: {
+  options?: string[];
+  requested?: string | null;
+  testMode?: boolean;
+}) {
+  const options = params.options ?? [];
+
+  if (params.requested) {
+    if (options.length === 0 || options.includes(params.requested)) {
+      return params.requested;
+    }
+    throw new Error(
+      `privacy_level "${params.requested}" indisponível. Opções: ${options.join(", ") || "nenhuma"}`,
+    );
+  }
+
+  return params.testMode ? pickTestPrivacyLevel(options) : pickDefaultPrivacyLevel(options);
+}
+
+export function isTikTokUnauditedClientError(message: string) {
+  return /unaudited_client_can_only_post_to_private_accounts/i.test(message);
 }
 
 export function hasRequiredPublishScopes(scopes: string | null | undefined) {

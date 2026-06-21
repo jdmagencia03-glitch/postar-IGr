@@ -7,6 +7,8 @@ import type { ContentType } from "@/lib/types";
 
 interface Props {
   metrics: PublicationMetrics;
+  scopeFiltered?: boolean;
+  filteredMetrics?: PublicationMetrics;
 }
 
 function MetricTile({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "danger" | "success" }) {
@@ -25,7 +27,7 @@ function MetricTile({ label, value, tone = "default" }: { label: string; value: 
   );
 }
 
-export function PublicationMetricsBar({ metrics }: Props) {
+export function PublicationMetricsBar({ metrics, scopeFiltered, filteredMetrics }: Props) {
   const igTotal = metrics.totalByPlatform.instagram ?? 0;
   const ttTotal = metrics.totalByPlatform.tiktok ?? 0;
 
@@ -33,7 +35,15 @@ export function PublicationMetricsBar({ metrics }: Props) {
     <section className="space-y-4">
       <div>
         <h2 className="text-lg font-bold text-ig-text">Relatório de publicações</h2>
-        <p className="text-sm text-ig-muted">Visão operacional consolidada das suas publicações.</p>
+        <p className="text-sm text-ig-muted">
+          Visão operacional consolidada de todas as contas do workspace.
+        </p>
+        {scopeFiltered && filteredMetrics && (
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+            Filtro ativo na lista — métricas acima são globais ({filteredMetrics.failed} falhas na
+            seleção atual).
+          </p>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">

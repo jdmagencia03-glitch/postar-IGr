@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { formatShortDateTime } from "@/lib/operations/compute";
 import { deleteUploadBatchPermanent } from "@/lib/upload/client";
+import { getUploadBatchStats } from "@/lib/upload/batch-stats";
 import type { UploadBatch } from "@/lib/types";
 
 function batchLabel(batch: UploadBatch) {
@@ -75,11 +76,8 @@ export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) 
       )}
 
       {batches.map((batch) => {
-        const pending = Math.max(
-          0,
-          batch.total_files - batch.completed_files - batch.failed_files,
-        );
-        const partial = batch.failed_files > 0 && batch.completed_files > 0;
+        const stats = getUploadBatchStats(batch, { monotonic: false });
+        const partial = stats.failedFiles > 0 && stats.completedFiles > 0;
         const isDeleting = deletingId === batch.id;
 
         return (
@@ -107,19 +105,19 @@ export function UploadBatchHistoryList({ batches }: { batches: UploadBatch[] }) 
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
               <div>
                 <dt className="text-ig-muted">Total</dt>
-                <dd className="font-semibold text-ig-text">{batch.total_files}</dd>
+                <dd className="font-semibold text-ig-text">{stats.totalFiles}</dd>
               </div>
               <div>
                 <dt className="text-ig-muted">Concluídos</dt>
-                <dd className="font-semibold text-emerald-600">{batch.completed_files}</dd>
+                <dd className="font-semibold text-emerald-600">{stats.completedFiles}</dd>
               </div>
               <div>
                 <dt className="text-ig-muted">Falharam</dt>
-                <dd className="font-semibold text-ig-danger">{batch.failed_files}</dd>
+                <dd className="font-semibold text-ig-danger">{stats.failedFiles}</dd>
               </div>
               <div>
                 <dt className="text-ig-muted">Pendentes</dt>
-                <dd className="font-semibold text-ig-text">{pending}</dd>
+                <dd className="font-semibold text-ig-text">{stats.pendingFiles}</dd>
               </div>
               <div>
                 <dt className="text-ig-muted">Duração</dt>

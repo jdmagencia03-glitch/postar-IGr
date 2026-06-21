@@ -9,17 +9,19 @@ import {
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { z } from "zod";
 
+const optionalText = (max: number) => z.string().max(max).nullish();
+
 const playbookFieldsSchema = z.object({
-  brand_name: z.string().max(200).optional(),
-  niche: z.string().max(500).optional(),
-  target_audience: z.string().max(3000).optional(),
-  tone_voice: z.string().max(2000).optional(),
-  viral_hooks: z.string().max(5000).optional(),
-  hashtag_strategy: z.string().max(3000).optional(),
-  cta_style: z.string().max(2000).optional(),
-  example_captions: z.string().max(8000).optional(),
-  avoid_rules: z.string().max(2000).optional(),
-  extra_knowledge: z.string().max(15000).optional(),
+  brand_name: optionalText(200),
+  niche: optionalText(500),
+  target_audience: optionalText(3000),
+  tone_voice: optionalText(2000),
+  viral_hooks: optionalText(5000),
+  hashtag_strategy: optionalText(3000),
+  cta_style: optionalText(2000),
+  example_captions: optionalText(8000),
+  avoid_rules: optionalText(2000),
+  extra_knowledge: optionalText(15000),
 });
 
 const putSchema = playbookFieldsSchema.extend({

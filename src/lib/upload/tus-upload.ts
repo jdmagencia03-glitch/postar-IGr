@@ -61,7 +61,7 @@ export function uploadFileWithTus(params: {
     stallTimer = setTimeout(() => {
       logTus("stall_timeout", { timeoutMs: UPLOAD_STALL_TIMEOUT_MS });
       uploadRef?.abort(true);
-      reject(new Error("Upload sem progresso — reconectando automaticamente…"));
+      reject(new Error("UPLOAD_STALL_DETECTED"));
     }, UPLOAD_STALL_TIMEOUT_MS);
   };
 

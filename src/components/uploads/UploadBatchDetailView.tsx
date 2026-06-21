@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Download, RefreshCw } from "lucide-react";
 import { formatShortDateTime } from "@/lib/operations/compute";
+import { getUploadBatchStats } from "@/lib/upload/batch-stats";
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 
 function fileStatusLabel(status: UploadBatchFile["status"]) {
@@ -43,7 +44,7 @@ function exportCsv(batch: UploadBatch, files: UploadBatchFile[]) {
 export function UploadBatchDetailView({ batch }: { batch: UploadBatch & { upload_files: UploadBatchFile[] } }) {
   const router = useRouter();
   const files = batch.upload_files ?? [];
-  const pending = Math.max(0, batch.total_files - batch.completed_files - batch.failed_files);
+  const stats = getUploadBatchStats(batch, { monotonic: false });
   const failedFiles = files.filter((f) => f.status === "failed");
   const completedFiles = files.filter((f) => f.status === "completed");
 
@@ -90,15 +91,19 @@ export function UploadBatchDetailView({ batch }: { batch: UploadBatch & { upload
           </div>
           <div>
             <dt className="text-ig-muted">Total</dt>
-            <dd className="font-semibold">{batch.total_files}</dd>
+            <dd className="font-semibold">{stats.totalFiles}</dd>
           </div>
           <div>
             <dt className="text-ig-muted">Concluídos</dt>
-            <dd className="font-semibold text-emerald-600">{batch.completed_files}</dd>
+            <dd className="font-semibold text-emerald-600">{stats.completedFiles}</dd>
+          </div>
+          <div>
+            <dt className="text-ig-muted">Falharam</dt>
+            <dd className="font-semibold text-ig-danger">{stats.failedFiles}</dd>
           </div>
           <div>
             <dt className="text-ig-muted">Pendentes</dt>
-            <dd className="font-semibold">{pending}</dd>
+            <dd className="font-semibold">{stats.pendingFiles}</dd>
           </div>
           <div>
             <dt className="text-ig-muted">Duração</dt>

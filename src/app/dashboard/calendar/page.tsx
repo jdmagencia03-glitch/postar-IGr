@@ -5,7 +5,6 @@ import {
   endOfMonth,
   format,
   isBefore,
-  isSameDay,
   parseISO,
   startOfDay,
   startOfMonth,
@@ -14,12 +13,12 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
-import { StatusBadge } from "@/components/StatusBadge";
+import { CalendarDayPosts } from "@/components/calendar/CalendarDayPosts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost, SocialPlatform } from "@/lib/types";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { isSameAppDay } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -126,7 +125,7 @@ export default async function CalendarPage({
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {days.map((day) => {
             const dayPosts = typedPosts.filter((p: ScheduledPost) =>
-              isSameDay(parseISO(p.scheduled_at), day),
+              isSameAppDay(p.scheduled_at, day),
             );
             const isPastDay = isBefore(startOfDay(day), startOfDay(now));
             const hasPublished = dayPosts.some((post) => post.status === "published");
@@ -155,43 +154,7 @@ export default async function CalendarPage({
                     —
                   </p>
                 ) : (
-                  <div className="space-y-1">
-                    {dayPosts.slice(0, 3).map((p) => (
-                      <div key={p.id} className="flex items-center justify-between gap-2">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 text-xs",
-                            isPublishedDay ? "text-ig-on-primary" : "text-ig-muted",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "rounded px-1 text-[10px] font-semibold uppercase",
-                              isPublishedDay
-                                ? "bg-ig-on-primary/20 text-ig-on-primary"
-                                : p.platform === "tiktok"
-                                  ? "bg-black/10 text-ig-text"
-                                  : "bg-ig-primary/10 text-ig-primary",
-                            )}
-                          >
-                            {p.platform === "tiktok" ? "TT" : "IG"}
-                          </span>
-                          {formatInAppTimezone(p.scheduled_at, { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                        <StatusBadge status={p.status} onPrimary={isPublishedDay} />
-                      </div>
-                    ))}
-                    {dayPosts.length > 3 && (
-                      <p
-                        className={cn(
-                          "text-xs",
-                          isPublishedDay ? "text-ig-on-primary/90" : "text-ig-muted",
-                        )}
-                      >
-                        +{dayPosts.length - 3} mais
-                      </p>
-                    )}
-                  </div>
+                  <CalendarDayPosts posts={dayPosts} isPublishedDay={isPublishedDay} />
                 )}
               </div>
             );

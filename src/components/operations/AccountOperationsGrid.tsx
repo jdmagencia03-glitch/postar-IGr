@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   Brain,
@@ -17,10 +18,12 @@ import {
   healthLabel,
   type AccountOperationsSummary,
 } from "@/lib/operations/account-ops";
+import { formatTokenStatusLabel } from "@/lib/operations/token-status";
+import type { AccountOperationalSummary } from "@/lib/operations/operational-summary";
 import { formatShortDateTime } from "@/lib/operations/compute";
 
 interface Props {
-  accounts: AccountOperationsSummary[];
+  accounts: AccountOperationalSummary[];
 }
 
 function platformLabel(platform: AccountOperationsSummary["platform"]) {
@@ -70,6 +73,18 @@ export function AccountOperationsGrid({ accounts }: Props) {
               </span>
             </div>
 
+            {account.lastError && (
+              <p className="mt-3 rounded-lg bg-ig-danger/10 px-3 py-2 text-xs text-ig-danger">
+                {account.lastError}
+              </p>
+            )}
+
+            {account.duplicateSlotCount > 0 && (
+              <p className="mt-2 text-xs font-medium text-amber-700">
+                Horários duplicados detectados ({account.duplicateSlotCount})
+              </p>
+            )}
+
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <dt className="text-ig-muted">Hoje</dt>
@@ -106,12 +121,17 @@ export function AccountOperationsGrid({ accounts }: Props) {
               )}
               <p>
                 Token:{" "}
-                <span className="font-medium text-ig-text">
-                  {account.tokenStatus === "valid"
-                    ? "Válido"
-                    : account.tokenStatus === "expired"
-                      ? "Expirado"
-                      : "—"}
+                <span
+                  className={cn(
+                    "font-medium",
+                    account.tokenStatus === "valid"
+                      ? "text-emerald-600"
+                      : account.tokenStatus === "expired"
+                        ? "text-ig-danger"
+                        : "text-ig-text",
+                  )}
+                >
+                  {formatTokenStatusLabel(account.tokenStatus)}
                 </span>
               </p>
               <p>

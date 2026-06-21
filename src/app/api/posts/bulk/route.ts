@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById } from "@/lib/accounts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls, scheduleMediaGuardJsonError } from "@/lib/storage/schedule-media-guard";
 import { contentTypeFromMediaType } from "@/lib/content-types";
 import { generateBulkSchedule, sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
@@ -59,9 +59,13 @@ export async function POST(request: NextRequest) {
   }
 
   for (const item of parsed.data.items) {
-    const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
+    const mediaCheck = await validateScheduledMediaUrls({
+      supabase,
+      ownerId,
+      urls: item.media_urls,
+    });
     if (!mediaCheck.ok) {
-      return NextResponse.json({ error: mediaCheck.error }, { status: 403 });
+      return NextResponse.json(scheduleMediaGuardJsonError(mediaCheck), { status: 400 });
     }
   }
 

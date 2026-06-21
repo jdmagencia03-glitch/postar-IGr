@@ -30,7 +30,7 @@ interface Props {
 }
 
 export function TikTokAccountsSection({
-  connectHref = "/api/tiktok/connect?next=/dashboard/tiktok&add_account=1",
+  connectHref = "/api/auth/tiktok?next=/dashboard/tiktok&add_account=1",
   compact = false,
   onAccountsChange,
 }: Props) {
@@ -113,13 +113,6 @@ export function TikTokAccountsSection({
 
   return (
     <div className="space-y-4">
-      {!compact && (
-        <div className="rounded-lg border border-ig-border bg-ig-elevated px-4 py-3 text-xs text-ig-muted">
-          <strong className="text-ig-text">App não auditado:</strong> até a aprovação do TikTok,
-          publicações podem ficar privadas. Limite de ~25 vídeos/dia por conta.
-        </div>
-      )}
-
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ig-muted">
           {accounts.length} conta(s) TikTok conectada(s)
@@ -160,7 +153,7 @@ export function TikTokAccountsSection({
             ? `@${account.username}`
             : account.display_name ?? "Conta TikTok";
           const needsReconnect = account.status === "error" || account.token_valid === false;
-          const reconnectHref = `/api/tiktok/connect?next=/dashboard/tiktok&add_account=1`;
+          const reconnectHref = `/api/auth/tiktok?next=/dashboard/tiktok&add_account=1`;
 
           return (
             <article
@@ -207,25 +200,38 @@ export function TikTokAccountsSection({
                     )}
                   </div>
                   {account.last_validation_error && (
-                    <p className="mt-2 text-xs text-ig-danger">{account.last_validation_error}</p>
+                    <div className="mt-2 space-y-2">
+                      <p className="text-xs text-ig-danger">{account.last_validation_error}</p>
+                      <button
+                        type="button"
+                        onClick={() => void handleValidate(account.id)}
+                        disabled={validatingId === account.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-ig-primary px-3 py-1.5 text-xs font-medium text-ig-on-primary disabled:opacity-50"
+                      >
+                        <ShieldCheck size={14} />
+                        {validatingId === account.id ? "Validando…" : "Validar novamente"}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {!compact && (
-                <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
+                {!compact && (
                   <a
                     href={`/dashboard/bulk?platform=tiktok&account=${account.id}`}
                     className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
                   >
                     Agendar vídeos
                   </a>
-                  <Link
-                    href={`/dashboard/accounts/${account.id}/diagnostics?platform=tiktok`}
-                    className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
-                  >
-                    Diagnóstico
-                  </Link>
+                )}
+                <Link
+                  href={`/dashboard/accounts/${account.id}/diagnostics?platform=tiktok`}
+                  className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
+                >
+                  Diagnóstico
+                </Link>
+                {!account.last_validation_error && (
                   <button
                     type="button"
                     onClick={() => void handleValidate(account.id)}
@@ -235,13 +241,15 @@ export function TikTokAccountsSection({
                     <ShieldCheck size={14} />
                     {validatingId === account.id ? "Validando…" : "Validar"}
                   </button>
-                  <a
-                    href={reconnectHref}
-                    className="inline-flex items-center gap-1 rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
-                  >
-                    <RefreshCw size={14} />
-                    Reconectar
-                  </a>
+                )}
+                <a
+                  href={reconnectHref}
+                  className="inline-flex items-center gap-1 rounded-lg border border-ig-border bg-ig-secondary px-3 py-1.5 text-xs text-ig-text hover:bg-ig-surface"
+                >
+                  <RefreshCw size={14} />
+                  Reconectar
+                </a>
+                {!compact && (
                   <button
                     type="button"
                     onClick={() => void handleDisconnect(account.id, label)}
@@ -251,8 +259,8 @@ export function TikTokAccountsSection({
                     <Trash2 size={14} />
                     {removingId === account.id ? "Desconectando…" : "Desconectar"}
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </article>
           );
         })}

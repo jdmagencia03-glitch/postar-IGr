@@ -5,7 +5,7 @@ import { ExternalLink, Loader2, Upload } from "lucide-react";
 import { useMemo } from "react";
 import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
-import { formatBytes } from "@/lib/upload/validate";
+import { getFileDisplayPercent } from "@/lib/upload/batch-status";
 
 export function DashboardUploadCard() {
   const session = useOptionalUploadSession();
@@ -55,10 +55,8 @@ export function DashboardUploadCard() {
   }
 
   const fileName = view.currentUploadName ?? activeFile?.filename ?? "Enviando vídeos…";
-  const fileSize = activeFile ? formatBytes(Number(activeFile.file_size)) : null;
   const filePercent = activeFile
-    ? (session.progressMap[activeFile.id] ??
-      (activeFile.status === "completed" ? 100 : activeFile.status === "uploading" ? 5 : 0))
+    ? getFileDisplayPercent(activeFile, session.progressMap)
     : view.overallPercent;
 
   const statusLabel = session.retrying || view.awaitingAutoRecovery
@@ -89,8 +87,8 @@ export function DashboardUploadCard() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-ig-text">{fileName}</p>
             <p className="mt-1 text-xs text-ig-muted">
-              {fileSize ? `Tamanho: ${fileSize}` : "Preparando envio…"}
-              {fileSize ? ` · ${filePercent}% concluído` : ""}
+              {view.headlineText}
+              {activeFile ? ` · ${filePercent}% do arquivo atual` : ""}
             </p>
           </div>
           <span className="shrink-0 rounded-md bg-ig-primary/15 px-2 py-0.5 text-[10px] font-bold tracking-wide text-ig-primary">
@@ -101,7 +99,7 @@ export function DashboardUploadCard() {
         <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-ig-elevated">
           <div
             className="h-full rounded-full bg-ig-primary transition-[width] duration-300"
-            style={{ width: `${Math.max(filePercent, view.overallPercent, 2)}%` }}
+            style={{ width: `${view.overallPercent}%` }}
           />
         </div>
 
@@ -114,11 +112,13 @@ export function DashboardUploadCard() {
           )}
           {!session.resuming && (
             <>
-              {view.completedCount} de {view.totalCount} vídeos · Lote #{session.batch.batch_number}
-              {view.failedCount > 0 ? ` · ${view.failedCount} erro(s)` : ""}
+              {view.statusCounterText} · Lote #{session.batch.batch_number}
             </>
           )}
         </p>
+        {view.bytesSummaryText !== "—" && (
+          <p className="mt-1 text-xs text-ig-muted">{view.bytesSummaryText}</p>
+        )}
       </div>
     </div>
   );

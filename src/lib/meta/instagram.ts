@@ -1,4 +1,14 @@
 import type { MediaType } from "@/lib/types";
+import {
+  isInstagramContainerProcessingError,
+  waitForInstagramContainer,
+} from "@/lib/meta/instagram-container";
+
+export {
+  fetchInstagramContainerStatus,
+  isInstagramContainerProcessingError,
+  InstagramContainerProcessingError,
+} from "@/lib/meta/instagram-container";
 
 export type AuthProvider = "instagram" | "facebook";
 
@@ -215,19 +225,22 @@ export async function waitForContainer(
   token: string,
   maxAttempts = 30,
   provider: AuthProvider = "instagram",
+  pollIntervalMs = 3000,
 ) {
-  for (let i = 0; i < maxAttempts; i++) {
-    const data = await graphGet(`/${containerId}?fields=status_code`, token, provider);
+  await waitForInstagramContainer({
+    containerId,
+    token,
+    maxAttempts,
+    provider,
+    pollIntervalMs,
+  });
+}
 
-    if (data.status_code === "FINISHED") return;
-    if (data.status_code === "ERROR") {
-      throw new Error("Processamento da mídia falhou no Instagram");
-    }
-
-    await new Promise((r) => setTimeout(r, 3000));
+export function formatInstagramPublishError(error: unknown) {
+  if (isInstagramContainerProcessingError(error)) {
+    return error.logMessage();
   }
-
-  throw new Error("Timeout aguardando processamento da mídia");
+  return error instanceof Error ? error.message : "Erro desconhecido no Instagram";
 }
 
 export async function publishContainer(
@@ -316,7 +329,14 @@ export async function publishPost(params: {
 }) {
   const provider = params.provider ?? "instagram";
   const container = await createMediaContainer({ ...params, provider });
-  await waitForContainer(container.id, params.token, 30, provider);
+  const isVideo = params.mediaType === "REELS" || params.mediaUrls[0]?.match(/\.(mp4|mov|webm)$/i);
+  await waitForContainer(
+    container.id,
+    params.token,
+    isVideo ? 72 : 30,
+    provider,
+    isVideo ? 5000 : 3000,
+  );
   const published = await publishContainer(params.igUserId, container.id, params.token, provider);
 
   let permalink: string | null = null;

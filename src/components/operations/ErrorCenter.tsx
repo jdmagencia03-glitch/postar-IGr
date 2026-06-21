@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 interface Props {
   errors: OperationalError[];
   summary: OperationalErrorSummary;
+  globalSummary: OperationalErrorSummary;
   syncedAt: string;
   accounts: OwnerAccountRef[];
   filters: {
@@ -241,12 +242,17 @@ function ErrorCard({
   );
 }
 
-export function ErrorCenter({ errors, summary, syncedAt, accounts, filters }: Props) {
+export function ErrorCenter({ errors, summary, globalSummary, syncedAt, accounts, filters }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [search, setSearch] = useState(filters.q ?? "");
 
   const basePath = "/dashboard/errors";
+  const hasAccountFilter = Boolean(filters.accountId);
+  const hasPlatformFilter = Boolean(filters.platform && filters.platform !== "all");
+  const hasScopeFilter = hasAccountFilter || hasPlatformFilter;
+  const displaySummary = hasScopeFilter ? globalSummary : summary;
+  const filteredListSummary = hasScopeFilter ? summary : null;
 
   const visibleErrors = useMemo(() => {
     if (!filters.severity || filters.severity === "all") return errors;
@@ -313,13 +319,28 @@ export function ErrorCenter({ errors, summary, syncedAt, accounts, filters }: Pr
       </div>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <SummaryCard label="Erros críticos" value={summary.critical} tone="danger" />
-        <SummaryCard label="Uploads travados" value={summary.stalledUploads} tone="warning" />
-        <SummaryCard label="Publicações com falha" value={summary.failedPublications} tone="danger" />
-        <SummaryCard label="Contas com problema" value={summary.accountsWithProblems} tone="warning" />
-        <SummaryCard label="Resolvidos hoje" value={summary.resolvedToday} tone="ok" />
-        <SummaryCard label="Tentativas automáticas" value={summary.autoRetrying} />
+        <SummaryCard label="Erros críticos" value={displaySummary.critical} tone="danger" />
+        <SummaryCard label="Uploads travados" value={displaySummary.stalledUploads} tone="warning" />
+        <SummaryCard label="Publicações com falha" value={displaySummary.failedPublications} tone="danger" />
+        <SummaryCard label="Contas com problema" value={displaySummary.accountsWithProblems} tone="warning" />
+        <SummaryCard label="Resolvidos hoje" value={displaySummary.resolvedToday} tone="ok" />
+        <SummaryCard label="Tentativas automáticas" value={displaySummary.autoRetrying} />
       </section>
+
+      {hasScopeFilter && filteredListSummary && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          <p className="font-medium">Filtro ativo — totais acima são de todas as contas do workspace.</p>
+          <p className="mt-1 text-xs opacity-90">
+            Lista filtrada: {filteredListSummary.critical} críticos · {filteredListSummary.failedPublications}{" "}
+            publicações com falha · {visibleErrors.length} item(ns) visíveis
+            {hasAccountFilter && filters.accountId ? ` · conta ${filters.accountId.slice(0, 8)}` : ""}
+            {hasPlatformFilter ? ` · ${filters.platform}` : ""}
+          </p>
+          <Link href={basePath} className="mt-2 inline-block text-xs font-medium underline">
+            Ver todas as contas
+          </Link>
+        </div>
+      )}
 
       <AccountFilterBar
         accounts={accounts}

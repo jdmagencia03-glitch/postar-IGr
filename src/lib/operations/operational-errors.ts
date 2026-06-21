@@ -1,11 +1,14 @@
 import { isToday, parseISO } from "date-fns";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveInstagramDuplicateGuard } from "@/lib/instagram/resolve-duplicate-guard";
+import { resolveInstagramFailedPost } from "@/lib/instagram/resolve-failed-post";
+import { isInstagramRateLimitError } from "@/lib/instagram/errors";
+import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
 import {
   buildClientReportedError,
   detectAllOperationalErrors,
   type DetectedOperationalError,
 } from "@/lib/operations/error-detector";
-import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
@@ -474,11 +477,16 @@ export async function executeOperationalErrorAction(
       if (!error.scheduled_post_id) throw new Error("Post não associado ao erro");
       const { data: post } = await supabase
         .from("scheduled_posts")
-        .select("id, status, media_id")
+        .select("id, status, media_id, error_message")
         .eq("id", error.scheduled_post_id)
         .single();
       if (!post) throw new Error("Post não encontrado");
       if (post.media_id) throw new Error("Post já publicado");
+      if (isInstagramRateLimitError(post.error_message)) {
+        throw new Error(
+          "Post em cooldown por rate limit do Instagram — aguarde ou cancele o post.",
+        );
+      }
       await supabase
         .from("scheduled_posts")
         .update({ status: "pending", error_message: null, next_retry_at: null })
@@ -491,12 +499,111 @@ export async function executeOperationalErrorAction(
       await supabase.from(table).update({ publishing_paused: false }).eq("id", error.account_id);
       return { ok: true, message: "Publicações retomadas para a conta." };
     }
+    case "pause_account": {
+      if (!error.account_id || error.platform !== "instagram") {
+        throw new Error("Conta Instagram não associada ao erro");
+      }
+      await supabase
+        .from("instagram_accounts")
+        .update({
+          publishing_paused: true,
+          pause_reason: "manual_pause_from_error_center",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", error.account_id);
+      return { ok: true, message: "Conta pausada." };
+    }
+    case "cancel_as_rate_limited_abandoned": {
+      if (!error.scheduled_post_id || !error.account_id) {
+        throw new Error("Post ou conta não associados ao erro");
+      }
+      if (error.platform && error.platform !== "instagram") {
+        throw new Error("Ação disponível apenas para posts Instagram");
+      }
+      const result = await resolveInstagramFailedPost({
+        supabase,
+        ownerId,
+        accountId: error.account_id,
+        postId: error.scheduled_post_id,
+        action: "cancel_as_rate_limited_abandoned",
+        confirm: true,
+      });
+      if (!result.ok) {
+        throw new Error(
+          "message" in result && result.message
+            ? result.message
+            : "Não foi possível cancelar — verifique logs e evidências.",
+        );
+      }
+      if (!("applied" in result)) {
+        throw new Error("Cancelamento não aplicado — dry-run ou evidência insuficiente.");
+      }
+      return { ok: true, message: "Post cancelado (rate limit abandonado).", result };
+    }
     case "reconcile_upload": {
       if (!error.upload_batch_id) throw new Error("Lote não associado ao erro");
       return {
         ok: true,
         message: "Use o endpoint de status do lote para reconciliar.",
         href: `/api/upload/batches/${error.upload_batch_id}/status`,
+      };
+    }
+    case "mark_as_published": {
+      if (!error.scheduled_post_id || !error.account_id) {
+        throw new Error("Post ou conta não associados ao erro");
+      }
+      if (error.platform && error.platform !== "instagram") {
+        throw new Error("Ação disponível apenas para posts Instagram");
+      }
+      const result = await resolveInstagramDuplicateGuard({
+        supabase,
+        ownerId,
+        accountId: error.account_id,
+        postId: error.scheduled_post_id,
+        action: "mark_as_published",
+        confirm: true,
+      });
+      if (!result.ok) {
+        throw new Error(
+          "message" in result && result.message
+            ? result.message
+            : "Não foi possível marcar como publicado — revise o log de sucesso.",
+        );
+      }
+      return { ok: true, message: "Post marcado como publicado.", result };
+    }
+    case "cancel_as_duplicate": {
+      if (!error.scheduled_post_id || !error.account_id) {
+        throw new Error("Post ou conta não associados ao erro");
+      }
+      if (error.platform && error.platform !== "instagram") {
+        throw new Error("Ação disponível apenas para posts Instagram");
+      }
+      const result = await resolveInstagramDuplicateGuard({
+        supabase,
+        ownerId,
+        accountId: error.account_id,
+        postId: error.scheduled_post_id,
+        action: "cancel_as_duplicate",
+        confirm: true,
+      });
+      if (!result.ok) {
+        throw new Error(
+          "message" in result && result.message
+            ? result.message
+            : "Não foi possível cancelar — evidência insuficiente.",
+        );
+      }
+      return { ok: true, message: "Post cancelado como duplicado.", result };
+    }
+    case "manual_review": {
+      return {
+        ok: true,
+        message: "Abra o post e os logs para revisão manual.",
+        href: error.scheduled_post_id
+          ? `/dashboard/posts/${error.scheduled_post_id}`
+          : "/dashboard/errors",
+        delegated: true,
       };
     }
     default:

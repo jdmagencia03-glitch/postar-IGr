@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logPublishEvent } from "@/lib/publish/cron";
+import { safeRemoveStorageObjects } from "@/lib/media/storage-delete-guard";
 
 /** Tempo após publicação antes de apagar o arquivo do Supabase Storage. */
 export const MEDIA_CLEANUP_DELAY_MS = readHours(
@@ -60,9 +61,11 @@ export async function cleanupPublishedMedia(
 
     try {
       if (paths.length) {
-        const { error: removeError } = await supabase.storage.from("media").remove(paths);
-        if (removeError) {
-          throw new Error(removeError.message);
+        const removal = await safeRemoveStorageObjects(supabase, paths);
+        if (removal.blocked.length) {
+          throw new Error(
+            `${removal.blocked.length} arquivo(s) bloqueados — ainda referenciados por posts ativos`,
+          );
         }
       }
 

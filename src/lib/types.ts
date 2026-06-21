@@ -7,7 +7,8 @@ export type PostStatus =
   | "failed"
   | "retrying"
   | "failed_persistent"
-  | "cancelled";
+  | "cancelled"
+  | "needs_media";
 export type LogLevel = "info" | "error" | "success";
 export type SocialPlatform = "instagram" | "tiktok";
 
@@ -25,6 +26,8 @@ export interface InstagramAccount {
   warmup_days?: number;
   warmup_started_at?: string | null;
   publishing_paused?: boolean;
+  pause_reason?: string | null;
+  cooldown_until?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -92,9 +95,11 @@ export interface ScheduledPost {
   scheduled_at: string;
   status: PostStatus;
   container_id: string | null;
+  media_asset_id?: string | null;
   media_id: string | null;
   permalink: string | null;
   error_message: string | null;
+  cancel_reason?: string | null;
   published_at: string | null;
   provider_publish_id?: string | null;
   provider_status?: string | null;
@@ -149,6 +154,35 @@ export type UploadBatchStatus = "uploading" | "ready" | "scheduling" | "schedule
 export type UploadFileStatus = "pending" | "uploading" | "retrying" | "stalled" | "completed" | "failed";
 export type UploadSpeedMode = "economy" | "normal" | "turbo" | "adaptive";
 
+export type MediaAssetStatus =
+  | "uploading"
+  | "uploaded"
+  | "validated"
+  | "attached"
+  | "missing"
+  | "deleted"
+  | "safe_to_delete";
+
+export type MediaAssetValidationStatus = "pending" | "valid" | "invalid";
+
+export interface MediaAsset {
+  id: string;
+  owner_id: string;
+  upload_file_id: string | null;
+  bucket: string;
+  storage_path: string;
+  public_url: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  file_hash: string | null;
+  status: MediaAssetStatus;
+  validation_status: MediaAssetValidationStatus;
+  last_validation_at: string | null;
+  last_validation_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UploadBatchFile {
   id: string;
   batch_id: string;
@@ -157,6 +191,7 @@ export interface UploadBatchFile {
   content_type: string;
   storage_path: string;
   public_url: string | null;
+  media_asset_id?: string | null;
   status: UploadFileStatus;
   bytes_uploaded: number;
   error_message: string | null;
@@ -312,7 +347,15 @@ export type OperationalErrorActionType =
   | "open_calendar"
   | "open_logs"
   | "cancel_batch"
-  | "resume_account";
+  | "resume_account"
+  | "reupload_media"
+  | "cancel_post"
+  | "audit_queue"
+  | "mark_as_published"
+  | "cancel_as_duplicate"
+  | "manual_review"
+  | "pause_account"
+  | "cancel_as_rate_limited_abandoned";
 
 export interface OperationalErrorAction {
   type: OperationalErrorActionType;

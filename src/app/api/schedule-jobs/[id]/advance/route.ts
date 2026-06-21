@@ -24,7 +24,7 @@ export async function POST(
       {
         error: error instanceof Error ? error.message : "Falha ao avançar agendamento",
         userMessage:
-          "A conexão caiu durante o agendamento. O progresso foi salvo — use Retomar agendamento.",
+          "O chunk demorou mais que o esperado. O worker continua em segundo plano — acompanhe o progresso.",
       },
       { status: 500 },
     );

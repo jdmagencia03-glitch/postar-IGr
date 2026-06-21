@@ -1,5 +1,6 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
+import { getUploadBatchStats, logUploadProgressRegression } from "@/lib/upload/batch-stats";
 
 /** Status agregado do lote para polling leve. */
 export type UploadBatchRemoteAggregateStatus =
@@ -97,9 +98,21 @@ export function mergeUploadProgressPercent(
   remotePercent: number,
   localStatus: UploadFileStatus,
   remoteStatus: UploadFileStatus,
+  context?: { batchId?: string; fileId?: string },
 ) {
   if (remoteStatus === "completed" || localStatus === "completed") return 100;
-  return Math.max(localPercent, remotePercent, 0);
+  const merged = Math.max(localPercent, remotePercent, 0);
+  if (remotePercent < localPercent && localPercent >= 5) {
+    logUploadProgressRegression({
+      batchId: context?.batchId,
+      fileId: context?.fileId,
+      previousPercent: localPercent,
+      newPercent: remotePercent,
+      ignored: true,
+      source: "mergeUploadProgressPercent",
+    });
+  }
+  return merged;
 }
 
 export function mergeBytesUploaded(
@@ -143,31 +156,11 @@ export function computeBatchOverallPercent(params: {
   completedCount: number;
   totalCount: number;
 }) {
-  const { batch, progress, progressMap, completedCount, totalCount } = params;
-  const files = batch?.upload_files?.filter((file) => !file.removed) ?? [];
-
-  let loaded = 0;
-  let bytesTotal = 0;
-  for (const file of files) {
-    const size = Number(file.file_size);
-    if (!size) continue;
-    bytesTotal += size;
-    if (file.status === "completed") {
-      loaded += size;
-      continue;
-    }
-    const mapPercent = progressMap[file.id] ?? 0;
-    if (mapPercent > 0) {
-      loaded += Math.round((mapPercent / 100) * size);
-      continue;
-    }
-    loaded += Number(file.bytes_uploaded ?? 0);
-  }
-
-  const fromBytes = bytesTotal > 0 ? Math.round((loaded / bytesTotal) * 100) : 0;
-  const fromCompleted = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-
-  return Math.min(100, Math.max(fromBytes, fromCompleted));
+  return getUploadBatchStats(params.batch, {
+    progress: params.progress,
+    progressMap: params.progressMap,
+    monotonic: true,
+  }).progressPercent;
 }
 
 /** Aplica estado remoto na store local, criando novas referências. */
@@ -267,6 +260,7 @@ export function reconcileUploadBatchState(
         remoteFile.progress,
         localFile.status,
         remoteFile.status,
+        { batchId: localBatch.id, fileId: remoteFile.fileId },
       );
       if (mergedPercent !== localPercent) {
         nextProgress[remoteFile.fileId] = mergedPercent;

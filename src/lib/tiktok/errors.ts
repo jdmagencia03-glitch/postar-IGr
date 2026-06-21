@@ -18,13 +18,12 @@ export function resolveTikTokOAuthError(error?: string | null) {
     return {
       title: "Redirect URI incorreto",
       message:
-        `A URL de callback enviada pelo ${APP_NAME} não bate com a cadastrada no app TikTok (modo Sandbox).`,
+        `A URL de callback enviada pelo ${APP_NAME} não bate com a cadastrada no app TikTok (Production → Login Kit → Web).`,
       steps: [
-        "No TikTok for Developers, confirme modo Sandbox (não Production).",
-        "Login Kit → Web → Redirect URI exatamente:",
+        "No TikTok for Developers → Production (Live) → Login Kit → Web.",
+        "Redirect URI exatamente:",
         getTikTokRedirectUri(),
-        "Sem barra no final. Clique Apply changes e tente de novo.",
-        "Use credenciais Sandbox na Vercel e conta em Target users.",
+        "Sem barra no final. Salve e tente de novo.",
       ],
     };
   }
@@ -43,14 +42,42 @@ export function resolveTikTokOAuthError(error?: string | null) {
     };
   }
 
-  if (normalized.includes("scope") || normalized.includes("client_key")) {
+  if (normalized.includes("scope")) {
     return {
-      title: "App TikTok não configurado",
-      message: "Verifique Login Kit, Content Posting API e scopes no portal TikTok.",
+      title: "Permissões (scopes) não conferem",
+      message:
+        "O TikTok recusou a autorização porque os scopes solicitados não batem com os aprovados no app. Confira Login Kit + Content Posting API no portal e alinhe TIKTOK_SCOPES na Vercel.",
       steps: [
-        "Ative Login Kit + Content Posting API (Direct Post).",
-        "Solicite scopes: user.info.basic, user.info.profile, video.upload, video.publish.",
-        "Configure TIKTOK_CLIENT_KEY e TIKTOK_CLIENT_SECRET na Vercel.",
+        "Scopes necessários: user.info.basic, user.info.profile, video.upload, video.publish.",
+        "No TikTok for Developers → Scopes, confirme que os quatro estão ativos na versão Production (Live).",
+        "Na Vercel, TIKTOK_SCOPES deve ser exatamente: user.info.basic,user.info.profile,video.upload,video.publish",
+        "Faça redeploy após alterar a variável e tente conectar de novo.",
+      ],
+    };
+  }
+
+  if (normalized.includes("client_key") || normalized.includes("invalid_client")) {
+    return {
+      title: "Credenciais TikTok inválidas",
+      message:
+        "O client_key ou client_secret não foi aceito pelo TikTok. Use as credenciais da versão Production (Live) do app, não as do Sandbox.",
+      steps: [
+        "No TikTok for Developers → Production → Credentials, copie Client key e Client secret.",
+        "Atualize TIKTOK_CLIENT_KEY e TIKTOK_CLIENT_SECRET na Vercel (Production).",
+        "Confirme que TIKTOK_REDIRECT_URI é https://postarigr.vercel.app/api/auth/tiktok/callback",
+        "Redeploy e tente novamente.",
+      ],
+    };
+  }
+
+  if (normalized.includes("not configured") || normalized.includes("não configurado")) {
+    return {
+      title: "App TikTok não configurado no servidor",
+      message: "TIKTOK_CLIENT_KEY ou TIKTOK_CLIENT_SECRET não estão definidos na Vercel.",
+      steps: [
+        "Configure TIKTOK_CLIENT_KEY e TIKTOK_CLIENT_SECRET na Vercel (ambiente Production).",
+        "Ative Login Kit + Content Posting API no portal TikTok.",
+        "Redeploy após salvar as variáveis.",
       ],
     };
   }

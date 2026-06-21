@@ -7,7 +7,7 @@ import {
   groupWarmupScheduleByDay,
 } from "@/lib/account-warmup";
 import type { ContentType, SocialPlatform } from "@/lib/types";
-import { APP_TIMEZONE, getAppDateParts } from "@/lib/timezone";
+import { APP_TIMEZONE, getAppDateParts, atHourOnDayOffsetInAppTz, zonedDateTimeToUtc } from "@/lib/timezone";
 import {
   buildAutoTimeSlots,
   earliestScheduleInstant,
@@ -22,6 +22,9 @@ import {
   type ScheduleMode,
   type WarmupScheduleOptions,
 } from "@/lib/smart-schedule";
+import {
+  fillScheduleSlots,
+} from "@/lib/schedule-slots";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type ScheduleInsertionStrategy = "continue" | "new_plan" | "fill_gaps";
@@ -31,6 +34,8 @@ export interface ExistingScheduledPostRef {
   scheduled_at: string;
   upload_batch_id?: string | null;
   status: string;
+  created_at?: string | null;
+  content_type?: string | null;
 }
 
 export interface ScheduleInsertionDayRow {
@@ -108,7 +113,7 @@ export async function fetchPendingPostsForAccount(
 ) {
   let query = supabase
     .from("scheduled_posts")
-    .select("id, scheduled_at, upload_batch_id, status, content_type")
+    .select("id, scheduled_at, upload_batch_id, status, content_type, created_at")
     .in("status", ACTIVE_STATUSES)
     .order("scheduled_at", { ascending: true });
 
@@ -247,6 +252,7 @@ function buildWarmupOrAutoNewSchedule(params: {
   auto?: AutoScheduleOptions;
   mode: ScheduleMode;
   now: Date;
+  warmupWarnings?: string[];
 }) {
   const useWarmup =
     params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new");
@@ -259,6 +265,7 @@ function buildWarmupOrAutoNewSchedule(params: {
       warmupDayOffset: params.warmup?.warmupDayOffset ?? 0,
       startDate: params.anchorStartDate,
       now: params.now,
+      warnings: params.warmupWarnings,
     });
   }
 
@@ -310,61 +317,23 @@ function buildFillGapsSchedule(params: {
   existing: ExistingScheduledPostRef[];
   now: Date;
 }) {
-  const schedule: Date[] = [];
-  const occupancy = new Map<string, number>();
-  const occupiedTimes = new Set<string>();
+  console.info("[schedule-slot-check]", {
+    count: params.count,
+    existing: params.existing.length,
+    postsPerDay: params.postsPerDay,
+  });
 
-  for (const post of params.existing) {
-    const key = dateKey(post.scheduled_at);
-    occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
-    occupiedTimes.add(`${key}T${formatTime(post.scheduled_at)}`);
-  }
-
-  let dayOffset = 0;
-  let slotIndex = 0;
-
-  while (schedule.length < params.count) {
-    if (dayOffset > 400) break;
-
-    const base = params.now;
-    const parts = getAppDateParts(base);
-    const candidateDay = new Date(
-      Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset),
-    );
-
-    const dayCount = occupancy.get(dateKey(candidateDay.toISOString())) ?? 0;
-    if (dayCount >= params.postsPerDay) {
-      dayOffset++;
-      slotIndex = 0;
-      continue;
-    }
-
-    const slot = params.timeSlots[slotIndex % params.timeSlots.length];
-    let candidate = ensureFutureScheduleSlot(
-      new Date(
-        candidateDay.getTime() +
-          slot.hour * 3_600_000 +
-          slot.minute * 60_000,
-      ),
-      params.now,
-    );
-
-    const key = dateKey(candidate.toISOString());
-    const timeKey = `${key}T${formatTime(candidate.toISOString())}`;
-
-    if (occupiedTimes.has(timeKey) || (occupancy.get(key) ?? 0) >= params.postsPerDay) {
-      slotIndex++;
-      if (slotIndex % params.timeSlots.length === 0) dayOffset++;
-      continue;
-    }
-
-    schedule.push(candidate);
-    occupiedTimes.add(timeKey);
-    occupancy.set(key, (occupancy.get(key) ?? 0) + 1);
-    slotIndex++;
-  }
-
-  return schedule;
+  return fillScheduleSlots({
+    count: params.count,
+    existing: params.existing.map((post) => ({
+      id: post.id,
+      scheduled_at: post.scheduled_at,
+      status: post.status,
+    })),
+    timeSlots: params.timeSlots,
+    postsPerDay: params.postsPerDay,
+    now: params.now,
+  });
 }
 
 function buildTodayContinuation(params: {
@@ -433,15 +402,9 @@ function applySlotsAgainstCalendar(params: {
     let dayOffset = 0;
 
     for (let attempt = 0; attempt < 500; attempt++) {
-      const parts = getAppDateParts(params.now);
-      const candidateDay = new Date(
-        Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset),
-      );
       const slot = params.timeSlots[slotIndex % params.timeSlots.length];
       candidate = ensureFutureScheduleSlot(
-        new Date(
-          candidateDay.getTime() + slot.hour * 3_600_000 + slot.minute * 60_000,
-        ),
+        atHourOnDayOffsetInAppTz(params.now, dayOffset, slot.hour, slot.minute),
         params.now,
       );
 
@@ -720,6 +683,7 @@ export async function resolveScheduleInsertionPlan(
         auto: params.auto,
         mode: params.mode,
         now,
+        warmupWarnings: extraWarnings,
       });
     }
   } else {
@@ -729,6 +693,7 @@ export async function resolveScheduleInsertionPlan(
       auto: params.auto,
       mode: "auto",
       now,
+      warmupWarnings: extraWarnings,
     });
   }
 

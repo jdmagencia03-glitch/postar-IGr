@@ -11,7 +11,7 @@ import {
   getDay,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, getAppDateParts } from "@/lib/timezone";
 import type { ScheduledPost } from "@/lib/types";
 
 const DAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
@@ -146,13 +146,30 @@ export function computeHealthChecks(params: {
   tokenValid: boolean;
   pendingCount: number;
   failedCount: number;
+  retryingCount?: number;
+  duplicateSlotCount?: number;
+  playbookConfigured?: boolean;
+  health?: "healthy" | "attention" | "error";
 }) {
   const checks = [
     { label: "Token válido", ok: params.tokenValid },
-    { label: "Publicação ativa", ok: params.tokenValid },
+    {
+      label: "Publicação ativa",
+      ok: params.tokenValid && (params.retryingCount ?? 0) === 0,
+    },
     { label: "Fila abastecida", ok: params.pendingCount > 0 },
-    { label: "Sem falhas", ok: params.failedCount === 0 },
+    {
+      label: "Sem falhas críticas",
+      ok:
+        params.failedCount === 0 &&
+        (params.duplicateSlotCount ?? 0) === 0 &&
+        params.health !== "error",
+    },
   ];
+
+  if (params.playbookConfigured === false) {
+    checks.push({ label: "Playbook configurado", ok: false });
+  }
 
   const percent = Math.round((checks.filter((item) => item.ok).length / checks.length) * 100);
   return { checks, percent };
@@ -193,23 +210,34 @@ export function computeMonthlyCoverage(posts: ScheduledPost[], now = new Date())
 }
 
 export function computeScheduleInsights(posts: ScheduledPost[]) {
-  const hourCounts = new Map<number, number>();
-  const dayCounts = new Map<number, number>();
+  const published = publishedPosts(posts);
+  if (published.length < 5) {
+    return {
+      bestHour: null as string | null,
+      bestDay: null as string | null,
+      hasEnoughData: false,
+    };
+  }
 
-  for (const post of posts) {
-    const date = parseISO(post.scheduled_at);
-    const hour = date.getHours();
-    const day = getDay(date);
-    hourCounts.set(hour, (hourCounts.get(hour) ?? 0) + 1);
-    dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
+  const hourCounts = new Map<number, number>();
+  const dayCounts = new Map<string, number>();
+
+  for (const post of published) {
+    const parts = getAppDateParts(parseISO(post.published_at!));
+    hourCounts.set(parts.hour, (hourCounts.get(parts.hour) ?? 0) + 1);
+    const dayLabel = formatInAppTimezone(post.published_at!, { weekday: "long" });
+    dayCounts.set(dayLabel, (dayCounts.get(dayLabel) ?? 0) + 1);
   }
 
   const bestHourEntry = [...hourCounts.entries()].sort((a, b) => b[1] - a[1])[0];
   const bestDayEntry = [...dayCounts.entries()].sort((a, b) => b[1] - a[1])[0];
 
   return {
-    bestHour: bestHourEntry ? `${bestHourEntry[0].toString().padStart(2, "0")}:00` : "19:00",
-    bestDay: bestDayEntry ? DAY_NAMES[bestDayEntry[0]] : "Segunda-feira",
+    bestHour: bestHourEntry
+      ? `${String(bestHourEntry[0]).padStart(2, "0")}:00`
+      : null,
+    bestDay: bestDayEntry ? bestDayEntry[0] : null,
+    hasEnoughData: true,
   };
 }
 

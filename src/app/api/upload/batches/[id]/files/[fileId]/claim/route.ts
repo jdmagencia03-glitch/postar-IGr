@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { claimUploadFileLease } from "@/lib/upload/queue";
+import { buildUploadClaimConflictPayload } from "@/lib/upload/claim-conflict";
+import { claimUploadFileLease, inspectUploadFileClaim } from "@/lib/upload/queue";
 import { verifyBatchFileAccess } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
@@ -33,15 +34,47 @@ export async function POST(
   }
 
   try {
+    const conflict = await inspectUploadFileClaim(supabase, {
+      batchId: id,
+      fileId,
+      workerId: body.workerId,
+    });
+
+    if (conflict?.leasedToOther) {
+      return NextResponse.json(
+        buildUploadClaimConflictPayload({
+          batchId: id,
+          fileId,
+          file: conflict.file,
+        }),
+        { status: 409 },
+      );
+    }
+
     const file = await claimUploadFileLease(supabase, {
       batchId: id,
       fileId,
       workerId: body.workerId,
     });
     if (!file) {
-      return NextResponse.json({ error: "Arquivo em uso por outro worker" }, { status: 409 });
+      const latest = await inspectUploadFileClaim(supabase, {
+        batchId: id,
+        fileId,
+        workerId: body.workerId,
+      });
+      if (latest?.leasedToOther) {
+        return NextResponse.json(
+          buildUploadClaimConflictPayload({
+            batchId: id,
+            fileId,
+            file: latest.file,
+          }),
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: "Arquivo indisponível para claim" }, { status: 409 });
     }
-    return NextResponse.json({ file });
+    return NextResponse.json({ ok: true, file });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Falha ao reservar arquivo" },

@@ -1,7 +1,14 @@
 import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { createScheduleJob, findActiveJobForBatch } from "@/lib/schedule-jobs/repository";
+import { dispatchScheduleJob, dispatchQueueDrain } from "@/lib/schedule-jobs/dispatch";
+import {
+  assertUserCanCreateJob,
+  bootstrapJobQueue,
+} from "@/lib/schedule-jobs/queue/tasks";
+import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
+import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch } from "@/lib/schedule-jobs/repository";
 import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD } from "@/lib/schedule-jobs/constants";
 import { getBatchForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -64,14 +71,33 @@ export async function POST(request: NextRequest) {
 
     const existing = await findActiveJobForBatch(supabase, ownerId, batch.id);
     if (existing) {
+      await bootstrapJobQueue(supabase, existing).catch(() => undefined);
+      await dispatchQueueDrain("reuse");
+      waitUntil(
+        drainScheduleJobQueue(supabase, { workerPrefix: "reuse" }).catch(() => undefined),
+      );
       return NextResponse.json({
         jobId: existing.id,
         reused: true,
         total: existing.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
-        message: "Job de agendamento já em andamento — retomando progresso salvo.",
+        message: "Agendamento em andamento — acompanhe o progresso abaixo.",
       });
     }
+
+    const completedJob = await findCompletedJobForBatch(supabase, ownerId, batch.id);
+    if (completedJob && !parsed.data.partial) {
+      return NextResponse.json({
+        jobId: completedJob.id,
+        reused: true,
+        alreadyCompleted: true,
+        total: completedJob.total_items,
+        largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
+        message: "Agendamento já concluído para este lote.",
+      });
+    }
+
+    await assertUserCanCreateJob(supabase, ownerId);
 
     const platforms = new Set(parsed.data.targets.map((t) => t.platform));
     const platform =
@@ -107,6 +133,14 @@ export async function POST(request: NextRequest) {
       })),
     });
 
+    await bootstrapJobQueue(supabase, created.job);
+    await dispatchScheduleJob(created.job.id, ownerId);
+    waitUntil(
+      drainScheduleJobQueue(supabase, { workerPrefix: "create" }).catch((error) => {
+        console.error("[schedule-job-created]", error);
+      }),
+    );
+
     return NextResponse.json(
       {
         jobId: created.job.id,
@@ -114,8 +148,8 @@ export async function POST(request: NextRequest) {
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
         message:
           files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD
-            ? "Lote grande detectado. Processando agendamento em segundo plano para evitar falhas."
-            : "Agendamento iniciado em segundo plano.",
+            ? "Agendamento criado e enviado para fila. Você pode fechar esta aba."
+            : "Agendamento criado e enviado para fila.",
       },
       { status: 201 },
     );

@@ -29,6 +29,7 @@ import { AccountStatusBadge } from "@/components/AccountStatusBadge";
 import { BrandLogo } from "@/components/BrandLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UploadMainPadding } from "@/components/upload/UploadMainPadding";
+import { AdminAuditNavLink } from "@/components/operations/AdminAuditNavLink";
 import { APP_NAME } from "@/lib/brand";
 
 const links = [
@@ -123,6 +124,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
 
         <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+
+        <div className="mt-2 border-t border-ig-border pt-2">
+          <AdminAuditNavLink onNavigate={() => setMobileOpen(false)} />
+        </div>
 
         <div className="mt-auto space-y-1 border-t border-ig-border pt-3">
           <a href="/api/auth/logout" className="ig-nav-link text-ig-muted hover:text-ig-danger">

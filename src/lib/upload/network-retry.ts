@@ -1,3 +1,8 @@
+import {
+  classifyConnectionState,
+  uploadRetryMessage,
+  userMessageForState,
+} from "@/lib/connection-state";
 import { extractUploadErrorMessage } from "@/lib/upload/errors";
 
 /** Backoff entre tentativas de upload por arquivo (ms). */
@@ -81,7 +86,7 @@ export function classifyUploadError(error: unknown): UploadErrorClassification {
   }
 
   if (
-    /sem progresso|reconectando automaticamente|stall_timeout|upload travado|tempo máximo de upload/i.test(
+    /upload_stall|sem progresso|reconectando automaticamente|stall_timeout|upload travado|tempo máximo de upload/i.test(
       lower,
     )
   ) {
@@ -114,18 +119,33 @@ export function classifyUploadError(error: unknown): UploadErrorClassification {
   };
 }
 
+function connectionKindForUpload(classification: UploadErrorClassification) {
+  if (classification.kind === "stall") {
+    return classifyConnectionState({ source: "upload_stall" });
+  }
+  return classifyConnectionState({
+    source: "error",
+    error: new Error(classification.message),
+    httpStatus: classification.statusCode,
+  });
+}
+
 export function userMessageForUploadError(classification: UploadErrorClassification) {
+  const stateKind = connectionKindForUpload(classification);
   switch (classification.kind) {
     case "stall":
-      return "Conexão lenta — retomando envio automaticamente…";
+      return userMessageForState("upload_stalled");
     case "network":
-      return "Conexão instável. Tentando novamente…";
+      return userMessageForState(
+        stateKind === "offline" ? "offline" : "unknown",
+        { consecutiveFailures: 1 },
+      );
     case "server":
-      return "Servidor temporariamente indisponível. Tentando novamente…";
+      return userMessageForState("server_error");
     case "rate_limit":
-      return "Servidor ocupado. Tentando novamente em instantes…";
+      return userMessageForState("rate_limited");
     case "auth":
-      return "Não foi possível enviar este vídeo por falta de permissão. Faça login novamente.";
+      return userMessageForState("auth_error");
     case "file":
       return "Este arquivo não pôde ser enviado. Verifique formato e tamanho.";
     default:
@@ -139,14 +159,22 @@ export function retryMessage(params: {
   delayMs: number;
   kind: UploadErrorKind;
 }) {
-  const seconds = Math.max(1, Math.round(params.delayMs / 1000));
-  if (params.kind === "stall") {
-    return `Conexão lenta — retomando envio (${params.attempt}/${params.maxAttempts}) em ${seconds}s…`;
-  }
-  if (params.kind === "server") {
-    return `Servidor instável. Tentativa ${params.attempt} de ${params.maxAttempts} em ${seconds}s…`;
-  }
-  return `Conexão instável. Tentativa ${params.attempt} de ${params.maxAttempts} em ${seconds}s…`;
+  const stateKind =
+    params.kind === "stall"
+      ? classifyConnectionState({ source: "upload_stall" })
+      : params.kind === "server" || params.kind === "rate_limit"
+        ? classifyConnectionState({
+            source: "http",
+            status: params.kind === "rate_limit" ? 429 : 503,
+          })
+        : params.kind === "network"
+          ? classifyConnectionState({
+              source: "error",
+              error: new Error("failed to fetch"),
+            })
+          : classifyConnectionState({ source: "error", error: new Error("unknown") });
+
+  return uploadRetryMessage(stateKind, params);
 }
 
 export function logUploadEvent(
@@ -162,11 +190,33 @@ export function logUploadEvent(
     | "[upload-engine-event]"
     | "[upload-reconcile]"
     | "[upload-polling]"
-    | "[upload-snapshot]",
+    | "[upload-snapshot]"
+    | "[upload-stats-reconcile]",
   event: string,
   detail?: Record<string, unknown>,
 ) {
   if (typeof console === "undefined") return;
+
+  const debugOnly =
+    prefix === "[upload-store-emit]" ||
+    prefix === "[upload-snapshot]" ||
+    prefix === "[upload-reconcile]" ||
+    prefix === "[upload-polling]" ||
+    prefix === "[upload-stats-reconcile]" ||
+    (prefix === "[upload-engine-event]" && event !== "upload_error");
+
+  if (debugOnly) {
+    if (process.env.NEXT_PUBLIC_UPLOAD_DEBUG !== "true") return;
+  }
+
+  const isError =
+    event === "error" ||
+    event === "upload_error" ||
+    event === "file_failed" ||
+    prefix === "[upload-failed]";
+
+  if (debugOnly && !isError) return;
+
   console.info(`${prefix} ${event}`, {
     timestamp: new Date().toISOString(),
     ...detail,

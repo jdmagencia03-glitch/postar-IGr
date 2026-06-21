@@ -24,9 +24,13 @@ export function PostCard({
   const username = getPostAccountUsername(post);
   const platformLabel = post.platform === "tiktok" ? "TikTok" : "Instagram";
   const hashtags = extractHashtags(post.caption);
+  const captionWithoutHashtags = (post.caption ?? "")
+    .replace(/#[\w\u00C0-\u017F]+/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const displayText = captionWithoutHashtags || post.caption || "";
   const mediaUrl = post.media_urls[0];
   const isStory = post.content_type === "story";
-  const displayText = post.caption ?? "";
 
   if (rich) {
     return (

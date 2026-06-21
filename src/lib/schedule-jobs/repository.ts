@@ -10,6 +10,10 @@ import {
   SCHEDULE_JOB_INSERT_CHUNK,
   SCHEDULE_JOB_PLAN_CHUNK,
 } from "@/lib/schedule-jobs/constants";
+import {
+  deriveScheduleJobView,
+  logScheduleJobEvent,
+} from "@/lib/schedule-jobs/state";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
   return {
@@ -30,6 +34,25 @@ export async function findActiveJobForBatch(
     .eq("owner_id", ownerId)
     .eq("upload_batch_id", uploadBatchId)
     .in("status", ["queued", "processing", "partial_failed"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data as ScheduleJobRow | null;
+}
+
+export async function findCompletedJobForBatch(
+  supabase: SupabaseClient,
+  ownerId: string,
+  uploadBatchId: string,
+) {
+  const { data, error } = await supabase
+    .from("schedule_jobs")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("upload_batch_id", uploadBatchId)
+    .eq("status", "completed")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -111,7 +134,8 @@ export async function loadInsertPendingItems(
     .select("*")
     .eq("schedule_job_id", jobId)
     .not("destinations", "is", null)
-    .in("status", ["queued", "processing", "retrying"])
+    .is("created_post_id", null)
+    .in("status", ["queued", "processing", "retrying", "completed"])
     .order("sort_order", { ascending: true })
     .limit(limit * 2);
 
@@ -133,7 +157,7 @@ export async function syncJobCountersFromDb(supabase: SupabaseClient, jobId: str
 
   const [totalRes, completedRes, failedRes, processedRes] = await Promise.all([
     base(),
-    base().eq("status", "completed"),
+    base().eq("status", "completed").not("created_post_id", "is", null),
     base().eq("status", "failed"),
     base().not("destinations", "is", null),
   ]);
@@ -184,6 +208,7 @@ export async function createScheduleJob(
     : null;
 
   if (existing) {
+    logScheduleJobEvent("schedule-job-resumed", existing, { reason: "active_job_exists" });
     return { job: existing, items: [] as ScheduleJobItemRow[] };
   }
 
@@ -223,7 +248,12 @@ export async function createScheduleJob(
     throw itemsError;
   }
 
-  return { job: job as ScheduleJobRow, items: [] as ScheduleJobItemRow[] };
+  const createdJob = job as ScheduleJobRow;
+  logScheduleJobEvent("schedule-job-created", createdJob, {
+    totalItems: createdJob.total_items,
+  });
+
+  return { job: createdJob, items: [] as ScheduleJobItemRow[] };
 }
 
 export async function updateJobCounters(
@@ -253,48 +283,50 @@ export async function updateJobItem(
 }
 
 export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusResponse {
-  const total = job.total_items;
-  const completed = job.completed_items;
-  const failed = job.failed_items;
-  const processed = job.processed_items;
-  const pending = Math.max(0, total - completed - failed);
-
-  const planChunksTotal = Math.ceil(total / SCHEDULE_JOB_PLAN_CHUNK);
-  const planChunksDone = Math.ceil(processed / SCHEDULE_JOB_PLAN_CHUNK);
-  const insertChunksTotal = Math.ceil(total / SCHEDULE_JOB_INSERT_CHUNK);
-  const insertChunksDone = Math.ceil(completed / SCHEDULE_JOB_INSERT_CHUNK);
-
-  const stepLabels: Record<string, string> = {
-    queued: "Preparando agendamento",
-    planning: "Montando calendário",
-    captions: "Criando legendas e hashtags",
-    inserting: "Salvando posts",
-    completed: "Concluído",
-  };
-
-  const isActive = job.status === "queued" || job.status === "processing";
+  const view = deriveScheduleJobView(job);
 
   return {
     jobId: job.id,
     status: job.status,
+    phase: view.phase,
     currentStep: job.current_step,
-    total,
-    processed,
-    completed,
-    failed,
-    pending,
-    planChunksTotal,
-    planChunksDone,
-    insertChunksTotal,
-    insertChunksDone,
+    total: job.total_items,
+    processed: view.captionsDone,
+    completed: view.postsSaved,
+    failed: job.failed_items,
+    pending: view.pendingItems,
+    captionsDone: view.captionsDone,
+    hashtagsDone: view.hashtagsDone,
+    calendarDone: view.calendarDone,
+    postsSaved: view.postsSaved,
+    planChunksTotal: view.planChunksTotal,
+    planChunksDone: view.planChunksDone,
+    insertChunksTotal: view.insertChunksTotal,
+    insertChunksDone: view.insertChunksDone,
     scheduleSummary: job.schedule_summary,
+    planReady: view.planReady,
     errorMessage: job.error_message,
-    isActive,
-    canResume:
-      job.status === "partial_failed" ||
-      failed > 0 ||
-      (isActive && processed > 0 && processed < total),
-    stepLabel: stepLabels[job.current_step] ?? job.current_step,
+    isActive: view.isActive,
+    workerActive: view.workerActive,
+    workerStatus: view.workerStatus,
+    workerLabel: view.workerLabel,
+    canResume: view.canResume,
+    canForceContinue: view.canForceContinue,
+    canFinalizePosts: view.canFinalizePosts,
+    isStalled: view.isStalled,
+    canCancel: view.canCancel,
+    canOpenCalendar: view.canOpenCalendar,
+    hasActiveError: view.hasActiveError,
+    lastHeartbeatAt: job.last_heartbeat_at ?? null,
+    lastError: job.error_message,
+    stepLabel: view.stepLabel,
+    headline: view.headline,
+    progressLabel: view.progressLabel,
+    progressPercent: view.progressPercent,
+    planSummaryLabel: view.planSummaryLabel,
+    postsSummaryLabel: view.postsSummaryLabel,
+    steps: view.steps,
+    updatedAt: job.updated_at,
   };
 }
 
@@ -305,49 +337,14 @@ export function buildJobStatus(
   const completed = items.filter((item) => item.status === "completed").length;
   const failed = items.filter((item) => item.status === "failed").length;
   const planned = items.filter((item) => item.destinations?.length).length;
-  const pending = items.length - completed - failed;
-  const planChunksTotal = Math.ceil(items.length / SCHEDULE_JOB_PLAN_CHUNK);
-  const planChunksDone = Math.ceil(planned / SCHEDULE_JOB_PLAN_CHUNK);
-  const insertChunksTotal = Math.ceil(items.length / SCHEDULE_JOB_INSERT_CHUNK);
-  const inserted = items.filter(
-    (item) =>
-      item.status === "completed" ||
-      (item.destinations?.every((d) => d.created_post_id) ?? false),
-  ).length;
-  const insertChunksDone = Math.ceil(inserted / SCHEDULE_JOB_INSERT_CHUNK);
 
-  const stepLabels: Record<string, string> = {
-    queued: "Preparando agendamento",
-    planning: "Montando calendário",
-    captions: "Criando legendas e hashtags",
-    inserting: "Salvando posts",
-    completed: "Concluído",
-  };
-
-  const isActive = job.status === "queued" || job.status === "processing";
-
-  return {
-    jobId: job.id,
-    status: job.status,
-    currentStep: job.current_step,
-    total: items.length,
-    processed: planned,
-    completed,
-    failed,
-    pending,
-    planChunksTotal,
-    planChunksDone,
-    insertChunksTotal,
-    insertChunksDone,
-    scheduleSummary: job.schedule_summary,
-    errorMessage: job.error_message,
-    isActive,
-    canResume:
-      job.status === "partial_failed" ||
-      failed > 0 ||
-      (isActive && planned > 0 && planned < items.length),
-    stepLabel: stepLabels[job.current_step] ?? job.current_step,
-  };
+  return buildJobStatusFromJob({
+    ...job,
+    total_items: items.length,
+    completed_items: completed,
+    failed_items: failed,
+    processed_items: planned,
+  });
 }
 
 export async function finalizeJobStatusFromDb(
@@ -355,26 +352,38 @@ export async function finalizeJobStatusFromDb(
   job: ScheduleJobRow,
 ) {
   const counts = await syncJobCountersFromDb(supabase, job.id);
+  const oldStatus = job.status;
 
   let status = job.status;
   let currentStep = job.current_step;
   let completedAt = job.completed_at;
 
-  if (counts.completed + counts.failed === counts.total && counts.total > 0) {
+  const allItemsAccountedFor =
+    counts.completed + counts.failed === counts.total && counts.total > 0;
+  const planComplete = counts.processed >= counts.total;
+  const postsSaved = counts.completed > 0;
+
+  if (allItemsAccountedFor && postsSaved) {
     status =
-      counts.failed > 0 && counts.completed > 0
-        ? "partial_failed"
-        : counts.failed === counts.total
-          ? "failed"
-          : "completed";
+      counts.failed > 0 ? "partial_failed" : "completed";
     currentStep = "completed";
-    completedAt = new Date().toISOString();
+    completedAt = completedAt ?? new Date().toISOString();
+  } else if (allItemsAccountedFor && counts.failed === counts.total) {
+    status = "failed";
+    currentStep = "completed";
+    completedAt = completedAt ?? new Date().toISOString();
   } else if (counts.processed < counts.total) {
     status = "processing";
     currentStep = "captions";
-  } else if (counts.completed < counts.total) {
+    completedAt = null;
+  } else if (planComplete && counts.completed < counts.total) {
     status = "processing";
     currentStep = "inserting";
+    completedAt = null;
+  } else if (status === "completed" && !postsSaved) {
+    status = "processing";
+    currentStep = counts.processed < counts.total ? "captions" : "inserting";
+    completedAt = null;
   }
 
   await updateJobCounters(supabase, job.id, {
@@ -386,7 +395,7 @@ export async function finalizeJobStatusFromDb(
     completed_at: completedAt,
   } as Partial<ScheduleJobRow>);
 
-  return {
+  const nextJob = {
     ...job,
     completed_items: counts.completed,
     failed_items: counts.failed,
@@ -394,7 +403,25 @@ export async function finalizeJobStatusFromDb(
     status,
     current_step: currentStep,
     completed_at: completedAt,
-  };
+    updated_at: new Date().toISOString(),
+  } as ScheduleJobRow;
+
+  if (oldStatus !== status || job.current_step !== currentStep) {
+    logScheduleJobEvent("schedule-job-state-transition", nextJob, {
+      oldStatus,
+      oldStep: job.current_step,
+    });
+  }
+
+  if (status === "completed" || status === "partial_failed") {
+    logScheduleJobEvent("schedule-job-completed", nextJob, { oldStatus });
+  } else if (status === "failed") {
+    logScheduleJobEvent("schedule-job-failed", nextJob, { oldStatus });
+  } else {
+    logScheduleJobEvent("schedule-job-progress", nextJob);
+  }
+
+  return nextJob;
 }
 
 export async function refreshJobStatusFromItems(
@@ -410,10 +437,14 @@ export async function refreshJobStatusFromItems(
   let currentStep = job.current_step;
   let completedAt = job.completed_at;
 
-  if (completed + failed === items.length && items.length > 0) {
-    status = failed > 0 && completed > 0 ? "partial_failed" : failed === items.length ? "failed" : "completed";
+  if (completed + failed === items.length && items.length > 0 && completed > 0) {
+    status = failed > 0 ? "partial_failed" : "completed";
     currentStep = "completed";
-    completedAt = new Date().toISOString();
+    completedAt = completedAt ?? new Date().toISOString();
+  } else if (completed + failed === items.length && failed === items.length) {
+    status = "failed";
+    currentStep = "completed";
+    completedAt = completedAt ?? new Date().toISOString();
   } else if (processed < items.length) {
     status = "processing";
     currentStep = "captions";

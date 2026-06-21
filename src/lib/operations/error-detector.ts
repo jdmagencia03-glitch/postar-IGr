@@ -1,5 +1,9 @@
 import { differenceInMinutes, isPast, parseISO } from "date-fns";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
+import {
+  isFalseDuplicateGuardMessage,
+  isInstagramRateLimitError,
+} from "@/lib/instagram/errors";
 import type { AccountOperationsSummary } from "@/lib/operations/account-ops";
 import { buildPublicationAudit } from "@/lib/operations/publication-audit";
 import { getPostAccountUsername } from "@/lib/posts";
@@ -87,6 +91,92 @@ function classifyPublishError(post: ScheduledPost): {
   const platform = post.platform ?? "instagram";
   const contentType = (post.content_type ?? "reel") as ContentType;
 
+  if (
+    post.status === "needs_media" ||
+    msg.includes("video_storage_object_missing") ||
+    msg.includes("objeto de vídeo não encontrado") ||
+    msg.includes("storage_object_missing") ||
+    msg.includes("post_skipped_missing_media")
+  ) {
+    return {
+      severity: "high",
+      status: "needs_user_action",
+      title: "Vídeo ausente no Storage",
+      probableCause: "O arquivo de vídeo não existe ou não está acessível no Supabase Storage.",
+      recommendedAction: "Reenvie o vídeo, cancele o post ou audite a fila antes de tentar publicar.",
+      actions: [
+        action("reupload_media", "Reenviar vídeo", `/dashboard/bulk?account=${accountId}`),
+        action("cancel_post", "Cancelar post", undefined, "POST"),
+        action(
+          "audit_queue",
+          "Auditar fila",
+          `/dashboard/errors?account=${accountId}&category=publishing`,
+        ),
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+      ],
+    };
+  }
+
+  if (platform === "instagram" && isInstagramRateLimitError(post.error_message)) {
+    return {
+      severity: "high",
+      status: "needs_user_action",
+      title: "Instagram bloqueou ações (rate limit)",
+      probableCause:
+        "A Meta limitou publicações na conta. O sistema aplica cooldown de 6h+ e não repete tentativas em intervalo curto.",
+      recommendedAction:
+        "Aguarde o cooldown da conta ou cancele posts antigos que não serão republicados.",
+      actions: [
+        action(
+          "open_diagnostics",
+          "Conta em cooldown",
+          `/dashboard/accounts/${accountId}/diagnostics?platform=${platform}`,
+        ),
+        action("cancel_as_rate_limited_abandoned", "Cancelar post", undefined, "POST"),
+        action("pause_account", "Pausar conta", undefined, "POST"),
+        action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
+      ],
+    };
+  }
+
+  const hasDuplicateEvidence = Boolean(post.media_id) || Boolean(post.permalink);
+  if (isFalseDuplicateGuardMessage(post.error_message) && hasDuplicateEvidence) {
+    return {
+      severity: "high",
+      status: "needs_user_action",
+      title: "Republicação bloqueada por log de sucesso",
+      probableCause:
+        "Existe evidência de publicação anterior (log de sucesso, media_id ou permalink).",
+      recommendedAction:
+        "Verifique o log de sucesso. Se já publicou, marque como publicado; se for duplicata, cancele o post.",
+      actions: [
+        action("open_logs", "Ver log de sucesso", `/dashboard/logs?post=${post.id}`),
+        action("mark_as_published", "Marcar como publicado", undefined, "POST"),
+        action("cancel_as_duplicate", "Cancelar como duplicado", undefined, "POST"),
+        action("manual_review", "Revisão manual", `/dashboard/posts/${post.id}`),
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+      ],
+    };
+  }
+
+  if (isFalseDuplicateGuardMessage(post.error_message) && !hasDuplicateEvidence) {
+    return {
+      severity: "high",
+      status: "needs_user_action",
+      title: "Bloqueio de republicação sem evidência",
+      probableCause:
+        "Mensagem de duplicate guard sem log de sucesso, media_id ou permalink. Pode ser falso positivo ou falha anterior distinta.",
+      recommendedAction:
+        "Revise logs e cancele o post se for falha antiga irrecuperável (ex.: rate limit).",
+      actions: [
+        action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
+        action("cancel_as_rate_limited_abandoned", "Cancelar post", undefined, "POST"),
+        action("manual_review", "Revisão manual", `/dashboard/posts/${post.id}`),
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+      ],
+    };
+  }
+
   if (msg.includes("token") || msg.includes("expir") || msg.includes("oauth")) {
     return {
       severity: "critical",
@@ -148,6 +238,51 @@ function classifyPublishError(post: ScheduledPost): {
       title: "Falha na publicação TikTok",
       probableCause: "API TikTok rejeitou o vídeo ou houve erro de conexão.",
       recommendedAction: "Veja detalhes do post e tente novamente.",
+      actions: [
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+        action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
+        action("retry_post", "Tentar novamente", undefined, "POST"),
+      ],
+    };
+  }
+
+  if (msg.includes("publicação interrompida")) {
+    return {
+      severity: "medium",
+      status: post.status === "retrying" ? "auto_retrying" : "open",
+      title: "Publicação interrompida no servidor",
+      probableCause: "O processo de publicação foi cortado antes de terminar (timeout ou reinício).",
+      recommendedAction: "O sistema reagenda automaticamente. Se persistir, use Tentar novamente.",
+      actions: [
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+        action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
+        action("retry_post", "Tentar novamente", undefined, "POST"),
+      ],
+    };
+  }
+
+  if (msg.includes("timeout aguardando processamento")) {
+    return {
+      severity: "medium",
+      status: post.status === "retrying" ? "auto_retrying" : "open",
+      title: "Instagram demorou para processar o vídeo",
+      probableCause: "Vídeo grande ou fila lenta na Meta. Nova tentativa será feita automaticamente.",
+      recommendedAction: "Aguarde o retry. Se repetir, verifique tamanho/formato do vídeo.",
+      actions: [
+        action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
+        action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
+        action("retry_post", "Tentar novamente", undefined, "POST"),
+      ],
+    };
+  }
+
+  if (msg.includes("processamento da mídia falhou")) {
+    return {
+      severity: "high",
+      status: post.status === "retrying" ? "auto_retrying" : "open",
+      title: "Instagram rejeitou o vídeo",
+      probableCause: "Formato, codec, duração ou conteúdo não aceito pela API do Instagram.",
+      recommendedAction: "Abra o post, confira o vídeo e tente republicar manualmente.",
       actions: [
         action("open_post", "Ver publicação", `/dashboard/posts/${post.id}`),
         action("open_logs", "Ver logs", `/dashboard/logs?post=${post.id}`),
@@ -457,6 +592,7 @@ export function detectPublishingErrors(posts: ScheduledPost[]): DetectedOperatio
 
   const problemPosts = posts.filter(
     (p) =>
+      p.status === "needs_media" ||
       p.status === "failed" ||
       p.status === "failed_persistent" ||
       p.status === "retrying" ||
@@ -690,16 +826,21 @@ export function detectAccountErrors(accounts: AccountOperationsSummary[]): Detec
     }
 
     if (account.health === "error" && account.tokenStatus !== "expired" && account.lastError) {
+      const isRateLimit = /too many actions|rate limit/i.test(account.lastError);
       errors.push({
         fingerprint: buildErrorFingerprint(["account", "health_error", account.id]),
         errorType: "account_validation_failed",
         category: "account",
         severity: "critical",
         status: "needs_user_action",
-        title: "Conta com problema operacional",
+        title: isRateLimit ? "Conta com limite temporário do Instagram" : "Conta com problema operacional",
         message: `${label}: ${account.lastError}`,
-        probableCause: "Falha na validação de permissões ou API da plataforma.",
-        recommendedAction: "Execute diagnóstico completo da conta.",
+        probableCause: isRateLimit
+          ? "A Meta limitou publicações em sequência. O sistema já reduziu a frequência."
+          : "Falha na validação de permissões ou API da plataforma.",
+        recommendedAction: isRateLimit
+          ? "Aguarde 30–60 minutos. Não dispare vários retries manuais."
+          : "Execute diagnóstico completo da conta.",
         accountId: account.id,
         platform: account.platform,
         availableActions: [

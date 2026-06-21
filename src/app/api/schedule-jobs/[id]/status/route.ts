@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { buildJobStatusFromJob, finalizeJobStatusFromDb, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
+import { logScheduleJobEvent } from "@/lib/schedule-jobs/state";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
+/** Somente leitura de status — processamento ocorre na fila (Inngest/cron). */
 export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -22,6 +24,8 @@ export async function GET(
     if (job.status === "processing" || job.status === "queued") {
       job = await finalizeJobStatusFromDb(supabase, job);
     }
+
+    logScheduleJobEvent("schedule-job-status", job);
 
     return NextResponse.json(buildJobStatusFromJob(job), {
       headers: { "Cache-Control": "no-store" },

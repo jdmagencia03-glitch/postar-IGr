@@ -5,7 +5,7 @@ import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls } from "@/lib/storage/schedule-media-guard";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import { filterDuplicateScheduleRows } from "@/lib/publish/schedule-guard";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
@@ -88,7 +88,11 @@ export async function POST(request: NextRequest) {
 
     for (let index = 0; index < parsed.data.items.length; index++) {
       const item = parsed.data.items[index];
-      const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
+      const mediaCheck = await validateScheduledMediaUrls({
+        supabase,
+        ownerId,
+        urls: item.media_urls,
+      });
       if (!mediaCheck.ok) {
         continue;
       }

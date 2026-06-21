@@ -1,60 +1,13 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
-import { computeBatchOverallPercent } from "@/lib/upload/batch-status";
+import {
+  countUploadFilesByStatus,
+  formatBatchStatusSummary,
+  getUploadBatchStats,
+  getUploadFiles,
+} from "@/lib/upload/batch-stats";
 
-export function getUploadFiles(batch: UploadBatch | null) {
-  return batch?.upload_files?.filter((file) => !file.removed) ?? [];
-}
-
-export function countUploadFilesByStatus(files: UploadBatchFile[]) {
-  let uploading = 0;
-  let retrying = 0;
-  let stalled = 0;
-  let pending = 0;
-  let completed = 0;
-  let failed = 0;
-
-  for (const file of files) {
-    switch (file.status) {
-      case "uploading":
-        uploading += 1;
-        break;
-      case "retrying":
-        retrying += 1;
-        break;
-      case "stalled":
-        stalled += 1;
-        break;
-      case "completed":
-        completed += 1;
-        break;
-      case "failed":
-        failed += 1;
-        break;
-      default:
-        pending += 1;
-    }
-  }
-
-  return { uploading, retrying, stalled, pending, completed, failed };
-}
-
-export function formatBatchStatusSummary(params: {
-  completed: number;
-  failed: number;
-  pending: number;
-  uploading?: number;
-  retrying?: number;
-  stalled?: number;
-}) {
-  const parts: string[] = [`${params.completed} enviados`];
-  if (params.failed > 0) parts.push(`${params.failed} falharam`);
-  if ((params.uploading ?? 0) > 0) parts.push(`${params.uploading} enviando`);
-  if ((params.retrying ?? 0) > 0) parts.push(`${params.retrying} reconectando`);
-  if ((params.stalled ?? 0) > 0) parts.push(`${params.stalled} travados`);
-  if (params.pending > 0) parts.push(`${params.pending} pendentes`);
-  return parts.join(" · ");
-}
+export { countUploadFilesByStatus, formatBatchStatusSummary, getUploadFiles };
 
 export function deriveUploadSessionView(params: {
   batch: UploadBatch | null;
@@ -88,28 +41,26 @@ export function deriveUploadSessionView(params: {
     recoveringFromStall = false,
     batchStalled = false,
   } = params;
+
+  const stats = getUploadBatchStats(batch, { progressMap, progress, monotonic: true });
   const files = getUploadFiles(batch);
-  const statusCounts = countUploadFilesByStatus(files);
+
   const pendingFiles = files
     .filter((file) => file.status !== "completed")
     .sort((a, b) => a.sort_order - b.sort_order);
-  const completedCount = progress?.completed ?? batch?.completed_files ?? statusCounts.completed;
-  const totalCount = progress?.total ?? batch?.total_files ?? files.length;
-  const failedCount = progress?.failed ?? batch?.failed_files ?? statusCounts.failed;
-  const uploadingCount = statusCounts.uploading;
-  const retryingCount = statusCounts.retrying;
-  const stalledCount = statusCounts.stalled;
+
+  const completedCount = stats.completedFiles;
+  const totalCount = stats.totalFiles;
+  const failedCount = stats.failedFiles;
+  const uploadingCount = stats.uploadingFiles;
+  const retryingCount = stats.retryingFiles;
+  const stalledCount = stats.stalledFiles;
   const pendingCount =
-    statusCounts.pending + uploadingCount + retryingCount + stalledCount;
-  const queuePendingCount = statusCounts.pending;
-  const statusCounterText = formatBatchStatusSummary({
-    completed: completedCount,
-    failed: failedCount,
-    pending: queuePendingCount,
-    uploading: uploadingCount,
-    retrying: retryingCount,
-    stalled: stalledCount,
-  });
+    stats.pendingFiles + uploadingCount + retryingCount + stalledCount;
+  const queuePendingCount = stats.pendingFiles;
+  const statusCounterText = stats.statusCounterText;
+  const overallPercent = stats.progressPercent;
+
   /** Botão Retomar — somente após pausa manual do usuário. */
   const canResume = Boolean(
     batch && batch.status !== "ready" && !running && !retrying && pausedByUser && pendingCount > 0,
@@ -137,13 +88,6 @@ export function deriveUploadSessionView(params: {
   const autoRecovering = Boolean(
     awaitingAutoRecovery || retrying || hasFileRetry || (isActivelyUploading && !pausedByUser && canResumeWithoutPicker),
   );
-  const overallPercent = computeBatchOverallPercent({
-    batch,
-    progress,
-    progressMap,
-    completedCount,
-    totalCount,
-  });
 
   const visibleFiles = files
     .slice()
@@ -222,12 +166,12 @@ export function deriveUploadSessionView(params: {
         (awaitingAutoRecovery && !isActivelyUploading && !hasFileRetry)),
   );
 
-  const statusLabel = retrying || recoveringFromStall || batchStalled
-    ? "reconectando"
-    : engineStarting || running
-      ? "enviando"
-      : awaitingAutoRecovery
-        ? "reconectando"
+  const statusLabel = retrying
+    ? "tentando_novamente"
+    : recoveringFromStall || batchStalled
+      ? "recuperando"
+      : engineStarting || running || awaitingAutoRecovery
+        ? "enviando"
         : batch?.status === "ready"
           ? "concluído"
           : failedCount > 0 && !isActivelyUploading && !retrying && !autoRecovering
@@ -246,6 +190,7 @@ export function deriveUploadSessionView(params: {
   const showGlobalBar = Boolean(batch && (running || retrying || resuming || hasIncomplete));
 
   return {
+    stats,
     files,
     pendingFiles,
     completedCount,
@@ -257,6 +202,10 @@ export function deriveUploadSessionView(params: {
     stalledCount,
     queuePendingCount,
     statusCounterText,
+    headlineText: stats.headlineText,
+    bytesSummaryText: stats.bytesSummaryText,
+    speedSummaryText: stats.speedSummaryText,
+    etaSummaryText: stats.etaSummaryText,
     canResume,
     canSelectFiles,
     autoRecovering,

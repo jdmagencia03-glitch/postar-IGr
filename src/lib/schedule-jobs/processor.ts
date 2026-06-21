@@ -28,6 +28,7 @@ import {
   updateJobCounters,
   updateJobItem,
 } from "@/lib/schedule-jobs/repository";
+import { logScheduleJobEvent } from "@/lib/schedule-jobs/state";
 import type {
   ScheduleJobConfig,
   ScheduleJobDestination,
@@ -36,7 +37,7 @@ import type {
 } from "@/lib/schedule-jobs/types";
 import { getBatchForOwner, refreshBatchCounters } from "@/lib/upload/batches";
 import type { InstagramAccount, TikTokAccount } from "@/lib/types";
-import { validateMediaUrlsForOwner } from "@/lib/security/ownership";
+import { validateScheduledMediaUrls } from "@/lib/storage/schedule-media-guard";
 
 async function loadAccountsMap(
   supabase: SupabaseClient,
@@ -189,12 +190,35 @@ async function processInsertChunk(
   for (const item of pending) {
     if (!item.destinations?.length) continue;
 
+    if (
+      item.status === "completed" ||
+      item.created_post_id ||
+      item.destinations.every((dest) => dest.created_post_id)
+    ) {
+      logScheduleJobEvent("schedule-job-idempotency-skip", job, {
+        itemId: item.id,
+        uploadFileId: item.upload_file_id,
+      });
+      if (item.status !== "completed") {
+        await updateJobItem(supabase, item.id, {
+          status: "completed",
+          created_post_id: item.created_post_id ?? item.destinations[0]?.created_post_id ?? null,
+        });
+      }
+      continue;
+    }
+
     try {
-      const mediaCheck = validateMediaUrlsForOwner(item.media_urls, ownerId);
+      const mediaCheck = await validateScheduledMediaUrls({
+        supabase,
+        ownerId,
+        urls: item.media_urls,
+        uploadFileId: item.upload_file_id,
+      });
       if (!mediaCheck.ok) {
         await updateJobItem(supabase, item.id, {
           status: "failed",
-          error_message: mediaCheck.error ?? "Mídia inválida",
+          error_message: `${mediaCheck.code}: ${mediaCheck.message}`,
           attempt_count: item.attempt_count + 1,
         });
         continue;
@@ -209,6 +233,7 @@ async function processInsertChunk(
           content_type: contentTypeForPlatform(dest.platform),
           media_type: "REELS" as const,
           media_urls: item.media_urls,
+          media_asset_id: mediaCheck.mediaAssetIds[0] ?? null,
           caption: dest.caption?.trim() || null,
           scheduled_at: sanitizeScheduledAt(dest.scheduled_at),
           product_id: campaignFields.product_id,
@@ -341,6 +366,8 @@ export async function advanceScheduleJob(
     job = await finalizeJobStatusFromDb(supabase, job);
   }
 
+  logScheduleJobEvent("schedule-job-status", job);
+
   if (job.status === "completed" || job.status === "partial_failed") {
     try {
       await reportClientOperationalError(supabase, ownerId, {
@@ -393,5 +420,9 @@ export async function resumeScheduleJob(
     error_message: null,
   } as Partial<ScheduleJobRow>);
 
-  return advanceScheduleJob(supabase, ownerId, jobId);
+  const refreshed = await getScheduleJobHeader(supabase, ownerId, jobId);
+  if (!refreshed) throw new Error("Job não encontrado");
+
+  logScheduleJobEvent("schedule-job-resumed", refreshed);
+  return buildJobStatusFromJob(refreshed);
 }

@@ -141,14 +141,24 @@ export function AiPlaybookForm() {
   const [accountSearch, setAccountSearch] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
 
+  const selectedAccount = useMemo(
+    () => accounts.find((account) => account.id === form.selectedAccountId) ?? null,
+    [accounts, form.selectedAccountId],
+  );
+
   const filteredAccounts = useMemo(() => {
     const query = accountSearch.trim().toLowerCase();
     if (!query) return accounts;
 
     return accounts.filter((account) => {
-      const username = account.ig_username?.toLowerCase() ?? "";
-      const label = accountPageLabel(account).toLowerCase();
-      return username.includes(query) || label.includes(query);
+      const username = accountPageLabel(account).toLowerCase();
+      const displayName = account.display_name?.toLowerCase() ?? "";
+      const platform = account.platform;
+      return (
+        username.includes(query) ||
+        displayName.includes(query) ||
+        platform.includes(query)
+      );
     });
   }, [accounts, accountSearch]);
 
@@ -201,10 +211,43 @@ export function AiPlaybookForm() {
     setLoading(true);
     setAccountsLoading(true);
     try {
-      const accountsRes = await fetch("/api/accounts", { credentials: "include", cache: "no-store" });
-      const accountList = accountsRes.ok
-        ? ((await accountsRes.json()) as ConnectedAccountOption[])
+      const [instagramRes, tiktokRes] = await Promise.all([
+        fetch("/api/accounts", { credentials: "include", cache: "no-store" }),
+        fetch("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }),
+      ]);
+
+      const instagramAccounts = instagramRes.ok
+        ? ((await instagramRes.json()) as Array<{
+            id: string;
+            ig_username: string | null;
+            profile_picture_url: string | null;
+          }>)
         : [];
+      const tiktokAccounts = tiktokRes.ok
+        ? ((await tiktokRes.json()) as Array<{
+            id: string;
+            username: string | null;
+            display_name: string | null;
+            profile_picture_url: string | null;
+          }>)
+        : [];
+
+      const accountList: ConnectedAccountOption[] = [
+        ...instagramAccounts.map((account) => ({
+          id: account.id,
+          platform: "instagram" as const,
+          username: account.ig_username,
+          ig_username: account.ig_username,
+          profile_picture_url: account.profile_picture_url,
+        })),
+        ...tiktokAccounts.map((account) => ({
+          id: account.id,
+          platform: "tiktok" as const,
+          username: account.username,
+          display_name: account.display_name,
+          profile_picture_url: account.profile_picture_url,
+        })),
+      ].sort((a, b) => accountPageLabel(a).localeCompare(accountPageLabel(b), "pt-BR"));
 
       if (!accountList.length) {
         setAccounts(accountList);
@@ -305,7 +348,11 @@ export function AiPlaybookForm() {
       if (!res.ok) throw new Error(data.error ?? "Falha ao importar perfil");
 
       setForm((current) => applyProfileImport(current, data.snapshot));
-      setMessage("Perfil importado com sucesso.");
+      setMessage(
+        data.platform === "tiktok"
+          ? "Perfil TikTok importado (@ e nome). Preencha nicho e exemplos abaixo — a API do TikTok não expõe bio nem legendas antigas."
+          : "Perfil importado com sucesso.",
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Erro ao importar perfil");
     } finally {
@@ -316,6 +363,10 @@ export function AiPlaybookForm() {
   async function handleImportCaptions() {
     if (!form.selectedAccountId) {
       setMessage("Selecione uma página antes de importar.");
+      return;
+    }
+    if (selectedAccount?.platform === "tiktok") {
+      setMessage("Importação de legendas disponível apenas para contas Instagram.");
       return;
     }
 
@@ -478,26 +529,31 @@ export function AiPlaybookForm() {
 
       <SectionCard
         step="Seção 1"
-        title="Importar do Instagram"
-        description="Conecte sua página e deixe a IA analisar automaticamente: bio, nome, tipo de conteúdo, linguagem, hashtags e temas."
+        title={selectedAccount?.platform === "tiktok" ? "Importar do TikTok" : "Importar do Instagram"}
+        description={
+          selectedAccount?.platform === "tiktok"
+            ? "Importa @username e nome exibido da conta conectada. Nicho, tom e exemplos você define manualmente — o TikTok não libera bio nem legendas antigas via API."
+            : "Conecte sua página e deixe a IA analisar automaticamente: bio, nome, tipo de conteúdo, linguagem, hashtags e temas."
+        }
         highlight
       >
         <ul className="grid gap-1 text-sm text-ig-muted sm:grid-cols-2">
-          {["Bio", "Nome do perfil", "Tipo de conteúdo", "Linguagem utilizada", "Hashtags frequentes", "Temas principais"].map(
-            (item) => (
-              <li key={item} className="flex items-center gap-2">
-                <Check size={14} className="text-ig-primary" />
-                {item}
-              </li>
-            ),
-          )}
+          {(selectedAccount?.platform === "tiktok"
+            ? ["@username", "Nome do perfil", "Validação da conexão"]
+            : ["Bio", "Nome do perfil", "Tipo de conteúdo", "Linguagem utilizada", "Hashtags frequentes", "Temas principais"]
+          ).map((item) => (
+            <li key={item} className="flex items-center gap-2">
+              <Check size={14} className="text-ig-primary" />
+              {item}
+            </li>
+          ))}
         </ul>
 
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={handleImportProfile}
-            disabled={importingProfile}
+            disabled={importingProfile || !form.selectedAccountId}
             className="ig-btn flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-50"
           >
             {importingProfile ? (
@@ -510,13 +566,19 @@ export function AiPlaybookForm() {
           <button
             type="button"
             onClick={handleImportProfile}
-            disabled={importingProfile}
+            disabled={importingProfile || !form.selectedAccountId}
             className="ig-btn-secondary flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-50"
           >
             <RefreshCw size={16} />
             Atualizar Dados
           </button>
         </div>
+
+        {selectedAccount?.platform === "tiktok" && (
+          <p className="text-xs text-ig-muted">
+            Legendas de exemplo precisam ser coladas manualmente na Seção 4 — o TikTok não permite puxar posts antigos como o Instagram.
+          </p>
+        )}
 
         {form.profileImported && (
           <p className="flex items-center gap-2 text-sm text-ig-text">
@@ -558,7 +620,7 @@ export function AiPlaybookForm() {
             <div className="rounded-lg border border-ig-border bg-ig-secondary px-4 py-4 text-sm text-ig-muted">
               <p>Nenhuma conta conectada.</p>
               <a href="/dashboard/accounts" className="mt-2 inline-block text-ig-primary hover:underline">
-                Conectar conta do Instagram
+                Conectar conta do Instagram ou TikTok
               </a>
             </div>
           ) : filteredAccounts.length === 0 ? (
@@ -593,7 +655,9 @@ export function AiPlaybookForm() {
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium text-ig-text">{accountPageLabel(account)}</p>
-                      <p className="truncate text-xs text-ig-muted">Conta conectada</p>
+                      <p className="truncate text-xs text-ig-muted">
+                        {account.platform === "tiktok" ? "TikTok" : "Instagram"} · Conta conectada
+                      </p>
                     </div>
                     {selected && <Check size={18} className="shrink-0 text-ig-primary" />}
                   </button>
@@ -728,7 +792,7 @@ export function AiPlaybookForm() {
         <button
           type="button"
           onClick={handleImportCaptions}
-          disabled={importingCaptions}
+          disabled={importingCaptions || selectedAccount?.platform === "tiktok"}
           className="ig-btn-secondary flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-50"
         >
           {importingCaptions ? (

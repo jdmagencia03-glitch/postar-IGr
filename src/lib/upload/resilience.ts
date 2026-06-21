@@ -82,7 +82,7 @@ export function buildHealthOperationalError(health: UploadBatchHealth, releasedL
     return {
       errorType: "upload_degraded",
       title: "Upload instável no lote",
-      message: `Taxa de erro ${Math.round(health.errorRate * 100)}% · ${health.retrying} reconectando.`,
+      message: `Taxa de erro ${Math.round(health.errorRate * 100)}% · ${health.retrying} em retry.`,
       probableCause: "Saturação de workers ou conexão instável em lote grande.",
       recommendedAction: health.recommendedAction,
       severity: "medium" as OperationalErrorSeverity,

@@ -50,7 +50,15 @@ create table if not exists scheduled_posts (
   caption text,
   scheduled_at timestamptz not null,
   status text not null default 'pending'
-    check (status in ('pending', 'processing', 'published', 'failed')),
+    check (status in (
+      'pending',
+      'processing',
+      'published',
+      'failed',
+      'retrying',
+      'failed_persistent',
+      'cancelled'
+    )),
   container_id text,
   media_id text,
   permalink text,

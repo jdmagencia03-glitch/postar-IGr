@@ -5,11 +5,7 @@ import { PostsManager } from "@/components/PostsManager";
 import { TikTokAccountsSection } from "@/components/TikTokAccountsSection";
 import { OAuthAlert } from "@/components/OAuthAlert";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
-import {
-  getTikTokOAuthScopes,
-  getTikTokRedirectUri,
-  isTikTokOAuthConfigured,
-} from "@/lib/tiktok/oauth";
+import { isTikTokOAuthConfigured } from "@/lib/tiktok/oauth";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -68,19 +64,6 @@ export default async function TikTokDashboardPage({
             Configure <strong className="text-ig-text">TIKTOK_CLIENT_KEY</strong> e{" "}
             <strong className="text-ig-text">TIKTOK_CLIENT_SECRET</strong> na Vercel e crie o app
             em developers.tiktok.com com Login Kit + Content Posting API.
-          </div>
-        )}
-
-        {isTikTokOAuthConfigured() && (
-          <div className="mb-6 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3 text-sm text-ig-muted">
-            <p className="font-medium text-ig-text">Configuração OAuth (Sandbox)</p>
-            <p className="mt-2">
-              Redirect URI no TikTok Login Kit → Web:
-            </p>
-            <code className="mt-1 block break-all rounded bg-ig-elevated px-2 py-1 text-xs text-ig-text">
-              {getTikTokRedirectUri()}
-            </code>
-            <p className="mt-2 text-xs">Scopes: {getTikTokOAuthScopes()}</p>
           </div>
         )}
 
@@ -148,7 +131,7 @@ export default async function TikTokDashboardPage({
 
         <section className="ig-panel p-5">
           <h2 className="mb-4 text-lg font-semibold text-ig-text">Contas TikTok</h2>
-          <TikTokAccountsSection connectHref="/api/tiktok/connect?next=/dashboard/tiktok&add_account=1" />
+          <TikTokAccountsSection connectHref="/api/auth/tiktok?next=/dashboard/tiktok&add_account=1" />
         </section>
     </>
   );

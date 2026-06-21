@@ -23,6 +23,9 @@ create table if not exists schedule_jobs (
   config jsonb not null default '{}'::jsonb,
   error_message text,
   schedule_summary text,
+  locked_by text,
+  lock_until timestamptz,
+  last_heartbeat_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz

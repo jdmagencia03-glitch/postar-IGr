@@ -10,10 +10,9 @@ import { deriveUploadSessionView } from "@/lib/upload/session-derived";
 import { fileStatusLabel, getCompletedUploadItems } from "@/lib/upload/client";
 import { getFileDisplayPercent } from "@/lib/upload/batch-status";
 import { displayUploadErrorMessage, formatUploadErrorMessage } from "@/lib/upload/errors";
-import { formatBytes, formatEta, formatSpeed } from "@/lib/upload/validate";
+import { formatBytes } from "@/lib/upload/validate";
 import { getSpeedPresets } from "@/lib/upload/storage-config";
 import {
-  buildSpeedDisplay,
   largeBatchAdaptiveMessage,
   recommendSpeedModeForBatch,
   turboLargeBatchConfirmMessage,
@@ -44,6 +43,7 @@ const FileStatusRow = memo(function FileStatusRow({
   onRetry,
   isStalled,
   isRetrying,
+  runtimeStatus,
 }: {
   file: UploadBatchFile;
   percent: number;
@@ -51,6 +51,7 @@ const FileStatusRow = memo(function FileStatusRow({
   onRetry: (file: UploadBatchFile) => void;
   isStalled?: boolean;
   isRetrying?: boolean;
+  runtimeStatus?: string;
 }) {
   const errorText = displayUploadErrorMessage(
     file.error_message,
@@ -64,7 +65,11 @@ const FileStatusRow = memo(function FileStatusRow({
         <span className="truncate text-ig-text">{file.filename}</span>
         <span className="text-xs text-ig-muted">
           {formatBytes(Number(file.file_size))} ·{" "}
-          {fileStatusLabel(file.status, { stalled: isStalled, retrying: isRetrying })}
+          {fileStatusLabel(file.status, {
+            stalled: isStalled,
+            retrying: isRetrying,
+            runtimeStatus,
+          })}
         </span>
       </div>
       {(file.status === "uploading" || file.status === "retrying" || percent > 0) &&
@@ -289,7 +294,7 @@ export function SupremeUploadManager({
       {view.awaitingAutoRecovery && (
         <div className="flex items-center gap-2 rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
           <Loader2 size={16} className="animate-spin text-ig-primary" />
-          {session.message ?? "Instabilidade detectada. Tentando continuar automaticamente…"}
+          {session.message ?? "Tentando continuar automaticamente…"}
         </div>
       )}
 
@@ -391,22 +396,26 @@ export function SupremeUploadManager({
                       ? "Preparando envio…"
                       : "Enviando…"
                   : hasFileRetry || session.retrying
-                    ? session.message ?? "Conexão instável. Tentando novamente…"
+                    ? session.message ?? "Tentando enviar novamente…"
                     : view.canResume
                       ? "Upload pausado pelo usuário."
                       : view.awaitingAutoRecovery
-                        ? session.message ?? "Retomando envio…"
+                        ? session.message ?? "Recuperando envio…"
                         : view.failedCount > 0
                           ? `${view.failedCount} vídeo(s) com erro`
                           : "Upload em andamento"}
             </p>
+            <p className="mt-1 text-sm font-medium text-ig-text">{view.headlineText}</p>
             <p className="mt-1 text-sm text-ig-muted">
               {view.statusCounterText} · Lote #{session.batch.batch_number} · @{username}
             </p>
+            {view.bytesSummaryText !== "—" && (
+              <p className="mt-1 text-sm text-ig-muted">{view.bytesSummaryText}</p>
+            )}
             {(session.batchHealthMessage || view.batchStalled || session.recoveringFromStall) && (
               <p className="mt-2 text-sm text-ig-info">
                 {session.recoveringFromStall || view.batchStalled
-                  ? "Upload travado detectado. Recuperando automaticamente…"
+                  ? "Retomando envio automaticamente…"
                   : session.batchHealthMessage}
               </p>
             )}
@@ -456,35 +465,15 @@ export function SupremeUploadManager({
                     style={{ width: `${view.overallPercent}%` }}
                   />
                 </div>
-                {session.progress && view.isActivelyUploading && (() => {
-                  const speed = buildSpeedDisplay({
-                    speedBps30s: session.progress.speedBps30s ?? session.progress.speedBps,
-                    speedBps2m: session.progress.speedBps2m ?? 0,
-                    etaSeconds: session.progress.etaSeconds,
-                    hasActiveUploads: session.progress.hasActiveUploads ?? session.progress.uploading > 0,
-                    hasByteProgress: session.progress.hasByteProgress ?? session.progress.speedBps > 0,
-                  });
-                  return (
+                {(session.progress && view.isActivelyUploading) || view.stats.hasActiveUploads ? (
                   <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                    <p className="text-ig-muted">
-                      Velocidade:{" "}
-                      <span className="text-ig-text">
-                        {speed.speedLabel === "no_progress"
-                          ? "sem progresso detectado"
-                          : speed.speedLabel === "calculating"
-                            ? "calculando…"
-                            : formatSpeed(speed.speedBps)}
-                      </span>
-                    </p>
+                    <p className="text-ig-muted">{view.speedSummaryText}</p>
                     <p className="text-ig-muted">
                       Restante:{" "}
-                      <span className="text-ig-text">
-                        {speed.etaLabel === "—" ? formatEta(speed.etaSeconds) : speed.etaLabel}
-                      </span>
+                      <span className="text-ig-text">{view.etaSummaryText}</span>
                     </p>
                   </div>
-                  );
-                })()}
+                ) : null}
               </>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
@@ -566,6 +555,7 @@ export function SupremeUploadManager({
                     file.status === "retrying" ||
                     session.fileRuntime[file.id]?.status === "retrying"
                   }
+                  runtimeStatus={session.fileRuntime[file.id]?.status}
                   onRetry={(record) => uploadSessionStore.retryFile(record)}
                 />
               ))}
@@ -591,7 +581,7 @@ export function SupremeUploadManager({
               ? "Recuperando envio…"
               : `Enviando (${speedPresets[session.speedMode].label})…`
             : hasFileRetry || session.retrying
-              ? session.message ?? "Conexão instável. Tentando novamente…"
+              ? session.message ?? "Tentando enviar novamente…"
               : session.resuming
                 ? "Reconhecendo arquivos..."
                 : `Enviando (${speedPresets[session.speedMode].label})…`}

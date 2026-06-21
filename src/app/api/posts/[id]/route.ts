@@ -10,6 +10,8 @@ import {
   getOwnerScheduledPosts,
 } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { contentTypeForPlatform } from "@/lib/content-types";
+import { resolveRescheduleSlot } from "@/lib/schedule-insertion";
 import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { z } from "zod";
 
@@ -120,7 +122,22 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    updates.scheduled_at = sanitizeScheduledAt(parsed.data.scheduled_at);
+
+    const platform = post.platform ?? "instagram";
+    const accountId = platform === "tiktok" ? post.tiktok_account_id : post.account_id;
+    if (!accountId) {
+      return NextResponse.json({ error: "Conta do post não encontrada" }, { status: 400 });
+    }
+
+    const resolved = await resolveRescheduleSlot({
+      supabase,
+      platform,
+      accountId,
+      contentType: post.content_type ?? contentTypeForPlatform(platform),
+      requestedAt: parsed.data.scheduled_at,
+      excludePostId: id,
+    });
+    updates.scheduled_at = sanitizeScheduledAt(resolved.scheduled_at);
   }
 
   if (!Object.keys(updates).length) {

@@ -111,3 +111,37 @@ export function fromDateTimeLocalInAppTz(value: string): string {
   const [hour, minute] = timePart.split(":").map(Number);
   return zonedDateTimeToUtc(year, month, day, hour, minute).toISOString();
 }
+
+export type CreateScheduledAtInput = {
+  date: string;
+  time: string;
+  timezone?: string;
+};
+
+/** Converte data + hora de parede (Brasília) para ISO UTC. */
+export function createScheduledAtFromBrazilTime(input: CreateScheduledAtInput): string {
+  const timezone = input.timezone ?? APP_TIMEZONE;
+  if (timezone !== APP_TIMEZONE) {
+    console.warn("[schedule-timezone] timezone não suportado, usando APP_TIMEZONE", { timezone });
+  }
+
+  const [year, month, day] = input.date.split("-").map(Number);
+  const [hour, minute] = input.time.split(":").map(Number);
+  const scheduledAtUtc = zonedDateTimeToUtc(year, month, day, hour, minute);
+
+  console.info("[schedule-timezone]", {
+    inputDate: input.date,
+    inputTime: input.time,
+    timezone: APP_TIMEZONE,
+    scheduledAtUtc: scheduledAtUtc.toISOString(),
+    displayBrazil: formatInAppTimezone(scheduledAtUtc),
+  });
+
+  return scheduledAtUtc.toISOString();
+}
+
+export function isSameAppDay(iso: string | Date, day: Date): boolean {
+  const a = getAppDateParts(new Date(iso));
+  const b = getAppDateParts(day);
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}

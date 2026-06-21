@@ -1,7 +1,7 @@
 import type { PostStatus } from "@/lib/types";
+import { nextRetryAtForFailure } from "@/lib/publish/failure-policy";
 
-export const MAX_PUBLISH_RETRIES = 3;
-
+export const MAX_PUBLISH_RETRIES = 5;
 /** Cooldown em ms após cada falha (1ª, 2ª, 3ª tentativa). */
 export const RETRY_COOLDOWN_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 
@@ -13,6 +13,8 @@ export function retryCooldownMs(retryCount: number) {
 export function nextRetryAtFromCount(retryCount: number, now = new Date()) {
   return new Date(now.getTime() + retryCooldownMs(retryCount)).toISOString();
 }
+
+export { nextRetryAtForFailure as nextRetryAtForMessage };
 
 export function isRetryEligibleStatus(status: PostStatus) {
   return status === "failed" || status === "retrying" || status === "failed_persistent";

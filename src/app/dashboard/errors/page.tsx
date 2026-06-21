@@ -42,10 +42,17 @@ export default async function ErrorsPage({
     q: params.q,
   });
 
+  const globalResult = await listOperationalErrors(supabase, ownerId, {
+    severity: "all",
+    status: "open_active",
+    category: "all",
+  });
+
   return (
     <ErrorCenter
       errors={result.errors}
       summary={result.summary}
+      globalSummary={globalResult.summary}
       syncedAt={result.syncedAt}
       accounts={accountRefs}
       filters={{

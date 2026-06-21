@@ -679,5 +679,6 @@ export function describeSmartSchedule(schedule: Date[], mode: ScheduleMode = "to
 
   const dayMs = 86_400_000;
   const days = Math.max(1, Math.ceil((last.getTime() - first.getTime()) / dayMs) + 1);
-  return `${schedule.length} posts em ~${days} dias (${dateTimeFmt.format(first)} → ${dateTimeFmt.format(last)})`;
+  const dayLabel = days === 1 ? "1 dia" : `~${days} dias`;
+  return `${schedule.length} posts em ${dayLabel} (${dateTimeFmt.format(first)} → ${dateTimeFmt.format(last)})`;
 }

@@ -77,6 +77,18 @@ function successRate(published: number, total: number) {
   return Math.round((published / total) * 100);
 }
 
+/** Taxas baseadas em desfechos finais (publicado vs falha/retry), sempre ≤ 100%. */
+export function computeOutcomeRates(published: number, failed: number, retrying: number) {
+  const outcomeTotal = published + failed + retrying;
+  if (!outcomeTotal) {
+    return { successRate: 0, errorRate: 0 };
+  }
+  return {
+    successRate: Math.round((published / outcomeTotal) * 100),
+    errorRate: Math.min(100, Math.round(((failed + retrying) / outcomeTotal) * 100)),
+  };
+}
+
 function resolveContentType(post: ScheduledPost): ContentType {
   return (post.content_type ?? "reel") as ContentType;
 }
@@ -102,11 +114,9 @@ export function computePublicationMetrics(
     (p) => p.status === "published" && p.published_at && isToday(parseISO(p.published_at)),
   ).length;
 
-  const terminal = posts.filter(
-    (p) => p.status === "published" || isFailed(p.status) || p.status === "cancelled",
-  );
   const published = breakdown.published;
-  const failedTotal = breakdown.failed + breakdown.failedPersistent + breakdown.retrying;
+  const failedTotal = breakdown.failed + breakdown.failedPersistent;
+  const outcomeRates = computeOutcomeRates(published, failedTotal, breakdown.retrying);
 
   const totalByPlatform: Record<SocialPlatform, number> = { instagram: 0, tiktok: 0 };
   const totalByContentType: Record<string, number> = {};
@@ -136,12 +146,12 @@ export function computePublicationMetrics(
 
   return {
     publishedToday,
-    pending: breakdown.pending + breakdown.retrying,
-    failed: breakdown.failed + breakdown.failedPersistent,
+    pending: breakdown.pending,
+    failed: failedTotal,
     retrying: breakdown.retrying,
     cancelled: breakdown.cancelled,
-    successRate: successRate(published, terminal.length),
-    errorRate: terminal.length ? Math.round((failedTotal / terminal.length) * 100) : 0,
+    successRate: outcomeRates.successRate,
+    errorRate: outcomeRates.errorRate,
     totalByPlatform,
     totalByContentType,
     nextScheduled,
@@ -283,9 +293,8 @@ export function computeAccountWindowMetrics(
 
   const published = scoped.filter((p) => p.status === "published").length;
   const failed = scoped.filter((p) => isFailed(p.status)).length;
-  const terminal = scoped.filter(
-    (p) => p.status === "published" || isFailed(p.status) || p.status === "cancelled",
-  );
+  const retrying = scoped.filter((p) => p.status === "retrying").length;
+  const outcomeRates = computeOutcomeRates(published, failed, retrying);
 
   const typeCounts = new Map<ContentType, number>();
   for (const post of scoped.filter((p) => p.status === "published")) {
@@ -299,7 +308,7 @@ export function computeAccountWindowMetrics(
     publishedLast7Days,
     publishedLast30Days,
     failedPersistent: scoped.filter((p) => p.status === "failed_persistent").length,
-    successRate: successRate(published, terminal.length),
+    successRate: outcomeRates.successRate,
     topContentType,
   };
 }

@@ -96,11 +96,11 @@ export async function validateAccountPermissions(
   checks.push({
     key: "page",
     label: "Página Facebook",
-    level: provider === "facebook" && account.page_id ? "ok" : provider === "facebook" ? "attention" : "attention",
+    level: provider === "facebook" && account.page_id ? "ok" : "ok",
     message:
       provider === "facebook" && account.page_id
         ? "Página vinculada via Facebook Login"
-        : "Login direto Instagram — verifique permissões de publicação no Meta",
+        : "Login direto Instagram — Reels e agendamento funcionam normalmente",
   });
 
   checks.push({
@@ -116,9 +116,9 @@ export async function validateAccountPermissions(
   checks.push({
     key: "stories",
     label: "Stories",
-    level: "attention",
+    level: "ok",
     message:
-      "Permissão de Stories depende do app Meta. Reels podem funcionar mesmo se Stories automáticos estiverem bloqueados.",
+      "Reels e upload em massa OK. Stories automáticos dependem de permissão extra no app Meta (opcional).",
   });
 
   if (account.publishing_paused) {

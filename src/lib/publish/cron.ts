@@ -1,5 +1,11 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { MAX_PUBLISH_RETRIES, nextRetryAtFromCount } from "@/lib/publish/retry-policy";
+import { applyInstagramRateLimitCooldown } from "@/lib/instagram/account-cooldown";
+import { normalizeInstagramPublishError } from "@/lib/instagram/errors";
+import { getPublishSuccessEvidence } from "@/lib/instagram/publish-evidence";
+import {
+  classifyPublishFailureMessage,
+} from "@/lib/publish/failure-policy";
+import { MAX_PUBLISH_RETRIES, nextRetryAtForMessage } from "@/lib/publish/retry-policy";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -26,25 +32,14 @@ export async function logPublishEvent(
   }
 }
 
-async function countSuccessLogs(supabase: AdminClient, postId: string) {
-  const { count, error } = await supabase
-    .from("publish_logs")
-    .select("id", { count: "exact", head: true })
-    .eq("post_id", postId)
-    .eq("level", "success");
+const DUPLICATE_GUARD_MESSAGE =
+  "Publicação anterior detectada nos logs. Republicação bloqueada por segurança. Verifique o Instagram.";
 
-  if (error) {
-    throw new Error(`Falha ao verificar logs de publicação: ${error.message}`);
-  }
-
-  return count ?? 0;
-}
-
-/** Bloqueia republicação se o post já foi publicado no passado (log de sucesso ou media_id). */
+/** Bloqueia republicação somente com evidência real de publicação anterior. */
 export async function assertSafeToPublish(supabase: AdminClient, postId: string) {
   const { data: post, error } = await supabase
     .from("scheduled_posts")
-    .select("status, media_id, provider_publish_id")
+    .select("status, media_id, permalink, account_id, media_urls, provider_publish_id")
     .eq("id", postId)
     .maybeSingle();
 
@@ -56,33 +51,38 @@ export async function assertSafeToPublish(supabase: AdminClient, postId: string)
     throw new PublishGuardError("Post não encontrado");
   }
 
-  if (post.media_id) {
-    throw new PublishGuardError("Post já possui media_id — republicação bloqueada");
+  const evidence = await getPublishSuccessEvidence(supabase, {
+    id: postId,
+    status: post.status,
+    media_id: post.media_id,
+    permalink: post.permalink,
+    account_id: post.account_id,
+    media_urls: post.media_urls,
+  });
+
+  if (!evidence.hasEvidence) {
+    return;
   }
 
-  if (post.provider_publish_id) {
-    throw new PublishGuardError("Post já possui publish_id do provedor — republicação bloqueada");
+  if (post.media_id) {
+    throw new PublishGuardError("Post já possui media_id — republicação bloqueada");
   }
 
   if (post.status === "published") {
     throw new PublishGuardError("Post já publicado — republicação bloqueada");
   }
 
-  const successLogs = await countSuccessLogs(supabase, postId);
-  if (successLogs > 0) {
-    await supabase
-      .from("scheduled_posts")
-      .update({
-        status: "failed",
-        error_message:
-          "Publicação anterior detectada nos logs. Republicação bloqueada por segurança. Verifique o Instagram.",
-      })
-      .eq("id", postId)
-      .in("status", ["pending", "processing", "retrying"])
-      .is("media_id", null);
+  await supabase
+    .from("scheduled_posts")
+    .update({
+      status: "failed",
+      error_message: DUPLICATE_GUARD_MESSAGE,
+    })
+    .eq("id", postId)
+    .in("status", ["pending", "processing", "retrying"])
+    .is("media_id", null);
 
-    throw new PublishGuardError("Log de sucesso existente — republicação bloqueada");
-  }
+  throw new PublishGuardError("Log de sucesso existente — republicação bloqueada");
 }
 
 export async function recoverStaleProcessingPosts(supabase: AdminClient, staleMs: number) {
@@ -90,7 +90,7 @@ export async function recoverStaleProcessingPosts(supabase: AdminClient, staleMs
 
   const { data: processingPosts, error } = await supabase
     .from("scheduled_posts")
-    .select("id, media_id")
+    .select("id, media_id, permalink, account_id, media_urls, provider_publish_id")
     .eq("status", "processing");
 
   if (error) {
@@ -111,8 +111,16 @@ export async function recoverStaleProcessingPosts(supabase: AdminClient, staleMs
       continue;
     }
 
-    const successLogs = await countSuccessLogs(supabase, post.id);
-    if (successLogs > 0) {
+    const evidence = await getPublishSuccessEvidence(supabase, {
+      id: post.id,
+      status: "processing",
+      media_id: post.media_id,
+      permalink: post.permalink,
+      account_id: post.account_id,
+      media_urls: post.media_urls,
+    });
+
+    if (evidence.hasEvidence) {
       await supabase
         .from("scheduled_posts")
         .update({
@@ -141,27 +149,36 @@ export async function recoverStaleProcessingPosts(supabase: AdminClient, staleMs
       continue;
     }
 
-    const { error: updateError } = await supabase
-      .from("scheduled_posts")
-      .update({
-        status: "failed",
-        error_message: "Publicação interrompida. Tente novamente.",
-      })
-      .eq("id", post.id)
-      .eq("status", "processing")
-      .is("media_id", null);
-
-    if (updateError) {
-      console.error(`[publish] stale recovery failed for ${post.id}:`, updateError.message);
+    if (post.provider_publish_id) {
+      const now = new Date().toISOString();
+      await supabase
+        .from("scheduled_posts")
+        .update({
+          status: "retrying",
+          next_retry_at: now,
+          error_message: "Retomando publicação TikTok em andamento.",
+          updated_at: now,
+        })
+        .eq("id", post.id)
+        .eq("status", "processing")
+        .is("media_id", null);
+      recovered += 1;
+      await logPublishEvent(
+        supabase,
+        post.id,
+        "info",
+        "Publicação TikTok presa em processing — retry imediato agendado.",
+      );
       continue;
     }
 
+    await markPostFailed(supabase, post.id, "Publicação interrompida. Tente novamente.");
     recovered += 1;
     await logPublishEvent(
       supabase,
       post.id,
       "error",
-      "Publicação interrompida (timeout). Status revertido para falha.",
+      "Publicação interrompida (timeout). Retry automático agendado.",
     );
   }
 
@@ -205,6 +222,113 @@ export async function claimPostForProcessing(
   }
 
   return Boolean(retryClaim);
+}
+
+async function updatePostStatusWithFallback(
+  supabase: AdminClient,
+  postId: string,
+  primary: Record<string, unknown>,
+  fallback: Record<string, unknown>,
+) {
+  const { error } = await supabase
+    .from("scheduled_posts")
+    .update({ ...primary, updated_at: new Date().toISOString() })
+    .eq("id", postId)
+    .is("media_id", null);
+
+  if (!error) return true;
+
+  console.error(`[publish] status update failed for ${postId}:`, error.message);
+
+  const { error: fallbackError } = await supabase
+    .from("scheduled_posts")
+    .update({ ...fallback, updated_at: new Date().toISOString() })
+    .eq("id", postId)
+    .is("media_id", null);
+
+  if (fallbackError) {
+    console.error(`[publish] fallback status update failed for ${postId}:`, fallbackError.message);
+    return false;
+  }
+
+  return true;
+}
+
+export async function releaseProcessingPostAsBlocked(
+  supabase: AdminClient,
+  postId: string,
+  message: string,
+) {
+  await updatePostStatusWithFallback(
+    supabase,
+    postId,
+    {
+      status: "failed_persistent",
+      error_message: message,
+      next_retry_at: null,
+    },
+    {
+      status: "failed",
+      error_message: message,
+      next_retry_at: null,
+    },
+  );
+
+  await logPublishEvent(supabase, postId, "error", message);
+}
+
+async function maybePauseAccountOnFailure(
+  supabase: AdminClient,
+  postId: string,
+  message: string,
+  retryCount: number,
+) {
+  const kind = classifyPublishFailureMessage(message);
+  if (kind !== "rate_limit" && kind !== "token") return;
+
+  const { data: post } = await supabase
+    .from("scheduled_posts")
+    .select("platform, account_id, tiktok_account_id")
+    .eq("id", postId)
+    .maybeSingle();
+
+  if (!post) return;
+
+  const pauseMessage =
+    kind === "rate_limit"
+      ? normalizeInstagramPublishError(message)
+      : `Pausada automaticamente por erro de token (${message.slice(0, 120)})`;
+
+  if ((post.platform ?? "instagram") === "tiktok" && post.tiktok_account_id) {
+    await supabase
+      .from("tiktok_accounts")
+      .update({
+        publishing_paused: true,
+        last_validation_error: pauseMessage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", post.tiktok_account_id);
+  } else if (post.account_id) {
+    if (kind === "rate_limit") {
+      await applyInstagramRateLimitCooldown({
+        supabase,
+        accountId: post.account_id,
+        postId,
+        pauseAccount: retryCount >= 3,
+      });
+    } else {
+      await supabase
+        .from("instagram_accounts")
+        .update({
+          publishing_paused: true,
+          pause_reason: "token_error",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", post.account_id);
+    }
+  }
+
+  await logPublishEvent(supabase, postId, "error", pauseMessage);
 }
 
 /** Grava media_id IMEDIATAMENTE após sucesso na API — impede loop de republicação. */
@@ -337,9 +461,11 @@ export async function markPostPublishCriticalFailure(
 }
 
 export async function markPostFailed(supabase: AdminClient, postId: string, message: string) {
+  const normalizedMessage = normalizeInstagramPublishError(message);
+
   const { data: post } = await supabase
     .from("scheduled_posts")
-    .select("media_id, retry_count")
+    .select("media_id, retry_count, status, permalink, account_id, media_urls")
     .eq("id", postId)
     .maybeSingle();
 
@@ -353,67 +479,98 @@ export async function markPostFailed(supabase: AdminClient, postId: string, mess
     return;
   }
 
-  const successLogs = await countSuccessLogs(supabase, postId);
-  if (successLogs > 0) {
+  const evidence = post
+    ? await getPublishSuccessEvidence(supabase, {
+        id: postId,
+        status: post.status,
+        media_id: post.media_id,
+        permalink: post.permalink,
+        account_id: post.account_id,
+        media_urls: post.media_urls,
+      })
+    : null;
+
+  if (evidence?.hasEvidence) {
     await supabase
       .from("scheduled_posts")
       .update({
         status: "failed_persistent",
-        error_message: "Publicação detectada nos logs. Republicação bloqueada por segurança.",
+        error_message: DUPLICATE_GUARD_MESSAGE,
       })
       .eq("id", postId)
       .is("media_id", null);
     return;
   }
 
+  const failureKind = classifyPublishFailureMessage(normalizedMessage);
   const nextRetryCount = (post?.retry_count ?? 0) + 1;
+  const rateLimitExhausted = failureKind === "rate_limit" && nextRetryCount >= 3;
+  const maxRetriesReached = nextRetryCount >= MAX_PUBLISH_RETRIES;
 
-  if (nextRetryCount >= MAX_PUBLISH_RETRIES) {
-    const { error } = await supabase
-      .from("scheduled_posts")
-      .update({
+  if (rateLimitExhausted || maxRetriesReached) {
+    const updated = await updatePostStatusWithFallback(
+      supabase,
+      postId,
+      {
         status: "failed_persistent",
         retry_count: nextRetryCount,
         next_retry_at: null,
-        error_message: message,
-      })
-      .eq("id", postId)
-      .is("media_id", null);
+        error_message: normalizedMessage,
+      },
+      {
+        status: "failed",
+        retry_count: nextRetryCount,
+        next_retry_at: null,
+        error_message: normalizedMessage,
+      },
+    );
 
-    if (error) {
-      console.error(`[publish] failed to mark post ${postId} as failed_persistent:`, error.message);
+    if (!updated) {
+      console.error(`[publish] failed to mark post ${postId} as failed_persistent`);
     }
 
     await logPublishEvent(
       supabase,
       postId,
       "error",
-      `Falha persistente após ${nextRetryCount} tentativa(s): ${message}`,
+      rateLimitExhausted
+        ? `Rate limit persistente após ${nextRetryCount} tentativa(s): ${normalizedMessage}`
+        : `Falha persistente após ${nextRetryCount} tentativa(s): ${normalizedMessage}`,
     );
+    await maybePauseAccountOnFailure(supabase, postId, normalizedMessage, nextRetryCount);
     return;
   }
 
-  const nextRetryAt = nextRetryAtFromCount(nextRetryCount);
-  const { error } = await supabase
-    .from("scheduled_posts")
-    .update({
+  const nextRetryAt = nextRetryAtForMessage(normalizedMessage, nextRetryCount);
+  const updated = await updatePostStatusWithFallback(
+    supabase,
+    postId,
+    {
       status: "retrying",
       retry_count: nextRetryCount,
       next_retry_at: nextRetryAt,
-      error_message: message,
-    })
-    .eq("id", postId)
-    .is("media_id", null);
+      error_message: normalizedMessage,
+    },
+    {
+      status: "pending",
+      retry_count: nextRetryCount,
+      scheduled_at: nextRetryAt,
+      next_retry_at: null,
+      error_message: normalizedMessage,
+    },
+  );
 
-  if (error) {
-    console.error(`[publish] failed to schedule retry for post ${postId}:`, error.message);
+  if (!updated) {
+    console.error(`[publish] failed to schedule retry for post ${postId}`);
     return;
   }
+
+  await maybePauseAccountOnFailure(supabase, postId, normalizedMessage, nextRetryCount);
 
   await logPublishEvent(
     supabase,
     postId,
     "info",
-    `Retry ${nextRetryCount}/${MAX_PUBLISH_RETRIES} agendado para ${nextRetryAt}. Erro: ${message}`,
+    `Retry ${nextRetryCount}/${MAX_PUBLISH_RETRIES} agendado para ${nextRetryAt}. Erro: ${normalizedMessage}`,
   );
 }

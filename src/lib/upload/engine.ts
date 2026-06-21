@@ -1,7 +1,12 @@
 import type { UploadBatch, UploadBatchFile } from "@/lib/types";
-import { applyBatchFilePatch, uploadBatchFile } from "@/lib/upload/client";
+import { UploadClaimConflictError } from "@/lib/upload/claim-conflict";
+import {
+  applyBatchFilePatch,
+  uploadBatchFile,
+  UploadLocalCompletedPendingError,
+} from "@/lib/upload/client";
 
-type UploadOutcome = "done" | "requeue" | "stopped";
+type UploadOutcome = "done" | "requeue" | "stopped" | "claim_wait" | "local_completed_pending";
 
 export interface UploadEngineProgress {
   completed: number;
@@ -36,6 +41,8 @@ export interface UploadEngineCallbacks {
     },
   ) => void;
   onFileRecovered?: (fileId: string) => void;
+  onClaimConflict?: (fileId: string, error: UploadClaimConflictError) => void;
+  onLocalCompletedPending?: (fileId: string) => void;
   onComplete?: (batch: UploadBatch) => void;
   onError?: (message: string, fileId?: string) => void;
   onEngineIdle?: (batch: UploadBatch) => void;
@@ -277,12 +284,20 @@ export class UploadEngine {
     this.targetConcurrency = Math.max(1, this.fileConcurrency);
     const pendingQueue = [...records];
     const requeueCounts = new Map<string, number>();
+    const inFlightIds = new Set<string>();
+    const completedLocalIds = new Set<string>();
+    const queuedIds = new Set(records.map((record) => record.id));
     this.workerPromises = [];
     let workerSeq = 0;
 
+    const isFileBlocked = (fileId: string) =>
+      inFlightIds.has(fileId) ||
+      completedLocalIds.has(fileId) ||
+      (batch.upload_files?.find((f) => f.id === fileId)?.status === "completed");
+
     const uploadOne = async (record: UploadBatchFile, workerId: number): Promise<UploadOutcome> => {
       const file = fileMap.get(record.id);
-      if (!file) return "done";
+      if (!file || isFileBlocked(record.id)) return "done";
 
       if (this.stopped) return "stopped";
 
@@ -291,6 +306,7 @@ export class UploadEngine {
 
       const controller = new AbortController();
       this.abortControllers.set(currentRecord.id, controller);
+      inFlightIds.add(currentRecord.id);
 
       try {
         await this.waitWhilePaused();
@@ -347,6 +363,10 @@ export class UploadEngine {
             this.callbacks.onFileRecovered?.(currentRecord.id);
             this.emitProgress(batch, fileProgress);
           },
+          onTusCompleted: () => {
+            completedLocalIds.add(currentRecord.id);
+            this.callbacks.onLocalCompletedPending?.(currentRecord.id);
+          },
         });
 
         batch = await this.withBatchLock(() =>
@@ -402,6 +422,18 @@ export class UploadEngine {
         this.emitProgress(batch, fileProgress);
         return "done";
       } catch (error) {
+        if (error instanceof UploadClaimConflictError) {
+          this.callbacks.onClaimConflict?.(currentRecord.id, error);
+          return "claim_wait";
+        }
+        if (error instanceof UploadLocalCompletedPendingError) {
+          completedLocalIds.add(currentRecord.id);
+          this.callbacks.onLocalCompletedPending?.(currentRecord.id);
+          fileProgress.set(currentRecord.id, { percent: 100, filename: currentRecord.filename });
+          this.liveLoadedBytes.set(currentRecord.id, Number(currentRecord.file_size));
+          this.emitProgress(batch, fileProgress);
+          return "local_completed_pending";
+        }
         if (controller.signal.aborted && this.paused && !this.stopped) {
           return "requeue";
         }
@@ -424,6 +456,7 @@ export class UploadEngine {
         }
         return "done";
       } finally {
+        inFlightIds.delete(currentRecord.id);
         this.abortControllers.delete(currentRecord.id);
       }
     };
@@ -438,6 +471,7 @@ export class UploadEngine {
 
         const record = pendingQueue.shift();
         if (!record) return;
+        if (isFileBlocked(record.id)) continue;
 
         console.info("[upload-queue-next]", {
           batchId: batch.id,
@@ -448,8 +482,11 @@ export class UploadEngine {
         });
 
         const outcome = await uploadOne(record, workerId);
-        if (outcome === "requeue" && !this.stopped) {
-          pendingQueue.unshift(record);
+        if (outcome === "requeue" && !this.stopped && !isFileBlocked(record.id)) {
+          if (!queuedIds.has(record.id)) {
+            queuedIds.add(record.id);
+            pendingQueue.push(record);
+          }
         }
         if (outcome === "stopped") return;
       }
