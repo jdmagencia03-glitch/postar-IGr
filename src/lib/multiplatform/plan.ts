@@ -42,9 +42,18 @@ function accountUsername(
   return (account as InstagramAccount).ig_username ?? "conta";
 }
 
-function scheduleForPlatform(baseSchedule: Date[], platform: SocialPlatform, now = new Date()) {
+function scheduleForPlatform(
+  baseSchedule: Date[],
+  platform: SocialPlatform,
+  now = new Date(),
+  preserveWarmupSlots = false,
+) {
   const offsetMs =
     platform === "tiktok" ? TIKTOK_SCHEDULE_OFFSET_MINUTES * 60_000 : 0;
+
+  if (preserveWarmupSlots && offsetMs === 0) {
+    return baseSchedule.map((slot) => new Date(slot));
+  }
 
   return baseSchedule.map((slot) =>
     ensureFutureScheduleSlot(new Date(slot.getTime() + offsetMs), now),
@@ -128,6 +137,7 @@ export async function buildMultiplatformPlan(params: {
   insertion_platform?: SocialPlatform;
 }) {
   const scheduleMode = params.schedule_mode ?? "auto";
+  const preserveWarmupSlots = scheduleMode === "warmup";
   const totalCount = params.total_count ?? params.items.length;
   const batchOffset = params.batch_offset ?? 0;
   const now = params.now ?? new Date();
@@ -211,7 +221,12 @@ export async function buildMultiplatformPlan(params: {
 
     const destinations = params.targets.map((target) => {
       const account = params.accounts.get(target.account_id)!;
-      const platformSchedule = scheduleForPlatform(schedule, target.platform, now);
+      const platformSchedule = scheduleForPlatform(
+        schedule,
+        target.platform,
+        now,
+        preserveWarmupSlots,
+      );
       const captionPack = captionsByPlatform.get(target.platform);
 
       return {

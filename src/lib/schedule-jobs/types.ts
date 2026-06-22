@@ -161,4 +161,7 @@ export type ScheduleJobStatusResponse = {
     slot: string;
     slotSource: "warmup_fixed";
   }>;
+  stalledReason: string | null;
+  recommendedAction: string | null;
+  missingPosts: number;
 };

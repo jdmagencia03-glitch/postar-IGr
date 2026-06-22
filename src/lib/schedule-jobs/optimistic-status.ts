@@ -68,6 +68,9 @@ export function buildOptimisticScheduleJobStatus(
     warmupPattern: null,
     skippedPastSlots: [],
     plannedPosts: [],
+    stalledReason: null,
+    recommendedAction: null,
+    missingPosts: videoCount,
   };
 }
 

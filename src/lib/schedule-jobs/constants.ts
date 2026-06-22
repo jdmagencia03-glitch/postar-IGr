@@ -28,6 +28,10 @@ export const SCHEDULE_JOB_STALE_MS = 600_000;
 /** Fase saving_posts sem worker ativo (ms) — 3 min */
 export const SCHEDULE_JOB_SAVE_STALL_MS = 180_000;
 
+/** Lotes pequenos: detectar insert parado mais cedo (ms) */
+export const SCHEDULE_JOB_SMALL_BATCH_MAX = 15;
+export const SCHEDULE_JOB_SMALL_INSERT_STALL_MS = 45_000;
+
 /** Chunks por job em cada execução do cron (background, até maxDuration). */
 export const SCHEDULE_JOB_CRON_CHUNKS_PER_JOB = 10;
 

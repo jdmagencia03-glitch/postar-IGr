@@ -75,6 +75,9 @@ function statusBanner(
   status: ScheduleJobStatusResponse,
   pollDisplay: PollingDisplayState | null,
 ) {
+  if (status.isStalled && status.stalledReason === "insert_chunk_not_started") {
+    return "Salvamento dos posts não iniciou — use Finalizar posts agora para concluir sem duplicar.";
+  }
   if (status.isStalled) {
     return "Agendamento sem progresso detectado — use as ações abaixo para continuar sem duplicar posts.";
   }
@@ -268,6 +271,9 @@ export function ScheduleJobPanel({
   const isPartial = status?.phase === "partial_completed";
   const isBusy = action !== null;
   const showStalledActions = Boolean(status?.isStalled && status.isActive);
+  const showFinalizePosts = Boolean(
+    status?.canFinalizePosts && !isDone && !isPartial && status.isActive,
+  );
   const showResume = Boolean(status?.canResume && !isBusy && !isDone && !showStalledActions);
   const showCompletionBanner = Boolean(banner && !isDone);
   const headline = isDone
@@ -375,6 +381,22 @@ export function ScheduleJobPanel({
             onViewDetails={() => setShowDetails(true)}
           />
         ) : null}
+
+        {showFinalizePosts && !showStalledActions && (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => void runAction("finalize", () => finalizePostsScheduleJobApi(jobId))}
+            className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          >
+            {action === "finalize" ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Check size={16} />
+            )}
+            Finalizar posts agora
+          </button>
+        )}
 
         {showStalledActions && (
           <>

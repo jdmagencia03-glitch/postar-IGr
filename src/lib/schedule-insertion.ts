@@ -743,7 +743,11 @@ export async function resolveScheduleInsertionPlan(
     scheduleSummary = warmupPlan.scheduleSummary;
   }
 
-  schedule = sanitizeScheduleDates(schedule, now);
+  const usesWarmupSlots =
+    params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new");
+  if (!usesWarmupSlots) {
+    schedule = sanitizeScheduleDates(schedule, now);
+  }
 
   const preview = buildInsertionDayPreview({
     schedule,

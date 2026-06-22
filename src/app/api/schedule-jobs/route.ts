@@ -9,7 +9,8 @@ import {
 } from "@/lib/schedule-jobs/queue/tasks";
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
 import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch, buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
-import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD } from "@/lib/schedule-jobs/constants";
+import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD, SCHEDULE_JOB_SMALL_BATCH_MAX } from "@/lib/schedule-jobs/constants";
+import { QUEUE_CRON_MAX_MS } from "@/lib/schedule-jobs/queue/constants";
 import { getBatchForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduleJobConfig } from "@/lib/schedule-jobs/types";
@@ -135,10 +136,14 @@ export async function POST(request: NextRequest) {
       })),
     });
 
+    const smallBatch = files.length <= SCHEDULE_JOB_SMALL_BATCH_MAX;
     await bootstrapJobQueue(supabase, created.job);
     await dispatchScheduleJob(created.job.id, ownerId);
     waitUntil(
-      drainScheduleJobQueue(supabase, { workerPrefix: "create" }).catch((error) => {
+      drainScheduleJobQueue(supabase, {
+        workerPrefix: "create",
+        maxMs: smallBatch ? 120_000 : QUEUE_CRON_MAX_MS,
+      }).catch((error) => {
         console.error("[schedule-job-created]", error);
       }),
     );

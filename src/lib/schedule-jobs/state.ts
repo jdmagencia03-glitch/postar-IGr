@@ -2,6 +2,8 @@ import {
   SCHEDULE_JOB_INSERT_CHUNK,
   SCHEDULE_JOB_PLAN_CHUNK,
   SCHEDULE_JOB_SAVE_STALL_MS,
+  SCHEDULE_JOB_SMALL_BATCH_MAX,
+  SCHEDULE_JOB_SMALL_INSERT_STALL_MS,
   SCHEDULE_JOB_STALE_MS,
   SCHEDULE_JOB_WORKER_ACTIVE_MS,
 } from "@/lib/schedule-jobs/constants";
@@ -52,6 +54,8 @@ export type ScheduleJobViewState = {
   canForceContinue: boolean;
   canFinalizePosts: boolean;
   isStalled: boolean;
+  stalledReason: string | null;
+  recommendedAction: string | null;
   canCancel: boolean;
   canOpenCalendar: boolean;
   hasActiveError: boolean;
@@ -288,27 +292,58 @@ export function deriveScheduleJobView(job: ScheduleJobRow): ScheduleJobViewState
   const workerDisplay = deriveWorkerDisplay(job);
   const hasActiveError = Boolean(job.error_message) && !TERMINAL_STATUSES.has(job.status);
 
-  const canResume =
-    phase === "failed" ||
-    phase === "paused_needs_action" ||
-    (phase === "partial_completed" && failed > 0);
+  const msSinceUpdate = Date.now() - new Date(job.updated_at).getTime();
+  const smallBatch = total <= SCHEDULE_JOB_SMALL_BATCH_MAX;
+  const insertStallMs = smallBatch
+    ? SCHEDULE_JOB_SMALL_INSERT_STALL_MS
+    : SCHEDULE_JOB_SAVE_STALL_MS;
+
+  const insertChunkNotStarted =
+    phase === "saving_posts" &&
+    calendarDone >= total &&
+    postsSaved < total &&
+    insertChunksDone === 0 &&
+    !workerActive &&
+    msSinceUpdate >= insertStallMs;
 
   const savingPostsStuck =
     phase === "saving_posts" &&
     calendarDone >= total &&
     postsSaved < total &&
-    Date.now() - new Date(job.updated_at).getTime() > SCHEDULE_JOB_SAVE_STALL_MS;
+    msSinceUpdate > SCHEDULE_JOB_SAVE_STALL_MS;
 
   const isStalled =
     isActive &&
     !workerActive &&
-    (isJobStale(job) || savingPostsStuck ||
-      (Date.now() - new Date(job.updated_at).getTime() > SCHEDULE_JOB_STALE_MS && postsSaved < total));
+    (insertChunkNotStarted ||
+      isJobStale(job) ||
+      savingPostsStuck ||
+      (msSinceUpdate > SCHEDULE_JOB_STALE_MS && postsSaved < total));
+
+  const stalledReason = insertChunkNotStarted
+    ? "insert_chunk_not_started"
+    : savingPostsStuck
+      ? "saving_posts_stalled"
+      : isJobStale(job) && !workerActive
+        ? "job_stale"
+        : null;
+
+  const recommendedAction = insertChunkNotStarted || savingPostsStuck
+    ? "finalize_posts"
+    : isStalled && phase === "paused_needs_action"
+      ? "resume"
+      : null;
 
   const canForceContinue = isStalled || phase === "paused_needs_action";
   const canFinalizePosts =
     (phase === "saving_posts" || (calendarDone >= total && postsSaved < total)) &&
     postsSaved < total;
+
+  const canResume =
+    phase === "failed" ||
+    phase === "paused_needs_action" ||
+    insertChunkNotStarted ||
+    (phase === "partial_completed" && failed > 0);
 
   const canCancel = isActive && !workerActive;
   const canOpenCalendar =
@@ -349,6 +384,8 @@ export function deriveScheduleJobView(job: ScheduleJobRow): ScheduleJobViewState
     canForceContinue,
     canFinalizePosts,
     isStalled,
+    stalledReason,
+    recommendedAction,
     canCancel,
     canOpenCalendar,
     hasActiveError,

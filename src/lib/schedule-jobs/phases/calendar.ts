@@ -23,8 +23,16 @@ import {
   resolveAutoPostsPerDay,
 } from "@/lib/smart-schedule";
 
-function scheduleForPlatform(baseSchedule: Date[], platform: "instagram" | "tiktok", now = new Date()) {
+function scheduleForPlatform(
+  baseSchedule: Date[],
+  platform: "instagram" | "tiktok",
+  now = new Date(),
+  preserveWarmupSlots = false,
+) {
   const offsetMs = platform === "tiktok" ? TIKTOK_SCHEDULE_OFFSET_MINUTES * 60_000 : 0;
+  if (preserveWarmupSlots && offsetMs === 0) {
+    return baseSchedule.map((slot) => new Date(slot));
+  }
   return baseSchedule.map((slot) =>
     ensureFutureScheduleSlot(new Date(slot.getTime() + offsetMs), now),
   );
@@ -52,8 +60,9 @@ export async function processCalendarTask(
   if (!pending.length) return;
 
   const ctx = await resolveJobPlanningContext(supabase, ownerId, job);
-  const batchOffset = job.processed_items;
+  const batchOffset = pending[0]?.sort_order ?? 0;
   const now = new Date();
+  const preserveWarmupSlots = ctx.scheduleMode === "warmup";
 
   const insertion = await buildScheduleWithInsertion({
     supabase,
@@ -83,7 +92,12 @@ export async function processCalendarTask(
     const parent_publish_group_id = randomUUID();
     const destinations: ScheduleJobDestination[] = ctx.targets.map((target) => {
       const account = ctx.accounts.get(target.account_id)!;
-      const platformSchedule = scheduleForPlatform(schedule, target.platform, now);
+      const platformSchedule = scheduleForPlatform(
+        schedule,
+        target.platform,
+        now,
+        preserveWarmupSlots,
+      );
       return {
         platform: target.platform,
         account_id: target.account_id,
@@ -101,7 +115,11 @@ export async function processCalendarTask(
     });
   }
 
-  if (!job.schedule_summary) {
+  const shouldWriteSummary =
+    !job.schedule_summary ||
+    (ctx.scheduleMode === "warmup" && job.schedule_summary.includes("posts/dia"));
+
+  if (shouldWriteSummary) {
     const schedule_summary =
       ctx.scheduleMode === "warmup"
         ? buildWarmupScheduleSummary({
