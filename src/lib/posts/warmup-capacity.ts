@@ -223,37 +223,81 @@ export async function buildExistingValidPostsByDateRange(
   const dates = enumerateLocalDatesFromAnchor(params.startLocalDate, params.dayCount);
   if (!dates.length) return {};
 
+  const counts = Object.fromEntries(dates.map((date) => [date, 0]));
+  const exclude = new Set(params.excludePostIds?.filter(Boolean) ?? []);
+  const chunkDays = 7;
+
+  for (let offset = 0; offset < dates.length; offset += chunkDays) {
+    const chunkDates = dates.slice(offset, offset + chunkDays);
+    const chunkCounts = await fetchValidPostCountsForLocalDates(supabase, {
+      ...params,
+      localDates: chunkDates,
+      exclude,
+    });
+    for (const [date, count] of Object.entries(chunkCounts)) {
+      counts[date] = count;
+    }
+  }
+
+  return counts;
+}
+
+async function fetchValidPostCountsForLocalDates(
+  supabase: SupabaseClient,
+  params: {
+    accountId: string;
+    platform: SocialPlatform;
+    localDates: string[];
+    contentType?: ContentType;
+    exclude: Set<string>;
+  },
+): Promise<Record<string, number>> {
+  const dates = params.localDates.filter(Boolean);
+  if (!dates.length) return {};
+
   const rangeStart = localDateUtcRange(dates[0]!).start;
   const lastStart = localDateUtcRange(dates[dates.length - 1]!).start;
   const rangeEnd = atHourOnDayOffsetInAppTz(lastStart, 1, 0, 0);
-
-  let query = supabase
-    .from("scheduled_posts")
-    .select("id, scheduled_at")
-    .gte("scheduled_at", rangeStart.toISOString())
-    .lt("scheduled_at", rangeEnd.toISOString())
-    .in("status", WARMUP_CAPACITY_STATUSES);
-
-  if (params.platform === "tiktok") {
-    query = query.eq("platform", "tiktok").eq("tiktok_account_id", params.accountId);
-  } else {
-    query = query.eq("account_id", params.accountId);
-  }
-
-  if (params.contentType) {
-    query = query.eq("content_type", params.contentType);
-  }
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-
-  const exclude = new Set(params.excludePostIds?.filter(Boolean) ?? []);
   const counts = Object.fromEntries(dates.map((date) => [date, 0]));
 
-  for (const post of data ?? []) {
-    if (exclude.has(post.id as string)) continue;
-    const key = localDateKeyFromUtc(new Date(post.scheduled_at as string));
-    if (key in counts) counts[key] = (counts[key] ?? 0) + 1;
+  const pageSize = 1000;
+  let page = 0;
+
+  while (true) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from("scheduled_posts")
+      .select("id, scheduled_at")
+      .gte("scheduled_at", rangeStart.toISOString())
+      .lt("scheduled_at", rangeEnd.toISOString())
+      .in("status", WARMUP_CAPACITY_STATUSES)
+      .order("scheduled_at", { ascending: true })
+      .range(from, to);
+
+    if (params.platform === "tiktok") {
+      query = query.eq("platform", "tiktok").eq("tiktok_account_id", params.accountId);
+    } else {
+      query = query.eq("account_id", params.accountId);
+    }
+
+    if (params.contentType) {
+      query = query.eq("content_type", params.contentType);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const rows = data ?? [];
+    for (const post of rows) {
+      if (params.exclude.has(post.id as string)) continue;
+      const key = localDateKeyFromUtc(new Date(post.scheduled_at as string));
+      if (key in counts) counts[key] = (counts[key] ?? 0) + 1;
+    }
+
+    if (rows.length < pageSize) break;
+    page += 1;
   }
 
   return counts;
