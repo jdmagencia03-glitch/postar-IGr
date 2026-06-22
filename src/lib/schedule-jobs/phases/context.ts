@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   DEFAULT_WARMUP_DAYS,
-  getWarmupDayOffset,
   resolveAutoScheduleOptions,
   type AutoAccountProfile,
 } from "@/lib/account-warmup";
@@ -45,10 +44,9 @@ export function resolveWarmup(
     const ig = primaryAccount as InstagramAccount;
     return {
       warmupDays: ig.warmup_days ?? DEFAULT_WARMUP_DAYS,
-      warmupDayOffset: getWarmupDayOffset(ig.warmup_started_at ?? ig.created_at),
     };
   }
-  return { warmupDays: DEFAULT_WARMUP_DAYS, warmupDayOffset: 0 };
+  return { warmupDays: DEFAULT_WARMUP_DAYS };
 }
 
 export async function resolveJobPlanningContext(

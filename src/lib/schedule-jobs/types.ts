@@ -42,6 +42,9 @@ export type ScheduleJobConfig = {
   niche?: string;
   schedule_plan?: {
     warmupPattern?: string | null;
+    warmupStartDate?: string | null;
+    timezone?: string | null;
+    nowUsedForPlanning?: string | null;
     skippedPastSlots?: Array<{ date: string; time: string; reason: "past_time" }>;
     plannedPosts?: Array<{
       dayIndex: number;

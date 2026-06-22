@@ -2,8 +2,9 @@ import { randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   DEFAULT_WARMUP_DAYS,
-  getWarmupDayOffset,
   resolveAutoScheduleOptions,
+  resolveWarmupScheduleContext,
+  validateWarmupScheduledAt,
   type AutoAccountProfile,
 } from "@/lib/account-warmup";
 import { getOwnerAccountById } from "@/lib/accounts";
@@ -70,10 +71,9 @@ function resolveWarmup(
     const ig = primaryAccount as InstagramAccount;
     return {
       warmupDays: ig.warmup_days ?? DEFAULT_WARMUP_DAYS,
-      warmupDayOffset: getWarmupDayOffset(ig.warmup_started_at ?? ig.created_at),
     };
   }
-  return { warmupDays: DEFAULT_WARMUP_DAYS, warmupDayOffset: 0 };
+  return { warmupDays: DEFAULT_WARMUP_DAYS };
 }
 
 async function processPlanChunk(
@@ -178,6 +178,13 @@ async function processInsertChunk(
   pending: ScheduleJobItemRow[],
 ) {
   const config = job.config as ScheduleJobConfig;
+  const isWarmupMode = config.schedule_mode === "warmup";
+  const warmupStartDate =
+    config.schedule_plan?.warmupStartDate ??
+    resolveWarmupScheduleContext({
+      strategy: config.schedule_strategy ?? "new_plan",
+      now: new Date(),
+    }).warmupStartDate;
   const campaignContext = await resolveSchedulingCampaignContext(supabase, ownerId, {
     product_id: config.product_id,
     campaign_id: config.campaign_id,
@@ -226,22 +233,41 @@ async function processInsertChunk(
 
       const rows = item.destinations
         .filter((dest) => !dest.created_post_id)
-        .map((dest) => ({
-          platform: dest.platform,
-          account_id: dest.platform === "instagram" ? dest.account_id : null,
-          tiktok_account_id: dest.platform === "tiktok" ? dest.account_id : null,
-          content_type: contentTypeForPlatform(dest.platform),
-          media_type: "REELS" as const,
-          media_urls: item.media_urls,
-          media_asset_id: mediaCheck.mediaAssetIds[0] ?? null,
-          caption: dest.caption?.trim() || null,
-          scheduled_at: sanitizeScheduledAt(dest.scheduled_at),
-          product_id: campaignFields.product_id,
-          campaign_id: campaignFields.campaign_id,
-          content_objective: campaignFields.content_objective,
-          upload_batch_id: job.upload_batch_id,
-          parent_publish_group_id: item.parent_publish_group_id ?? randomUUID(),
-        }));
+        .map((dest) => {
+          const scheduledAt = isWarmupMode
+            ? dest.scheduled_at
+            : sanitizeScheduledAt(dest.scheduled_at);
+
+          if (isWarmupMode) {
+            const validation = validateWarmupScheduledAt(scheduledAt, warmupStartDate);
+            if (!validation.ok) {
+              throw new Error(
+                `invalid_warmup_slot: ${JSON.stringify({
+                  invalidSlot: validation.invalidSlot,
+                  dayIndex: validation.dayIndex,
+                  allowedSlots: validation.allowedSlots,
+                })}`,
+              );
+            }
+          }
+
+          return {
+            platform: dest.platform,
+            account_id: dest.platform === "instagram" ? dest.account_id : null,
+            tiktok_account_id: dest.platform === "tiktok" ? dest.account_id : null,
+            content_type: contentTypeForPlatform(dest.platform),
+            media_type: "REELS" as const,
+            media_urls: item.media_urls,
+            media_asset_id: mediaCheck.mediaAssetIds[0] ?? null,
+            caption: dest.caption?.trim() || null,
+            scheduled_at: scheduledAt,
+            product_id: campaignFields.product_id,
+            campaign_id: campaignFields.campaign_id,
+            content_objective: campaignFields.content_objective,
+            upload_batch_id: job.upload_batch_id,
+            parent_publish_group_id: item.parent_publish_group_id ?? randomUUID(),
+          };
+        });
 
       if (!rows.length) {
         await updateJobItem(supabase, item.id, { status: "completed" });

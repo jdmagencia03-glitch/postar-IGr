@@ -3,6 +3,7 @@ import {
   buildWarmupSchedulePlan,
   formatWarmupTimeSlot,
   getWarmupSlotsForDay,
+  resolveWarmupScheduleContext,
   type WarmupPlannedPost,
   type WarmupSchedulePlanResult,
   type WarmupSkippedSlot,
@@ -62,7 +63,8 @@ export function buildSchedulePlan(params: {
   mode: SchedulePlanMode;
   count: number;
   warmupDays?: number;
-  warmupDayOffset?: number;
+  strategy?: "continue" | "new_plan" | "fill_gaps";
+  anchorStartDate?: Date;
   firstScheduledAt?: Date;
   now?: Date;
 }): SchedulePlanResult {
@@ -70,12 +72,19 @@ export function buildSchedulePlan(params: {
     throw new Error("buildSchedulePlan: apenas modo warmup nesta versão");
   }
 
+  const now = params.now ?? new Date();
+  const warmupContext = resolveWarmupScheduleContext({
+    strategy: params.strategy ?? "new_plan",
+    anchorStartDate: params.anchorStartDate ?? params.firstScheduledAt,
+    now,
+  });
+
   const plan = buildWarmupSchedulePlan({
     count: params.count,
     warmupDays: params.warmupDays,
-    warmupDayOffset: params.warmupDayOffset,
-    firstScheduledAt: params.firstScheduledAt,
-    now: params.now,
+    warmupDayOffset: warmupContext.warmupDayOffset,
+    firstScheduledAt: warmupContext.firstScheduledAt,
+    now,
   });
 
   const scheduleSummary = buildWarmupScheduleSummary({

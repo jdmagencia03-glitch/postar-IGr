@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadItemIdsForPhase } from "@/lib/schedule-jobs/queue/tasks";
 import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
 import type { ScheduleJobRow, ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
+import { buildWarmupJobDiagnostics } from "@/lib/warmup-diagnostics";
 
 export type ConsistencyErrorCode =
   | "save_posts_marked_completed_but_no_posts_saved"
@@ -37,13 +38,26 @@ export type JobDiagnosticsEnrichment = {
   scheduleMode: string | null;
   warmupPattern: string | null;
   scheduleSummary: string | null;
+  timezone?: string | null;
+  nowUsedForPlanning?: string | null;
+  warmupStartDate?: string | null;
   plannedPosts: Array<{
     dayIndex: number;
     scheduledAt: string;
     slot: string;
     slotSource: "warmup_fixed";
+    localDate?: string;
+    localTime?: string;
+    isValidWarmupSlot?: boolean;
+  }>;
+  invalidSlots?: Array<{
+    scheduledAt: string;
+    localTime: string;
+    dayIndex: number;
+    reason: "not_in_warmup_fixed_grid";
   }>;
   createdPosts: Array<{ id: string; scheduledAt: string; status: string }>;
+  calendarPosts?: Array<{ id: string; scheduledAt: string; status: string }>;
   missingPosts: Array<{ itemId: string; filename: string; reason: string }>;
   duplicates: Array<{ scheduledAt: string; count: number }>;
   consistencyErrors: ConsistencyError[];
@@ -430,14 +444,27 @@ export async function buildJobDiagnosticsEnrichment(
     job.status !== "cancelled" &&
     job.status !== "completed";
 
+  const warmupDiagnostics = buildWarmupJobDiagnostics({
+    job,
+    items,
+    createdPosts,
+  });
+
   return {
     scheduleMode: job.schedule_mode ?? null,
     warmupPattern:
       schedulePlan?.warmupPattern ??
       (job.schedule_mode === "warmup" ? "3→3→4→4→7" : null),
     scheduleSummary: job.schedule_summary ?? null,
-    plannedPosts,
+    timezone: warmupDiagnostics?.timezone ?? schedulePlan?.timezone ?? null,
+    nowUsedForPlanning:
+      warmupDiagnostics?.nowUsedForPlanning ?? schedulePlan?.nowUsedForPlanning ?? null,
+    warmupStartDate:
+      warmupDiagnostics?.warmupStartDate ?? schedulePlan?.warmupStartDate ?? null,
+    plannedPosts: warmupDiagnostics?.plannedPosts ?? plannedPosts,
+    invalidSlots: warmupDiagnostics?.invalidSlots ?? [],
     createdPosts,
+    calendarPosts: warmupDiagnostics?.calendarPosts ?? createdPosts,
     missingPosts,
     duplicates,
     consistencyErrors: consistency.errors,

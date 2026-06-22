@@ -4,7 +4,6 @@ import { buildAutopilotPlan, resolveAutopilotAccounts } from "@/lib/autopilot-pl
 import { API_BATCH_SIZE } from "@/lib/autopilot-constants";
 import {
   DEFAULT_WARMUP_DAYS,
-  getWarmupDayOffset,
   getWarmupStatus,
   resolveAutoScheduleOptions,
   type AutoAccountProfile,
@@ -101,7 +100,6 @@ export async function POST(request: NextRequest) {
     let warmup:
       | {
           warmupDays?: number;
-          warmupDayOffset?: number;
         }
       | undefined;
 
@@ -110,14 +108,10 @@ export async function POST(request: NextRequest) {
         const igAccount = primaryAccount as InstagramAccount;
         warmup = {
           warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
-          warmupDayOffset: getWarmupDayOffset(
-            igAccount.warmup_started_at ?? igAccount.created_at,
-          ),
         };
       } else {
         warmup = {
           warmupDays: DEFAULT_WARMUP_DAYS,
-          warmupDayOffset: 0,
         };
       }
     }

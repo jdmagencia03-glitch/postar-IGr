@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOwnerAccountById } from "@/lib/accounts";
 import {
   DEFAULT_WARMUP_DAYS,
-  getWarmupDayOffset,
   resolveAutoScheduleOptions,
   type AutoAccountProfile,
 } from "@/lib/account-warmup";
@@ -116,7 +115,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Horários inválidos no modo personalizado." }, { status: 400 });
   }
 
-  let warmup: { warmupDays?: number; warmupDayOffset?: number } | undefined;
+  let warmup: { warmupDays?: number } | undefined;
   const igTarget = parsed.data.targets.find((t) => t.platform === "instagram");
   const igAccount = igTarget ? (accounts.get(igTarget.account_id) as InstagramAccount) : null;
 
@@ -124,14 +123,10 @@ export async function POST(request: NextRequest) {
     if (igAccount) {
       warmup = {
         warmupDays: igAccount.warmup_days ?? DEFAULT_WARMUP_DAYS,
-        warmupDayOffset: getWarmupDayOffset(
-          igAccount.warmup_started_at ?? igAccount.created_at,
-        ),
       };
     } else {
       warmup = {
         warmupDays: DEFAULT_WARMUP_DAYS,
-        warmupDayOffset: 0,
       };
     }
   }

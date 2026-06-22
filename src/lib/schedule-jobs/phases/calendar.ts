@@ -15,8 +15,9 @@ import type {
   ScheduleJobItemRow,
   ScheduleJobRow,
 } from "@/lib/schedule-jobs/types";
-import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
 import { WARMUP_PATTERN } from "@/lib/account-warmup";
+import { APP_TIMEZONE } from "@/lib/timezone";
+import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
 import {
   describeSmartSchedule,
   ensureFutureScheduleSlot,
@@ -133,6 +134,9 @@ export async function processCalendarTask(
       ...job.config,
       schedule_plan: {
         warmupPattern: ctx.scheduleMode === "warmup" ? WARMUP_PATTERN : null,
+        warmupStartDate: insertion.warmupStartDate ?? null,
+        timezone: APP_TIMEZONE,
+        nowUsedForPlanning: now.toISOString(),
         skippedPastSlots: insertion.skippedPastSlots ?? [],
         plannedPosts: insertion.plannedPosts ?? [],
       },

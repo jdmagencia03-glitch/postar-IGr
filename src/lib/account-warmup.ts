@@ -1,9 +1,51 @@
 import {
+  APP_TIMEZONE,
   atHourInAppTz,
   atHourOnDayOffsetInAppTz,
   getAppDateParts,
   zonedDateTimeToUtc,
 } from "@/lib/timezone";
+
+export type WarmupScheduleStrategy = "continue" | "new_plan" | "fill_gaps";
+
+export type WarmupScheduleContext = {
+  warmupDayOffset: number;
+  firstScheduledAt: Date;
+  warmupStartDate: string;
+};
+
+export type WarmupSlotValidationError = {
+  ok: false;
+  code: "invalid_warmup_slot";
+  invalidSlot: string;
+  dayIndex: number;
+  allowedSlots: string[];
+  scheduledAt: string;
+};
+
+export type WarmupSlotValidationOk = {
+  ok: true;
+  dayIndex: number;
+  slot: string;
+  localDate: string;
+};
+
+export type WarmupDiagnosticsPlannedPost = {
+  scheduledAt: string;
+  localDate: string;
+  localTime: string;
+  dayIndex: number;
+  slot: string;
+  slotSource: "warmup_fixed";
+  isValidWarmupSlot: boolean;
+};
+
+export type WarmupInvalidSlotReport = {
+  scheduledAt: string;
+  localTime: string;
+  dayIndex: number;
+  reason: "not_in_warmup_fixed_grid";
+};
 
 export const DEFAULT_WARMUP_DAYS = 5;
 export const MIN_WARMUP_DAYS = 2;
@@ -81,12 +123,124 @@ export const WARMUP_DAY_TIME_SLOTS: readonly (readonly TimeSlot[])[] = [
 
 export const POST_WARMUP_TIME_SLOTS: readonly TimeSlot[] = WARMUP_DAY_TIME_SLOTS[4];
 
-/** Horários fixos para um dia absoluto da rampa (0 = Dia 1, 4+ = Dia 5 em diante). */
+/** Horários fixos para um dia absoluto da rampa (1 = Dia 1 … 5+ = grade de 7 posts). */
 export function getWarmupSlotsForDay(dayIndex: number): TimeSlot[] {
-  if (dayIndex < 4) {
-    return [...WARMUP_DAY_TIME_SLOTS[dayIndex]];
+  const zeroBased = Math.max(0, dayIndex - 1);
+  if (zeroBased < 4) {
+    return [...WARMUP_DAY_TIME_SLOTS[zeroBased]];
   }
   return [...WARMUP_DAY_TIME_SLOTS[4]];
+}
+
+/** Ancora o Dia 1 no dia local atual (00:00 em America/Sao_Paulo). */
+export function resolveNewWarmupAnchorDate(now = new Date()): Date {
+  const parts = getAppDateParts(now);
+  return zonedDateTimeToUtc(parts.year, parts.month, parts.day, 0, 0);
+}
+
+/** Contexto de planejamento — nunca usa histórico da conta para dayIndex. */
+export function resolveWarmupScheduleContext(params: {
+  strategy: WarmupScheduleStrategy;
+  anchorStartDate?: Date;
+  now?: Date;
+}): WarmupScheduleContext {
+  const now = params.now ?? new Date();
+
+  if (params.strategy === "new_plan" || !params.anchorStartDate) {
+    const firstScheduledAt = resolveNewWarmupAnchorDate(now);
+    return {
+      warmupDayOffset: 0,
+      firstScheduledAt,
+      warmupStartDate: warmupDateKey(firstScheduledAt),
+    };
+  }
+
+  return {
+    warmupDayOffset: 0,
+    firstScheduledAt: params.anchorStartDate,
+    warmupStartDate: warmupDateKey(params.anchorStartDate),
+  };
+}
+
+export function warmupDayIndexFromStart(warmupStartDate: string, date: Date): number {
+  const [year, month, day] = warmupStartDate.split("-").map(Number);
+  const startUtc = Date.UTC(year, month - 1, day);
+  const parts = getAppDateParts(date);
+  const dateUtc = Date.UTC(parts.year, parts.month - 1, parts.day);
+  return Math.max(1, Math.round((dateUtc - startUtc) / 86_400_000) + 1);
+}
+
+export function allowedWarmupSlotsForDayIndex(dayIndex: number): string[] {
+  return getWarmupSlotsForDay(dayIndex).map(formatWarmupTimeSlot);
+}
+
+export function isValidWarmupSlot(dayIndex: number, localTime: string): boolean {
+  return allowedWarmupSlotsForDayIndex(dayIndex).includes(localTime);
+}
+
+export function validateWarmupScheduledAt(
+  scheduledAt: string | Date,
+  warmupStartDate: string,
+): WarmupSlotValidationOk | WarmupSlotValidationError {
+  const date = new Date(scheduledAt);
+  const parts = getAppDateParts(date);
+  const slot = formatWarmupTimeSlot({ hour: parts.hour, minute: parts.minute });
+  const dayIndex = warmupDayIndexFromStart(warmupStartDate, date);
+  const localDate = warmupDateKey(date);
+
+  if (!isValidWarmupSlot(dayIndex, slot)) {
+    return {
+      ok: false,
+      code: "invalid_warmup_slot",
+      invalidSlot: slot,
+      dayIndex,
+      allowedSlots: allowedWarmupSlotsForDayIndex(dayIndex),
+      scheduledAt: date.toISOString(),
+    };
+  }
+
+  return { ok: true, dayIndex, slot, localDate };
+}
+
+export function buildWarmupDiagnosticsPlannedPosts(
+  schedule: Date[],
+  warmupStartDate: string,
+): WarmupDiagnosticsPlannedPost[] {
+  return schedule.map((scheduledAt) => {
+    const parts = getAppDateParts(scheduledAt);
+    const localTime = formatWarmupTimeSlot({ hour: parts.hour, minute: parts.minute });
+    const localDate = warmupDateKey(scheduledAt);
+    const dayIndex = warmupDayIndexFromStart(warmupStartDate, scheduledAt);
+    return {
+      scheduledAt: scheduledAt.toISOString(),
+      localDate,
+      localTime,
+      dayIndex,
+      slot: localTime,
+      slotSource: "warmup_fixed" as const,
+      isValidWarmupSlot: isValidWarmupSlot(dayIndex, localTime),
+    };
+  });
+}
+
+export function detectInvalidWarmupSlots(
+  scheduledAts: string[],
+  warmupStartDate: string,
+): WarmupInvalidSlotReport[] {
+  const invalid: WarmupInvalidSlotReport[] = [];
+  for (const scheduledAt of scheduledAts) {
+    const validation = validateWarmupScheduledAt(scheduledAt, warmupStartDate);
+    if (!validation.ok) {
+      const parts = getAppDateParts(new Date(scheduledAt));
+      invalid.push({
+        scheduledAt,
+        localTime: formatWarmupTimeSlot({ hour: parts.hour, minute: parts.minute }),
+        dayIndex: validation.dayIndex,
+        reason: "not_in_warmup_fixed_grid",
+      });
+    }
+  }
+  return invalid;
 }
 
 /** @deprecated Use getWarmupSlotsForDay — mantido para compatibilidade interna. */
@@ -105,12 +259,12 @@ export function warmupDateKey(date: Date) {
 
 export function slotsForPostsPerDay(postsPerDay: number): TimeSlot[] {
   if (postsPerDay >= POST_WARMUP_POSTS_PER_DAY) {
-    return getWarmupSlotsForDay(4);
+    return getWarmupSlotsForDay(5);
   }
   if (postsPerDay === 4) {
-    return getWarmupSlotsForDay(2);
+    return getWarmupSlotsForDay(3);
   }
-  return getWarmupSlotsForDay(0).slice(0, Math.max(1, Math.min(3, postsPerDay)));
+  return getWarmupSlotsForDay(1).slice(0, Math.max(1, Math.min(3, postsPerDay)));
 }
 
 export type WarmupCalendarStart = {
@@ -185,7 +339,7 @@ export function describeWarmupDayPlan(warmupDays = DEFAULT_WARMUP_DAYS): WarmupD
 }
 
 function slotsForAbsoluteDay(absoluteDay: number, _rampLength: number): TimeSlot[] {
-  return getWarmupSlotsForDay(absoluteDay);
+  return getWarmupSlotsForDay(absoluteDay + 1);
 }
 
 export type WarmupSkippedSlot = {
@@ -328,7 +482,7 @@ function resolveStartDate(now = new Date()) {
     return earliest;
   }
 
-  const first = getWarmupSlotsForDay(0)[0];
+  const first = getWarmupSlotsForDay(1)[0];
   return atHourOnDayOffsetInAppTz(now, 1, first.hour, first.minute);
 }
 
@@ -369,7 +523,8 @@ export function buildWarmupSchedulePlan(params: {
 
   const warmupDayOffset = params.warmupDayOffset ?? 0;
   const now = params.now ?? new Date();
-  const anchorSource = params.firstScheduledAt ?? params.startDate ?? resolveStartDate(now);
+  const anchorSource =
+    params.firstScheduledAt ?? params.startDate ?? resolveNewWarmupAnchorDate(now);
   const calendar = resolveWarmupCalendarStart({ firstScheduledAt: anchorSource, now });
 
   const schedule: Date[] = [];
