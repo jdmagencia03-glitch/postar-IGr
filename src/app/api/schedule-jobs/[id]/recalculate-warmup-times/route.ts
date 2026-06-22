@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizeCronRequest } from "@/lib/admin/cron-auth";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
-import type { ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
+import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SocialPlatform } from "@/lib/types";
 import { buildWarmupRecalculatePlan } from "@/lib/warmup-diagnostics";
@@ -11,18 +12,41 @@ export const dynamic = "force-dynamic";
 
 const ACTIVE_POST_STATUSES = ["pending", "processing", "retrying"];
 
+async function loadJobForRequest(
+  supabase: ReturnType<typeof createAdminClient>,
+  ownerId: string | null,
+  jobId: string,
+  cronAuthorized: boolean,
+): Promise<ScheduleJobRow | null> {
+  if (ownerId) {
+    return getScheduleJobHeader(supabase, ownerId, jobId);
+  }
+  if (!cronAuthorized) return null;
+
+  const { data, error } = await supabase
+    .from("schedule_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as ScheduleJobRow | null) ?? null;
+}
+
 /** Recalcula horários de posts pendentes no modo Aquecimento. */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  const cronAuthorized = authorizeCronRequest(request);
+  let ownerId = await getSessionUserId();
+  if (!ownerId && !cronAuthorized) {
+    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+  }
 
   const { id } = await context.params;
   const supabase = createAdminClient();
 
-  const job = await getScheduleJobHeader(supabase, ownerId, id);
+  const job = await loadJobForRequest(supabase, ownerId, id, cronAuthorized);
   if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
   if (job.schedule_mode !== "warmup") {
     return NextResponse.json({ error: "job_not_warmup" }, { status: 400 });
