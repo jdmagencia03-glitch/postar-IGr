@@ -1,6 +1,6 @@
 import {
   buildWarmupDiagnosticsPlannedPosts,
-  buildWarmupSchedulePlan,
+  buildWarmupSchedulePlanAsync,
   detectInvalidWarmupSlots,
   getWarmupDailyPostLimit,
   resolveWarmupScheduleContext,
@@ -9,10 +9,8 @@ import {
   type WarmupPlanningMeta,
 } from "@/lib/account-warmup";
 import {
-  buildExistingValidPostsByLocalDate,
   buildWarmupCapacityDiagnostics,
-  enumerateLocalDatesFromAnchor,
-  type WarmupCapacityDaySnapshot,
+  getExistingValidPostsForLocalDate,
 } from "@/lib/posts/warmup-capacity";
 import { APP_TIMEZONE } from "@/lib/timezone";
 import type { ContentType, SocialPlatform } from "@/lib/types";
@@ -135,33 +133,41 @@ export async function buildWarmupRecalculatePlan(params: {
     strategy: "new_plan",
     now,
   });
-  const planningDays = Math.min(Math.max(params.pendingCount * 2, 14), 35);
-  const planningDates = enumerateLocalDatesFromAnchor(context.warmupStartDate, planningDays);
-  const existingValidPostsByLocalDate = await buildExistingValidPostsByLocalDate(params.supabase, {
-    accountId: params.accountId,
-    platform: params.platform,
-    contentType: params.contentType,
-    localDates: planningDates,
-    excludePostIds: params.excludePostIds,
-  });
-  const capacityDiagnostics = params.includeCapacityDiagnostics === false
-    ? { existingValidPostsByDate: [], ignoredStatusesByDate: {} }
-    : await buildWarmupCapacityDiagnostics(params.supabase, {
-        accountId: params.accountId,
-        platform: params.platform,
-        contentType: params.contentType,
-        localDates: planningDates.slice(0, 7),
-        warmupStartDate: context.warmupStartDate,
-        dailyLimitForRampDay: getWarmupDailyPostLimit,
-        excludePostIds: params.excludePostIds,
-      });
-  const plan = buildWarmupSchedulePlan({
+
+  const planResult = await buildWarmupSchedulePlanAsync({
     count: params.pendingCount,
     warmupDayOffset: context.warmupDayOffset,
     firstScheduledAt: context.firstScheduledAt,
     now,
-    existingValidPostsByLocalDate,
+    resolveExistingOnDay: (localDate) =>
+      getExistingValidPostsForLocalDate(params.supabase, {
+        accountId: params.accountId,
+        platform: params.platform,
+        contentType: params.contentType,
+        localDate,
+        excludePostIds: params.excludePostIds,
+      }),
   });
+  const plan = {
+    schedule: planResult.schedule,
+    skippedPastSlots: planResult.skippedPastSlots,
+    plannedPosts: planResult.plannedPosts,
+    warnings: planResult.warnings,
+    planningMeta: planResult.planningMeta,
+  };
+
+  const capacityDiagnostics =
+    params.includeCapacityDiagnostics === false
+      ? { existingValidPostsByDate: [], ignoredStatusesByDate: {} }
+      : await buildWarmupCapacityDiagnostics(params.supabase, {
+          accountId: params.accountId,
+          platform: params.platform,
+          contentType: params.contentType,
+          localDates: Object.keys(planResult.existingValidPostsByLocalDate).slice(0, 7),
+          warmupStartDate: context.warmupStartDate,
+          dailyLimitForRampDay: getWarmupDailyPostLimit,
+          excludePostIds: params.excludePostIds,
+        });
   const planningMeta = plan.planningMeta
     ? {
         ...plan.planningMeta,

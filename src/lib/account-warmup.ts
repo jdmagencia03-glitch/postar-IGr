@@ -658,6 +658,137 @@ export function buildWarmupSchedulePlan(params: {
   };
 }
 
+/** Igual a buildWarmupSchedulePlan, mas busca capacidade dia a dia (recálculo em produção). */
+export async function buildWarmupSchedulePlanAsync(params: {
+  count: number;
+  warmupDayOffset?: number;
+  firstScheduledAt?: Date;
+  startDate?: Date;
+  now?: Date;
+  resolveExistingOnDay: (dayKey: string) => Promise<number>;
+}): Promise<WarmupSchedulePlanResult & { existingValidPostsByLocalDate: Record<string, number> }> {
+  const cache: Record<string, number> = {};
+  const getExisting = async (dayKey: string) => {
+    if (!(dayKey in cache)) {
+      cache[dayKey] = await params.resolveExistingOnDay(dayKey);
+    }
+    return cache[dayKey]!;
+  };
+
+  const count = params.count;
+  const warnings: string[] = [];
+  const skippedPastSlots: WarmupSkippedSlot[] = [];
+
+  if (count <= 0) {
+    return { schedule: [], skippedPastSlots, plannedPosts: [], warnings, existingValidPostsByLocalDate: cache };
+  }
+
+  const warmupDayOffset = params.warmupDayOffset ?? 0;
+  const now = params.now ?? new Date();
+  const todayKey = warmupDateKey(now);
+  const anchorSource =
+    params.firstScheduledAt ?? params.startDate ?? resolveNewWarmupAnchorDate(now);
+  const calendar = resolveWarmupCalendarStart({ firstScheduledAt: anchorSource, now });
+
+  const schedule: Date[] = [];
+  let calendarDay = 0;
+  const maxCalendarDays = Math.max(count * 2, 60);
+
+  while (schedule.length < count && calendarDay < maxCalendarDays) {
+    const absoluteWarmupDay = warmupDayOffset + calendarDay;
+    const rampDayIndex = absoluteWarmupDay + 1;
+    const dailyLimit = getWarmupDailyPostLimit(rampDayIndex);
+    const dayKey = calendarLocalDateKey(calendar.calendarStart, calendarDay);
+    const existingOnDay = await getExisting(dayKey);
+    const remainingCapacity = Math.max(0, dailyLimit - existingOnDay);
+
+    if (remainingCapacity === 0) {
+      if (existingOnDay > 0) {
+        warnings.push(
+          `Dia ${dayKey}: ${existingOnDay} post(s) já ocupam a meta do Dia ${rampDayIndex} (${dailyLimit}). Próximos vídeos começam no dia seguinte.`,
+        );
+      }
+      calendarDay++;
+      continue;
+    }
+
+    const slotTimes = slotsForAbsoluteDay(absoluteWarmupDay, 0);
+    let scheduledOnDay = 0;
+
+    for (let slotIndex = 0; slotIndex < slotTimes.length; slotIndex++) {
+      if (schedule.length >= count) break;
+      if (scheduledOnDay >= remainingCapacity) break;
+
+      const { hour, minute } = slotTimes[slotIndex]!;
+
+      const scheduled = atHourOnDayOffsetInAppTz(
+        calendar.calendarStart,
+        calendarDay,
+        hour,
+        minute,
+      );
+
+      if (calendar.partialFirstDay && calendarDay === 0 && scheduled < calendar.slotCutoff) {
+        skippedPastSlots.push({
+          date: warmupDateKey(scheduled),
+          time: formatWarmupTimeSlot({ hour, minute }),
+          reason: "past_time",
+        });
+        continue;
+      }
+
+      if (slotIndex < existingOnDay) {
+        continue;
+      }
+
+      schedule.push(scheduled);
+      scheduledOnDay++;
+    }
+
+    calendarDay++;
+  }
+
+  if (skippedPastSlots.length) {
+    const times = skippedPastSlots.map((slot) => slot.time).join(", ");
+    warnings.push(
+      `${skippedPastSlots.length} horário(s) de hoje foram ignorados porque já passaram: ${times}.`,
+    );
+  }
+
+  const startDayKey = calendar.warmupStartDate;
+  const existingOnStartDay = cache[startDayKey] ?? cache[todayKey] ?? 0;
+  const existingValidPostsToday = cache[todayKey] ?? existingOnStartDay;
+  const remainingSlotsToday = Math.max(0, getWarmupDailyPostLimit(1) - existingValidPostsToday);
+
+  const effectiveFirstScheduledDate = schedule[0] ? warmupDateKey(schedule[0]) : null;
+  let reasonFirstDateSkipped: string | null = null;
+  if (effectiveFirstScheduledDate && effectiveFirstScheduledDate > todayKey) {
+    if (remainingSlotsToday === 0) {
+      reasonFirstDateSkipped = "current_day_full";
+    } else if (skippedPastSlots.length > 0) {
+      reasonFirstDateSkipped = "past_slots_exhausted";
+    } else {
+      reasonFirstDateSkipped = "capacity_on_prior_days";
+    }
+  }
+
+  return {
+    schedule,
+    skippedPastSlots,
+    plannedPosts: buildPlannedPostsFromSchedule(schedule),
+    warnings,
+    planningMeta: {
+      existingValidPostsToday,
+      remainingSlotsToday,
+      warmupStartDate: startDayKey,
+      effectiveFirstScheduledDate,
+      timezone: APP_TIMEZONE,
+      reasonFirstDateSkipped,
+    },
+    existingValidPostsByLocalDate: cache,
+  };
+}
+
 export function generateWarmupSchedule(params: {
   count: number;
   warmupDays?: number;

@@ -94,15 +94,40 @@ export async function getExistingValidPostsForLocalDate(
   }
 
   const exclude = params.excludePostIds?.filter(Boolean) ?? [];
-  if (exclude.length === 1) {
-    query = query.neq("id", exclude[0]!);
-  } else if (exclude.length > 1) {
-    query = query.not("id", "in", `(${exclude.join(",")})`);
+  if (exclude.length === 0) {
+    const { count, error } = await query;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
   }
 
-  const { count, error } = await query;
+  if (exclude.length === 1) {
+    query = query.neq("id", exclude[0]!);
+    const { count, error } = await query;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  }
+
+  const excludeSet = new Set(exclude);
+  let idQuery = supabase
+    .from("scheduled_posts")
+    .select("id")
+    .gte("scheduled_at", start.toISOString())
+    .lt("scheduled_at", end.toISOString())
+    .in("status", WARMUP_CAPACITY_STATUSES);
+
+  if (params.platform === "tiktok") {
+    idQuery = idQuery.eq("platform", "tiktok").eq("tiktok_account_id", params.accountId);
+  } else {
+    idQuery = idQuery.eq("account_id", params.accountId);
+  }
+
+  if (params.contentType) {
+    idQuery = idQuery.eq("content_type", params.contentType);
+  }
+
+  const { data, error } = await idQuery;
   if (error) throw new Error(error.message);
-  return count ?? 0;
+  return (data ?? []).filter((post) => !excludeSet.has(post.id as string)).length;
 }
 
 /** Conta posts ignorados na capacidade (cancelados, failed_persistent, needs_media). */
