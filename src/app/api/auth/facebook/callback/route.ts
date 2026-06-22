@@ -15,7 +15,8 @@ import {
   createOpaqueSessionToken,
   getSessionCookieDeleteOptions,
   getSessionCookieOptions,
-  lookupSessionToken,
+  primeSessionCache,
+  resolveSessionFromToken,
 } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logSecurityEvent } from "@/lib/security/audit";
@@ -61,8 +62,10 @@ async function resolveSessionToken(request: NextRequest, ownerId: string) {
   const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
 
   if (sessionToken) {
-    const ownerFromSession = await lookupSessionToken(sessionToken);
-    if (ownerFromSession === ownerId) {
+    const session = await resolveSessionFromToken(sessionToken, {
+      route: "facebook/callback/resolveSessionToken",
+    });
+    if (session.ok && session.userId === ownerId) {
       return sessionToken;
     }
   }
@@ -120,6 +123,15 @@ export async function GET(request: NextRequest) {
     });
 
     if ("error" in ownerResult) {
+      if (ownerResult.error === "auth_timeout" || ownerResult.error === "auth_db_error") {
+        return redirectWithError(
+          appUrl,
+          nextPath,
+          ownerResult.error === "auth_timeout"
+            ? "Não foi possível validar sua sessão agora. Tente novamente em instantes."
+            : "Erro temporário ao validar sessão. Tente novamente em instantes.",
+        );
+      }
       return redirectWithError(
         appUrl,
         "/login",
@@ -139,6 +151,7 @@ export async function GET(request: NextRequest) {
       },
       { onConflict: "user_id" },
     );
+    primeSessionCache(sessionToken, ownerId);
 
     for (const account of discovered) {
       await supabase.from("instagram_accounts").upsert(

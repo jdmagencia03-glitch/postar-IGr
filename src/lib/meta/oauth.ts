@@ -158,6 +158,7 @@ export async function getInstagramProfile(accessToken: string) {
 }
 
 export { getSessionUserId, requireSessionUserId } from "@/lib/auth/session";
+export { requireApiSession, getSessionAuth } from "@/lib/auth/api-session";
 
 export async function clearSession() {
   const cookieStore = await cookies();

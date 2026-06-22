@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeCronRequest } from "@/lib/admin/cron-auth";
-import { getSessionUserId } from "@/lib/meta/oauth";
+import { requireApiSession } from "@/lib/auth/api-session";
 import { buildJobStatusReadOnly, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -42,9 +42,12 @@ export async function GET(
 
   try {
     const cronAuthorized = authorizeCronRequest(request);
-    let ownerId = await getSessionUserId();
-    if (!ownerId && !cronAuthorized) {
-      return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
+    let ownerId: string | null = null;
+
+    if (!cronAuthorized) {
+      const session = await requireApiSession("api/schedule-jobs/status");
+      if (!session.ok) return session.response;
+      ownerId = session.userId;
     }
 
     const supabase = createAdminClient();

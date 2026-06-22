@@ -9,12 +9,12 @@ export function HomeSessionRedirect() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2_000);
+    const timer = setTimeout(() => controller.abort(), 8_000);
 
     fetch("/api/auth/session", { credentials: "include", cache: "no-store", signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.authenticated) router.replace("/dashboard");
+        if (data?.authenticated === true) router.replace("/dashboard");
       })
       .catch(() => undefined)
       .finally(() => clearTimeout(timer));

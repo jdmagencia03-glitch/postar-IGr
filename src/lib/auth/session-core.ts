@@ -25,37 +25,14 @@ export function getSessionCookieDeleteOptions() {
   };
 }
 
-export async function lookupSessionToken(token: string): Promise<string | null> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2_000);
-
-  try {
-    const res = await fetch(
-      `${url}/rest/v1/app_sessions?session_token=eq.${encodeURIComponent(token)}&select=user_id&limit=1`,
-      {
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-        },
-        cache: "no-store",
-        signal: controller.signal,
-      },
-    );
-
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as Array<{ user_id: string }>;
-    return data[0]?.user_id ?? null;
-  } catch (error) {
-    console.error("[session-lookup-fallback]", {
-      error: error instanceof Error ? error.name : String(error),
-    });
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+export {
+  lookupSessionToken,
+  lookupOpaqueSessionToken,
+  resolveSessionFromToken,
+  primeSessionCache,
+  isSessionUnavailable,
+  isSessionUnauthorized,
+  SESSION_LOOKUP_TIMEOUT_MS,
+  type SessionAuthResult,
+  type SessionLookupResult,
+} from "@/lib/auth/session-lookup";

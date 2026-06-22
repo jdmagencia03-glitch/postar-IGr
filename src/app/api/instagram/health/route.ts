@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireApiSession } from "@/lib/auth/api-session";
 import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
-import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById, getOwnerAccounts, getAccountAccessToken } from "@/lib/accounts";
 import { checkInstagramAccountHealth } from "@/lib/meta/instagram";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -9,10 +9,9 @@ import { withTimeout, withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/instagram/health");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const accountId = request.nextUrl.searchParams.get("account_id");
   const supabase = createAdminClient();

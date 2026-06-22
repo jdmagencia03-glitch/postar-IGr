@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, USER_ID_HEADER, lookupSessionToken } from "@/lib/auth/session-core";
+import { SESSION_COOKIE, USER_ID_HEADER } from "@/lib/auth/session-core";
+import {
+  resolveSessionFromToken,
+} from "@/lib/auth/session-lookup";
 import { applyCorsHeaders, applySecurityHeaders } from "@/lib/security/headers";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
@@ -15,7 +18,11 @@ const PROTECTED_APIS = [
   "/api/tiktok",
   "/api/health",
   "/api/comment-dm",
+  "/api/calendar",
+  "/api/schedule-jobs",
 ];
+
+const NO_STORE = { "Cache-Control": "no-store" };
 
 function isProtectedPath(pathname: string) {
   return (
@@ -30,25 +37,28 @@ function withSecurityHeaders(response: NextResponse, request: NextRequest) {
   return response;
 }
 
-async function resolveUserIdFromRequest(request: NextRequest): Promise<string | null> {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+function authUnavailableResponse(reason: "db_timeout" | "db_error") {
+  const body =
+    reason === "db_timeout"
+      ? {
+          ok: false,
+          error: "auth_timeout",
+          message: "Não foi possível validar sua sessão agora. Tente novamente em instantes.",
+          data: [],
+        }
+      : {
+          ok: false,
+          error: "auth_db_error",
+          message: "Erro temporário ao validar sessão.",
+          data: [],
+        };
 
-  if (/^[a-f0-9]{64}$/i.test(token)) {
-    try {
-      return await lookupSessionToken(token);
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  return NextResponse.json(body, { status: 503, headers: NO_STORE });
 }
 
 function enforceApiRateLimit(request: NextRequest, pathname: string) {
   const ip = getClientIp(request);
 
-  // PATCH de progresso durante TUS — não contar no limite (centenas/min em turbo).
   if (
     request.method === "PATCH" &&
     /\/api\/upload\/batches\/[^/]+\/files\/[^/]+$/.test(pathname)
@@ -95,12 +105,34 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const userId = await resolveUserIdFromRequest(request);
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = await resolveSessionFromToken(token, { route: pathname });
 
-  if (!userId) {
+  if (session.ok) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set(USER_ID_HEADER, session.userId);
+    return withSecurityHeaders(
+      NextResponse.next({
+        request: { headers: requestHeaders },
+      }),
+      request,
+    );
+  }
+
+  if (!session.ok) {
+    if (session.reason === "db_timeout" || session.reason === "db_error") {
+      if (pathname.startsWith("/api/")) {
+        return withSecurityHeaders(authUnavailableResponse(session.reason), request);
+      }
+      return withSecurityHeaders(NextResponse.next(), request);
+    }
+
     if (pathname.startsWith("/api/")) {
       return withSecurityHeaders(
-        NextResponse.json({ error: "Não autenticado" }, { status: 401 }),
+        NextResponse.json(
+          { ok: false, error: "unauthorized", message: "Não autenticado" },
+          { status: 401, headers: NO_STORE },
+        ),
         request,
       );
     }
@@ -111,17 +143,7 @@ export async function middleware(request: NextRequest) {
     return withSecurityHeaders(NextResponse.redirect(loginUrl), request);
   }
 
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set(USER_ID_HEADER, userId);
-
-  return withSecurityHeaders(
-    NextResponse.next({
-      request: {
-        headers: requestHeaders,
-      },
-    }),
-    request,
-  );
+  return withSecurityHeaders(NextResponse.next(), request);
 }
 
 export const config = {
@@ -137,5 +159,7 @@ export const config = {
     "/api/tiktok/:path*",
     "/api/health/:path*",
     "/api/comment-dm/:path*",
+    "/api/calendar/:path*",
+    "/api/schedule-jobs/:path*",
   ],
 };

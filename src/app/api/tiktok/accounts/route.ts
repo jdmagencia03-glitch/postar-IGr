@@ -1,20 +1,19 @@
 import { NextResponse } from "next/server";
+import { requireApiSession } from "@/lib/auth/api-session";
 import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
 import {
   getOwnerTikTokAccounts,
   getOwnerTikTokAccountById,
   mapTikTokAccountResponse,
 } from "@/lib/tiktok/accounts";
-import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logSecurityEvent } from "@/lib/security/audit";
 import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export async function GET() {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/tiktok/accounts");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const supabase = createAdminClient();
   const accounts = await withTimeoutOrNull(
@@ -31,10 +30,9 @@ export async function GET() {
 }
 
 export async function DELETE(request: Request) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/tiktok/accounts");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const accountId = new URL(request.url).searchParams.get("id");
   if (!accountId) {

@@ -2,8 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { APP_TAGLINE } from "@/lib/brand";
-import { getSessionUserId } from "@/lib/auth/session";
-import { withTimeout } from "@/lib/with-timeout";
+import { getSessionAuth } from "@/lib/auth/api-session";
 
 export const dynamic = "force-dynamic";
 
@@ -12,14 +11,14 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const userId = await withTimeout(getSessionUserId(), 2_000, null, "login-session");
+  const session = await getSessionAuth();
   const params = await searchParams;
   const nextPath =
     params.next && params.next.startsWith("/") && !params.next.startsWith("//")
       ? params.next
       : "/dashboard";
 
-  if (userId) redirect(nextPath);
+  if (session.ok) redirect(nextPath);
 
   const errorMessages: Record<string, string> = {
     oauth_invalid: "Falha na autenticação. Tente novamente.",

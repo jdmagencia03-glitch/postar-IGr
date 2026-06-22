@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 import { formatZodError } from "@/lib/api-errors";
+import { requireApiSession } from "@/lib/auth/api-session";
 import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
+import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
+import { z } from "zod";
 import {
   clampWarmupDays,
   DEFAULT_WARMUP_DAYS,
   getWarmupStatus,
 } from "@/lib/account-warmup";
 import { getOwnerAccounts, getOwnerAccountById, ownerAccountsFilter } from "@/lib/accounts";
-import { getSessionUserId } from "@/lib/meta/oauth";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
-import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
-import { z } from "zod";
 
 function mapAccountResponse(account: Awaited<ReturnType<typeof getOwnerAccounts>>[number]) {
   const warmup = getWarmupStatus({
@@ -42,10 +42,9 @@ const patchSchema = z.object({
 });
 
 export async function GET() {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/accounts");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const supabase = createAdminClient();
   const accounts = await withTimeoutOrNull(
@@ -62,10 +61,9 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/accounts");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const body = await request.json();
   const parsed = patchSchema.safeParse(body);
@@ -112,10 +110,9 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const session = await requireApiSession("api/accounts");
+  if (!session.ok) return session.response;
+  const ownerId = session.userId;
 
   const accountId = new URL(request.url).searchParams.get("id");
   if (!accountId) {

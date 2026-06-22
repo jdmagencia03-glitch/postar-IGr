@@ -5,6 +5,8 @@ import {
   SESSION_COOKIE,
   USER_ID_HEADER,
   lookupSessionToken,
+  primeSessionCache,
+  resolveSessionFromToken,
 } from "@/lib/auth/session-core";
 import { getSessionSecret } from "@/lib/security/secrets";
 
@@ -15,7 +17,24 @@ export {
   getSessionCookieOptions,
   getSessionCookieDeleteOptions,
   lookupSessionToken,
+  lookupOpaqueSessionToken,
+  resolveSessionFromToken,
+  primeSessionCache,
+  isSessionUnavailable,
+  isSessionUnauthorized,
+  SESSION_LOOKUP_TIMEOUT_MS,
+  type SessionAuthResult,
+  type SessionLookupResult,
 } from "@/lib/auth/session-core";
+export {
+  requireApiSession,
+  resolveRequestSession,
+  getSessionAuth,
+  getSessionUserIdSafe,
+  unauthorizedJsonResponse,
+  authTimeoutJsonResponse,
+  authDbErrorJsonResponse,
+} from "@/lib/auth/api-session";
 
 export function createOpaqueSessionToken() {
   return randomBytes(32).toString("hex");
@@ -31,14 +50,8 @@ export function createSignedSession(userId: string) {
 }
 
 export async function resolveSessionToken(token: string | undefined): Promise<string | null> {
-  if (!token) return null;
-
-  if (/^[a-f0-9]{64}$/i.test(token)) {
-    const userId = await lookupSessionToken(token);
-    if (userId) return userId;
-  }
-
-  return parseSignedSession(token);
+  const result = await resolveSessionFromToken(token, { route: "resolveSessionToken" });
+  return result.ok ? result.userId : null;
 }
 
 export async function getSessionUserId(): Promise<string | null> {
@@ -48,7 +61,8 @@ export async function getSessionUserId(): Promise<string | null> {
 
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  return resolveSessionToken(token);
+  const result = await resolveSessionFromToken(token, { route: "getSessionUserId" });
+  return result.ok ? result.userId : null;
 }
 
 export async function requireSessionUserId(): Promise<string> {
