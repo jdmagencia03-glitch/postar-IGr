@@ -75,33 +75,45 @@ async function executeWarmupRecalculate(jobId: string) {
     const nextAt = plan.schedule[index]!.toISOString();
     before.push({ postId: post.id as string, scheduledAt: post.scheduled_at as string });
     after.push({ postId: post.id as string, scheduledAt: nextAt });
-
-    const { error: updateError } = await supabase
-      .from("scheduled_posts")
-      .update({ scheduled_at: nextAt, updated_at: now.toISOString() })
-      .eq("id", post.id)
-      .in("status", ACTIVE_POST_STATUSES);
-    if (updateError) throw new Error(updateError.message);
   }
 
-  for (let index = 0; index < jobItems.length; index++) {
-    const item = jobItems[index]!;
-    const nextAt = plan.schedule[index]?.toISOString();
-    if (!nextAt || !item.destinations?.length) continue;
+  const nowIso = now.toISOString();
+  for (let offset = 0; offset < pendingPosts.length; offset += 10) {
+    const chunk = pendingPosts.slice(offset, offset + 10);
+    await Promise.all(
+      chunk.map((post, chunkIndex) => {
+        const index = offset + chunkIndex;
+        const nextAt = plan.schedule[index]!.toISOString();
+        return supabase
+          .from("scheduled_posts")
+          .update({ scheduled_at: nextAt, updated_at: nowIso })
+          .eq("id", post.id)
+          .in("status", ACTIVE_POST_STATUSES);
+      }),
+    );
+  }
 
-    const destinations = item.destinations.map((dest) => ({
-      ...dest,
-      scheduled_at: nextAt,
-    }));
-
-    await supabase
-      .from("schedule_job_items")
-      .update({
-        destinations,
-        scheduled_at: nextAt,
-        updated_at: now.toISOString(),
-      })
-      .eq("id", item.id);
+  for (let offset = 0; offset < jobItems.length; offset += 10) {
+    const chunk = jobItems.slice(offset, offset + 10);
+    await Promise.all(
+      chunk.map((item, chunkIndex) => {
+        const index = offset + chunkIndex;
+        const nextAt = plan.schedule[index]?.toISOString();
+        if (!nextAt || !item.destinations?.length) return Promise.resolve();
+        const destinations = item.destinations.map((dest) => ({
+          ...dest,
+          scheduled_at: nextAt,
+        }));
+        return supabase
+          .from("schedule_job_items")
+          .update({
+            destinations,
+            scheduled_at: nextAt,
+            updated_at: nowIso,
+          })
+          .eq("id", item.id);
+      }),
+    );
   }
 
   await supabase

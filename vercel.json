@@ -31,6 +31,12 @@
     "src/app/api/cron/recalculate-warmup-job/route.ts": {
       "maxDuration": 120
     },
+    "src/app/api/cron/schedule-job-status/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/schedule-jobs/[id]/recalculate-warmup-times/route.ts": {
+      "maxDuration": 120
+    },
     "src/app/api/upload/route.ts": {
       "maxDuration": 300
     },

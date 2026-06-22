@@ -134,7 +134,7 @@ export async function buildWarmupRecalculatePlan(params: {
     strategy: "new_plan",
     now,
   });
-  const planningDays = Math.max(params.pendingCount * 2, 60);
+  const planningDays = Math.min(Math.max(params.pendingCount * 2, 14), 35);
   const planningDates = enumerateLocalDatesFromAnchor(context.warmupStartDate, planningDays);
   const existingValidPostsByLocalDate = await buildExistingValidPostsByLocalDate(params.supabase, {
     accountId: params.accountId,
@@ -147,7 +147,7 @@ export async function buildWarmupRecalculatePlan(params: {
     accountId: params.accountId,
     platform: params.platform,
     contentType: params.contentType,
-    localDates: planningDates.slice(0, 14),
+    localDates: planningDates.slice(0, 7),
     warmupStartDate: context.warmupStartDate,
     dailyLimitForRampDay: getWarmupDailyPostLimit,
     excludePostIds: params.excludePostIds,
