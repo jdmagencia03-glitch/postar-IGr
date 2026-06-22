@@ -75,6 +75,16 @@ function statusBanner(
   status: ScheduleJobStatusResponse,
   pollDisplay: PollingDisplayState | null,
 ) {
+  if (status.consistencyErrors?.length) {
+    const first = status.consistencyErrors[0];
+    if (status.recommendedAction === "cancel_old_job") {
+      return `${first.message} Este job usa horários antigos — cancele com segurança e crie um novo lote.`;
+    }
+    if (status.recommendedAction === "finalize_posts") {
+      return `${first.message} Use Finalizar posts agora ou cancele o job sem duplicar posts.`;
+    }
+    return `${first.message} Revise o diagnóstico antes de continuar.`;
+  }
   if (status.isStalled && status.stalledReason === "insert_chunk_not_started") {
     return "Salvamento dos posts não iniciou — use Finalizar posts agora para concluir sem duplicar.";
   }
@@ -270,7 +280,9 @@ export function ScheduleJobPanel({
   const isDone = status?.phase === "completed";
   const isPartial = status?.phase === "partial_completed";
   const isBusy = action !== null;
-  const showStalledActions = Boolean(status?.isStalled && status.isActive);
+  const showStalledActions = Boolean(
+    (status?.isStalled && status.isActive) || (status?.consistencyErrors?.length && status.isActive),
+  );
   const showFinalizePosts = Boolean(
     status?.canFinalizePosts && !isDone && !isPartial && status.isActive,
   );
@@ -278,9 +290,11 @@ export function ScheduleJobPanel({
   const showCompletionBanner = Boolean(banner && !isDone);
   const headline = isDone
     ? "Agendamento concluído"
-    : status?.isStalled
-      ? "Agendamento travado detectado"
-      : (status?.headline ?? "Agendamento em andamento");
+    : status?.consistencyErrors?.length
+      ? "Inconsistência detectada no agendamento"
+      : status?.isStalled
+        ? "Agendamento travado detectado"
+        : (status?.headline ?? "Agendamento em andamento");
   const subheadline = isDone
     ? `${status?.postsSaved ?? 0} de ${total} posts salvos no calendário`
     : isPartial
@@ -337,6 +351,29 @@ export function ScheduleJobPanel({
       {actionError && (
         <div className="rounded-xl border border-ig-danger/40 bg-ig-danger/5 px-4 py-3 text-sm text-ig-danger">
           {actionError}
+        </div>
+      )}
+
+      {status?.consistencyErrors && status.consistencyErrors.length > 0 && !isDone && (
+        <div className="rounded-xl border border-ig-danger/40 bg-ig-danger/5 px-4 py-3 text-sm text-ig-text">
+          <p className="font-medium text-ig-danger">Erro de consistência</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-ig-muted">
+            {status.consistencyErrors.map((error) => (
+              <li key={error.code}>{error.message}</li>
+            ))}
+          </ul>
+          {status.recommendedAction && (
+            <p className="mt-2 text-xs text-ig-muted">
+              Ação recomendada:{" "}
+              {status.recommendedAction === "cancel_old_job"
+                ? "cancelar job antigo e criar novo lote"
+                : status.recommendedAction === "finalize_posts"
+                  ? "finalizar posts"
+                  : status.recommendedAction === "create_new_job"
+                    ? "criar novo lote"
+                    : status.recommendedAction}
+            </p>
+          )}
         </div>
       )}
 
@@ -449,12 +486,16 @@ export function ScheduleJobPanel({
                 Recuperar job
               </button>
             )}
-            {status?.canCancel && (
+            {(status?.canCancel || status?.canDiscardJob) && (
               <button
                 type="button"
                 disabled={isBusy}
                 onClick={() => {
-                  if (!window.confirm("Cancelar este agendamento? Posts já salvos permanecem no calendário.")) {
+                  const discard = Boolean(status?.canDiscardJob);
+                  const message = discard
+                    ? "Descartar este job travado? Nenhum post foi salvo no calendário — é seguro cancelar e criar um novo lote."
+                    : "Cancelar este agendamento? Posts já salvos permanecem no calendário.";
+                  if (!window.confirm(message)) {
                     return;
                   }
                   void runAction("cancel", () => cancelScheduleJobApi(jobId));
@@ -466,7 +507,7 @@ export function ScheduleJobPanel({
                 ) : (
                   <XCircle size={16} />
                 )}
-                Cancelar job
+                {status?.canDiscardJob ? "Descartar job travado" : "Cancelar job"}
               </button>
             )}
             <button

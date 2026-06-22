@@ -11,6 +11,12 @@ import {
   SCHEDULE_JOB_PLAN_CHUNK,
 } from "@/lib/schedule-jobs/constants";
 import {
+  applyConsistencyToView,
+  loadJobConsistencySnapshot,
+  repairSavePostsTaskConsistency,
+  type JobConsistencySnapshot,
+} from "@/lib/schedule-jobs/consistency";
+import {
   deriveScheduleJobView,
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
@@ -286,8 +292,10 @@ export async function updateJobItem(
 export function buildJobStatusFromJob(
   job: ScheduleJobRow,
   items?: import("@/lib/schedule-jobs/types").ScheduleJobItemRow[],
+  consistency?: JobConsistencySnapshot,
 ): ScheduleJobStatusResponse {
-  const view = deriveScheduleJobView(job);
+  const baseView = deriveScheduleJobView(job);
+  const view = consistency ? applyConsistencyToView(baseView, consistency, job) : baseView;
   const timing = buildScheduleJobTiming(job);
   const schedulePlan = job.config?.schedule_plan;
   const plannedFromItems =
@@ -360,7 +368,24 @@ export function buildJobStatusFromJob(
     plannedPosts: schedulePlan?.plannedPosts?.length
       ? schedulePlan.plannedPosts
       : plannedFromItems,
+    postsInCalendar: consistency?.postsInCalendar ?? view.postsSaved,
+    pendingSaveItems: consistency?.pendingSaveItems ?? view.pendingItems,
+    consistencyErrors: consistency?.errors ?? [],
+    canDiscardJob:
+      consistency?.isInconsistent &&
+      (consistency.postsInCalendar === 0) &&
+      job.status !== "cancelled" &&
+      job.status !== "completed",
   };
+}
+
+export async function buildJobStatusForJob(
+  supabase: SupabaseClient,
+  job: ScheduleJobRow,
+  items?: ScheduleJobItemRow[],
+) {
+  const consistency = await loadJobConsistencySnapshot(supabase, job);
+  return buildJobStatusFromJob(job, items, consistency);
 }
 
 export function buildJobStatus(
@@ -384,7 +409,10 @@ export async function finalizeJobStatusFromDb(
   supabase: SupabaseClient,
   job: ScheduleJobRow,
 ) {
+  await repairSavePostsTaskConsistency(supabase, job.id);
+
   const counts = await syncJobCountersFromDb(supabase, job.id);
+  const consistency = await loadJobConsistencySnapshot(supabase, job);
   const oldStatus = job.status;
 
   let status = job.status;
@@ -419,6 +447,19 @@ export async function finalizeJobStatusFromDb(
     completedAt = null;
   }
 
+  if (
+    consistency.isInconsistent &&
+    (status === "completed" || status === "partial_failed")
+  ) {
+    status = "processing";
+    currentStep = "inserting";
+    completedAt = null;
+  }
+
+  const errorMessage = consistency.isInconsistent
+    ? consistency.errors.map((error) => error.message).join(" ")
+    : job.error_message;
+
   await updateJobCounters(supabase, job.id, {
     completed_items: counts.completed,
     failed_items: counts.failed,
@@ -426,6 +467,7 @@ export async function finalizeJobStatusFromDb(
     status,
     current_step: currentStep,
     completed_at: completedAt,
+    error_message: errorMessage,
   } as Partial<ScheduleJobRow>);
 
   const nextJob = {
@@ -436,6 +478,7 @@ export async function finalizeJobStatusFromDb(
     status,
     current_step: currentStep,
     completed_at: completedAt,
+    error_message: errorMessage,
     updated_at: new Date().toISOString(),
   } as ScheduleJobRow;
 

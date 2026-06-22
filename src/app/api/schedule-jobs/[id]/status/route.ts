@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { finalizePostsForJob } from "@/lib/schedule-jobs/finalize-posts";
+import { loadJobConsistencySnapshot } from "@/lib/schedule-jobs/consistency";
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
 import { QUEUE_CRON_MAX_MS } from "@/lib/schedule-jobs/queue/constants";
 import { repairScheduleJob } from "@/lib/schedule-jobs/queue/repair";
@@ -9,7 +10,7 @@ import {
   SCHEDULE_JOB_SMALL_INSERT_STALL_MS,
 } from "@/lib/schedule-jobs/constants";
 import {
-  buildJobStatusFromJob,
+  buildJobStatusForJob,
   finalizeJobStatusFromDb,
   getScheduleJobHeader,
 } from "@/lib/schedule-jobs/repository";
@@ -29,6 +30,7 @@ async function maybeRecoverStuckJob(
   if (!header) return header;
 
   const view = deriveScheduleJobView(header);
+  const consistency = await loadJobConsistencySnapshot(supabase, header);
   const smallBatch = header.total_items <= SCHEDULE_JOB_SMALL_BATCH_MAX;
   const msSinceUpdate = Date.now() - new Date(header.updated_at).getTime();
 
@@ -41,6 +43,7 @@ async function maybeRecoverStuckJob(
 
   const shouldAutoFinalize =
     view.stalledReason === "insert_chunk_not_started" ||
+    consistency.recommendedAction === "finalize_posts" ||
     (view.canFinalizePosts &&
       !view.workerActive &&
       msSinceUpdate >= SCHEDULE_JOB_SMALL_INSERT_STALL_MS);
@@ -108,7 +111,7 @@ export async function GET(
 
     logScheduleJobEvent("schedule-job-status", job);
 
-    return NextResponse.json(buildJobStatusFromJob(job, items ?? undefined), {
+    return NextResponse.json(await buildJobStatusForJob(supabase, job, items ?? undefined), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

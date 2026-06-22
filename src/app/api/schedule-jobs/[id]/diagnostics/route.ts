@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
+import {
+  buildJobDiagnosticsEnrichment,
+  loadJobConsistencySnapshot,
+  repairSavePostsTaskConsistency,
+} from "@/lib/schedule-jobs/consistency";
 import { getScheduleJobDiagnostics } from "@/lib/schedule-jobs/queue/repair";
+import { buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +26,8 @@ export async function GET(
     const job = await getScheduleJobHeader(supabase, ownerId, id);
     if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
 
+    await repairSavePostsTaskConsistency(supabase, id);
+
     const { data: items } = await supabase
       .from("schedule_job_items")
       .select("*")
@@ -28,27 +35,20 @@ export async function GET(
       .order("sort_order", { ascending: true });
 
     const technical = await getScheduleJobDiagnostics(supabase, id);
-    const status = buildJobStatusFromJob(job, items ?? undefined);
-
-    let createdPosts: Array<{ id: string; scheduledAt: string; status: string }> = [];
-    if (job.upload_batch_id) {
-      const { data: posts } = await supabase
-        .from("scheduled_posts")
-        .select("id, scheduled_at, status")
-        .eq("upload_batch_id", job.upload_batch_id);
-      createdPosts =
-        posts?.map((post) => ({
-          id: post.id as string,
-          scheduledAt: post.scheduled_at as string,
-          status: post.status as string,
-        })) ?? [];
-    }
+    const consistency = await loadJobConsistencySnapshot(supabase, job);
+    const enrichment = await buildJobDiagnosticsEnrichment(
+      supabase,
+      job,
+      items ?? [],
+      consistency,
+    );
+    const status = buildJobStatusFromJob(job, items ?? undefined, consistency);
 
     return NextResponse.json(
       {
         ok: true,
         ...status,
-        createdPosts,
+        ...enrichment,
         technical,
       },
       { headers: { "Cache-Control": "no-store" } },

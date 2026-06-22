@@ -7,6 +7,10 @@ import {
 import { processInsertChunkForItems } from "@/lib/schedule-jobs/phases/save-posts";
 import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { repairScheduleJob } from "@/lib/schedule-jobs/queue/repair";
+import {
+  completeSavePostsTasksIfReady,
+  repairSavePostsTaskConsistency,
+} from "@/lib/schedule-jobs/consistency";
 import { resetGhostCompletedJobItems } from "@/lib/schedule-jobs/reset-ghost-items";
 
 const FINALIZE_CHUNK = 100;
@@ -32,6 +36,7 @@ export async function finalizePostsForJob(
   if (!job) throw new Error("Job não encontrado");
 
   await repairScheduleJob(supabase, jobId);
+  await repairSavePostsTaskConsistency(supabase, jobId);
   const resetGhost = await resetGhostCompletedJobItems(supabase, jobId);
   job = (await getScheduleJobHeader(supabase, ownerId, jobId))!;
   if (resetGhost > 0) {
@@ -70,6 +75,9 @@ export async function finalizePostsForJob(
   if (Date.now() >= deadline && batches > 0) {
     timedOut = true;
   }
+
+  await completeSavePostsTasksIfReady(supabase, jobId);
+  job = await finalizeJobStatusFromDb(supabase, job);
 
   return { savedThisRun, batches, job, timedOut };
 }

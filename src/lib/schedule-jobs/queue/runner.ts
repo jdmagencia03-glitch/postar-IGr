@@ -5,6 +5,10 @@ import { processCaptionTask } from "@/lib/schedule-jobs/phases/captions";
 import { processCalendarTask } from "@/lib/schedule-jobs/phases/calendar";
 import { SCHEDULE_JOB_SMALL_BATCH_MAX } from "@/lib/schedule-jobs/constants";
 import {
+  completeSavePostsTaskIfReady,
+  completeSavePostsTasksIfReady,
+} from "@/lib/schedule-jobs/consistency";
+import {
   completeTask,
   failTask,
   getJobByIdAdmin,
@@ -69,7 +73,7 @@ export async function runScheduleTask(
         const saveItemIds = await loadItemIdsForPhase(supabase, refreshed.id, "save_posts");
         if (saveItemIds.length) {
           await processInsertChunkForItems(supabase, task.owner_id, refreshed, saveItemIds);
-          await completePendingSaveTasks(supabase, refreshed.id);
+          await completeSavePostsTasksIfReady(supabase, refreshed.id);
           await finalizeJobStatusFromDb(supabase, refreshed);
         }
       }

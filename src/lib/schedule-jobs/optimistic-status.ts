@@ -71,6 +71,9 @@ export function buildOptimisticScheduleJobStatus(
     stalledReason: null,
     recommendedAction: null,
     missingPosts: videoCount,
+    postsInCalendar: 0,
+    pendingSaveItems: videoCount,
+    consistencyErrors: [],
   };
 }
 

@@ -164,4 +164,8 @@ export type ScheduleJobStatusResponse = {
   stalledReason: string | null;
   recommendedAction: string | null;
   missingPosts: number;
+  postsInCalendar: number;
+  pendingSaveItems: number;
+  consistencyErrors: Array<{ code: string; message: string }>;
+  canDiscardJob?: boolean;
 };

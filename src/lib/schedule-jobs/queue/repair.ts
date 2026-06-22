@@ -1,3 +1,4 @@
+import { repairSavePostsTaskConsistency } from "@/lib/schedule-jobs/consistency";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   QUEUE_CALENDAR_CHUNK,
@@ -181,6 +182,7 @@ export async function repairScheduleJob(
   await releaseExpiredTaskLocks(supabase);
   await releaseStuckTasksForJob(supabase, jobId);
   await releaseStuckJobLock(supabase, jobId);
+  await repairSavePostsTaskConsistency(supabase, jobId);
 
   const queue = await ensureJobQueueForCurrentPhase(supabase, row);
   const counts = await syncJobCountersFromDb(supabase, jobId);
