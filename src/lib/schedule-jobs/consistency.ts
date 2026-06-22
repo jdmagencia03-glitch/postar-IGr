@@ -21,6 +21,8 @@ export type ScheduleJobRecommendedAction =
   | "finalize_posts"
   | "create_new_job"
   | "manual_review"
+  | "manual_reconcile"
+  | "reconcile_calendar"
   | "resume"
   | "wait"
   | "completed";
@@ -300,6 +302,8 @@ export async function loadJobConsistencySnapshot(
     postsInCalendar >= job.total_items && job.total_items > 0;
 
   if (allPostsInCalendar) {
+    const needsReconcile =
+      job.status !== "completed" && job.status !== "partial_failed";
     return {
       postsInCalendar,
       pendingSaveItems,
@@ -307,8 +311,9 @@ export async function loadJobConsistencySnapshot(
       savePostsTasksTotal,
       errors: [],
       isInconsistent: false,
-      recommendedAction:
-        job.status === "completed" || job.status === "partial_failed" ? "completed" : null,
+      recommendedAction: needsReconcile
+        ? "reconcile_calendar"
+        : "completed",
     };
   }
 

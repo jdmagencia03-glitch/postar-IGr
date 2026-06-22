@@ -17,6 +17,12 @@ export type ReconcileCalendarResult = {
   error: string | null;
 };
 
+const ITEM_UPDATE_CHUNK = 10;
+
+function logReconcile(stage: string, jobId: string, extra?: Record<string, unknown>) {
+  console.info(`[reconcile-${stage}]`, { jobId, ...extra });
+}
+
 function parseDestinations(raw: unknown): ScheduleJobDestination[] | null {
   if (Array.isArray(raw)) return raw as ScheduleJobDestination[];
   if (typeof raw === "string") {
@@ -61,11 +67,6 @@ function buildPostIndexes(posts: CalendarPost[]) {
   return { postIdsInBatch, postIdByMediaUrl, postIdByGroup };
 }
 
-/**
- * Resolve o post do calendário para um item do job.
- * Prioridade: created_post_id (item/destino) → parent_publish_group_id → media_urls.
- * Posts já filtrados por upload_batch_id do job (escopo do lote).
- */
 function resolvePostIdForItem(
   item: ScheduleJobItemRow,
   indexes: ReturnType<typeof buildPostIndexes>,
@@ -120,6 +121,43 @@ async function syncJobCounters(supabase: SupabaseClient, jobId: string) {
   };
 }
 
+async function updateItemsInChunks(
+  supabase: SupabaseClient,
+  jobId: string,
+  repairs: Array<{ item: ScheduleJobItemRow; postId: string }>,
+) {
+  const now = new Date().toISOString();
+  let repairedItems = 0;
+
+  for (let offset = 0; offset < repairs.length; offset += ITEM_UPDATE_CHUNK) {
+    const chunk = repairs.slice(offset, offset + ITEM_UPDATE_CHUNK);
+    await Promise.all(
+      chunk.map(async ({ item, postId }) => {
+        const destinations = (item.destinations ?? []).map((dest) => ({
+          ...dest,
+          created_post_id: dest.created_post_id ?? postId,
+        }));
+
+        const { error } = await supabase
+          .from("schedule_job_items")
+          .update({
+            status: "completed",
+            created_post_id: postId,
+            destinations,
+            error_message: null,
+            updated_at: now,
+          })
+          .eq("id", item.id);
+
+        if (error) throw new Error(error.message);
+        repairedItems += 1;
+      }),
+    );
+  }
+
+  return repairedItems;
+}
+
 /**
  * Reconcilia job/itens/tasks com posts já existentes no calendário.
  * Idempotente: não insere posts, não duplica — apenas atualiza status/metadata.
@@ -128,22 +166,26 @@ export async function reconcileJobFromCalendarPosts(
   supabase: SupabaseClient,
   job: ScheduleJobRow,
 ): Promise<ScheduleJobRow | null> {
+  logReconcile("start", job.id, { batchId: job.upload_batch_id, status: job.status });
+
   if (!job.upload_batch_id || job.total_items <= 0) return null;
   if (job.status === "cancelled") return null;
   if (job.status === "completed" && job.completed_items >= job.total_items) return null;
 
+  logReconcile("load-items", job.id);
   const { data: items, error: itemsError } = await supabase
     .from("schedule_job_items")
-    .select("*")
+    .select("id, status, media_urls, destinations, created_post_id, parent_publish_group_id, upload_file_id")
     .eq("schedule_job_id", job.id);
   if (itemsError) throw new Error(itemsError.message);
 
   const mappedItems = (items ?? []).map((row) => mapItem(row as Record<string, unknown>));
   if (!mappedItems.length) return null;
 
+  logReconcile("load-posts", job.id, { batchId: job.upload_batch_id });
   const { data: posts, error: postsError } = await supabase
     .from("scheduled_posts")
-    .select("id, media_urls, parent_publish_group_id")
+    .select("id, media_urls, parent_publish_group_id, upload_batch_id, status, scheduled_at")
     .eq("upload_batch_id", job.upload_batch_id);
   if (postsError) throw new Error(postsError.message);
 
@@ -159,35 +201,23 @@ export async function reconcileJobFromCalendarPosts(
     postId: resolvePostIdForItem(item, indexes),
   }));
   const matched = itemMatches.filter((row) => row.postId).length;
+
+  logReconcile("match-items", job.id, { matched, total: job.total_items, posts: calendarPosts.length });
   if (matched < job.total_items) return null;
 
+  const repairs = itemMatches.filter(
+    (row): row is { item: ScheduleJobItemRow; postId: string } =>
+      Boolean(row.postId) &&
+      !(row.item.status === "completed" && row.item.created_post_id === row.postId),
+  );
+
+  logReconcile("update-items", job.id, { repairs: repairs.length });
+  const repairedItems = repairs.length
+    ? await updateItemsInChunks(supabase, job.id, repairs)
+    : 0;
+
   const now = new Date().toISOString();
-  let repairedItems = 0;
-
-  for (const { item, postId } of itemMatches) {
-    if (!postId) continue;
-    if (item.status === "completed" && item.created_post_id === postId) continue;
-
-    const destinations = (item.destinations ?? []).map((dest) => ({
-      ...dest,
-      created_post_id: dest.created_post_id ?? postId,
-    }));
-
-    const { error: itemError } = await supabase
-      .from("schedule_job_items")
-      .update({
-        status: "completed",
-        created_post_id: postId,
-        destinations,
-        error_message: null,
-        updated_at: now,
-      })
-      .eq("id", item.id);
-
-    if (itemError) throw new Error(itemError.message);
-    repairedItems += 1;
-  }
-
+  logReconcile("update-tasks", job.id);
   const { error: tasksError } = await supabase
     .from("schedule_job_tasks")
     .update({
@@ -203,6 +233,7 @@ export async function reconcileJobFromCalendarPosts(
 
   if (tasksError) throw new Error(tasksError.message);
 
+  logReconcile("update-job", job.id);
   const counts = await syncJobCounters(supabase, job.id);
   const status = counts.failed > 0 ? "partial_failed" : "completed";
 
@@ -222,16 +253,13 @@ export async function reconcileJobFromCalendarPosts(
 
   if (jobError) throw new Error(jobError.message);
 
-  if (repairedItems > 0 || job.status !== status) {
-    console.info("[schedule-job-reconcile]", {
-      jobId: job.id,
-      batchId: job.upload_batch_id,
-      repairedItems,
-      matched,
-      status,
-      previousStatus: job.status,
-    });
-  }
+  logReconcile("finished", job.id, {
+    batchId: job.upload_batch_id,
+    repairedItems,
+    matched,
+    status,
+    previousStatus: job.status,
+  });
 
   return {
     ...job,
@@ -246,7 +274,6 @@ export async function reconcileJobFromCalendarPosts(
   } as ScheduleJobRow;
 }
 
-/** Reconciliação com falha não-propaga — retorna job original + erro. */
 export async function safeReconcileJobFromCalendarPosts(
   supabase: SupabaseClient,
   job: ScheduleJobRow,
@@ -260,11 +287,7 @@ export async function safeReconcileJobFromCalendarPosts(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("[schedule-job-reconcile-failed]", {
-      jobId: job.id,
-      batchId: job.upload_batch_id,
-      error: message,
-    });
+    logReconcile("failed", job.id, { batchId: job.upload_batch_id, error: message });
     return { job, reconciled: false, error: message };
   }
 }

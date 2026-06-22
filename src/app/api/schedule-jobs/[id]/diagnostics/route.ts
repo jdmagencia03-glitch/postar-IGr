@@ -6,8 +6,7 @@ import {
   repairSavePostsTaskConsistency,
 } from "@/lib/schedule-jobs/consistency";
 import { getScheduleJobDiagnostics } from "@/lib/schedule-jobs/queue/repair";
-import { buildJobStatusForJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
-import { safeReconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
+import { buildJobStatusReadOnly, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -32,9 +31,6 @@ export async function GET(
     const refreshed = await getScheduleJobHeader(supabase, ownerId, id);
     if (refreshed) job = refreshed;
 
-    const reconcileResult = await safeReconcileJobFromCalendarPosts(supabase, job);
-    job = reconcileResult.job;
-
     const { data: items } = await supabase
       .from("schedule_job_items")
       .select("*")
@@ -49,7 +45,7 @@ export async function GET(
       items ?? [],
       consistency,
     );
-    const status = await buildJobStatusForJob(supabase, job, items ?? undefined);
+    const status = await buildJobStatusReadOnly(supabase, job, items ?? undefined);
 
     return NextResponse.json(
       {

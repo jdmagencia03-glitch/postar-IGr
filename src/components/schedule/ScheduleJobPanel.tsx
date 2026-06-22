@@ -25,6 +25,7 @@ import {
   finalizePostsScheduleJobApi,
   forceContinueScheduleJobApi,
   kickScheduleJobInBackground,
+  reconcileCalendarScheduleJobApi,
   resumeScheduleJobApi,
 } from "@/lib/schedule-jobs/client";
 import {
@@ -146,10 +147,33 @@ export function ScheduleJobPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const completedRef = useRef(false);
+  const reconcileAttemptedRef = useRef(false);
+
+  const maybeReconcileCalendar = useCallback(
+    async (next: ScheduleJobStatusResponse) => {
+      if (
+        next.recommendedAction !== "reconcile_calendar" ||
+        reconcileAttemptedRef.current ||
+        next.reconcileError
+      ) {
+        return next;
+      }
+      reconcileAttemptedRef.current = true;
+      try {
+        const reconciled = await reconcileCalendarScheduleJobApi(jobId);
+        return reconciled;
+      } catch {
+        reconcileAttemptedRef.current = false;
+        return next;
+      }
+    },
+    [jobId],
+  );
 
   const applyStatus = useCallback(
-    (next: ScheduleJobStatusResponse) => {
-      setStatus(next);
+    async (next: ScheduleJobStatusResponse) => {
+      const resolved = await maybeReconcileCalendar(next);
+      setStatus(resolved);
       setPollDisplay(
         pollTrackerRef.current.recordSuccess(
           `/api/schedule-jobs/${jobId}/status`,
@@ -158,14 +182,14 @@ export function ScheduleJobPanel({
 
       if (
         !completedRef.current &&
-        (next.phase === "completed" || next.phase === "partial_completed")
+        (resolved.phase === "completed" || resolved.phase === "partial_completed")
       ) {
         completedRef.current = true;
-        onComplete?.(next);
+        onComplete?.(resolved);
         onBatchRefresh?.();
       }
     },
-    [jobId, onBatchRefresh, onComplete],
+    [jobId, maybeReconcileCalendar, onBatchRefresh, onComplete],
   );
 
   const refresh = useCallback(async () => {
@@ -173,7 +197,7 @@ export function ScheduleJobPanel({
     const started = Date.now();
     try {
       const next = await fetchScheduleJobStatus(jobId);
-      applyStatus(next);
+      await applyStatus(next);
       return next;
     } catch (error) {
       const display = pollTrackerRef.current.recordFailure(
@@ -204,7 +228,7 @@ export function ScheduleJobPanel({
           setDiagnostics(result as Record<string, unknown>);
           setShowDetails(true);
         } else {
-          applyStatus(result as ScheduleJobStatusResponse);
+          await applyStatus(result as ScheduleJobStatusResponse);
         }
       } catch (err) {
         setActionError(err instanceof Error ? err.message : "Falha na ação");
@@ -224,6 +248,7 @@ export function ScheduleJobPanel({
 
   useEffect(() => {
     completedRef.current = false;
+    reconcileAttemptedRef.current = false;
     pollTrackerRef.current = new PollingStateTracker();
     setStatus(initialStatus ?? buildOptimisticScheduleJobStatus(jobId, videoCount));
 

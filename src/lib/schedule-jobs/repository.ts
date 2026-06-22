@@ -21,7 +21,6 @@ import {
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
 import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
-import { safeReconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
 import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
@@ -400,25 +399,44 @@ export function buildJobStatusFromJob(
   };
 }
 
+export async function buildJobStatusReadOnly(
+  supabase: SupabaseClient,
+  job: ScheduleJobRow,
+  items?: ScheduleJobItemRow[],
+) {
+  const consistency = await loadJobConsistencySnapshot(supabase, job);
+  const status = buildJobStatusFromJob(job, items, consistency);
+
+  if (consistency.postsInCalendar >= job.total_items && job.total_items > 0) {
+    const insertChunksTotal = Math.ceil(job.total_items / SCHEDULE_JOB_INSERT_CHUNK);
+    const insertChunksDone = Math.min(
+      insertChunksTotal,
+      Math.ceil(consistency.postsInCalendar / SCHEDULE_JOB_INSERT_CHUNK),
+    );
+    const alreadyCompleted =
+      job.status === "completed" || job.status === "partial_failed";
+
+    return {
+      ...status,
+      postsInCalendar: consistency.postsInCalendar,
+      canOpenCalendar: true,
+      insertChunksDone,
+      insertChunksTotal,
+      recommendedAction: alreadyCompleted
+        ? (status.recommendedAction ?? "completed")
+        : "reconcile_calendar",
+    };
+  }
+
+  return status;
+}
+
 export async function buildJobStatusForJob(
   supabase: SupabaseClient,
   job: ScheduleJobRow,
   items?: ScheduleJobItemRow[],
 ) {
-  const reconcileResult = await safeReconcileJobFromCalendarPosts(supabase, job);
-  const consistency = await loadJobConsistencySnapshot(supabase, reconcileResult.job);
-  const status = buildJobStatusFromJob(reconcileResult.job, items, consistency);
-
-  if (reconcileResult.error) {
-    return {
-      ...status,
-      reconcileError: true,
-      reconcileErrorMessage: reconcileResult.error,
-      recommendedAction: status.recommendedAction ?? "manual_review",
-    };
-  }
-
-  return status;
+  return buildJobStatusReadOnly(supabase, job, items);
 }
 
 export function buildJobStatus(
@@ -443,11 +461,6 @@ export async function finalizeJobStatusFromDb(
   job: ScheduleJobRow,
 ) {
   await repairSavePostsTaskConsistency(supabase, job.id);
-
-  const reconcileResult = await safeReconcileJobFromCalendarPosts(supabase, job);
-  if (reconcileResult.reconciled) {
-    return reconcileResult.job;
-  }
 
   const counts = await syncJobCountersFromDb(supabase, job.id);
   const consistency = await loadJobConsistencySnapshot(supabase, job);

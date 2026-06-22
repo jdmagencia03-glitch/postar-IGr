@@ -180,4 +180,8 @@ export type ScheduleJobStatusResponse = {
   canDiscardJob?: boolean;
   reconcileError?: boolean;
   reconcileErrorMessage?: string | null;
+  reconciled?: boolean;
+  statusError?: boolean;
+  statusErrorMessage?: string | null;
+  ok?: boolean;
 };

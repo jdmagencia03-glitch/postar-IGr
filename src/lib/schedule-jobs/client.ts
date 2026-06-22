@@ -55,8 +55,28 @@ export async function bootstrapScheduleJobTracking(jobId: string, videoCount: nu
 export async function fetchScheduleJobStatus(jobId: string) {
   const result = await safeFetch<ScheduleJobStatusResponse>(`/api/schedule-jobs/${jobId}/status`, {
     cache: "no-store",
+    timeoutMs: 20_000,
   });
-  return readScheduleJobResponse(result);
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+  return result.data as ScheduleJobStatusResponse;
+}
+
+export async function reconcileCalendarScheduleJobApi(jobId: string) {
+  const result = await safeFetch<ScheduleJobStatusResponse>(
+    `/api/schedule-jobs/${jobId}/reconcile-calendar`,
+    { method: "POST", timeoutMs: 65_000 },
+  );
+  if (!result.ok) {
+    return {
+      jobId,
+      reconcileError: true,
+      reconcileErrorMessage: result.message,
+      recommendedAction: "manual_reconcile",
+    } as ScheduleJobStatusResponse;
+  }
+  return result.data as ScheduleJobStatusResponse;
 }
 
 export async function kickScheduleJobApi(jobId: string) {
