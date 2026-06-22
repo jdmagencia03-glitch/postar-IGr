@@ -283,9 +283,27 @@ export async function updateJobItem(
   if (error) throw new Error(error.message);
 }
 
-export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusResponse {
+export function buildJobStatusFromJob(
+  job: ScheduleJobRow,
+  items?: import("@/lib/schedule-jobs/types").ScheduleJobItemRow[],
+): ScheduleJobStatusResponse {
   const view = deriveScheduleJobView(job);
   const timing = buildScheduleJobTiming(job);
+  const schedulePlan = job.config?.schedule_plan;
+  const plannedFromItems =
+    items
+      ?.flatMap((item) => item.destinations ?? [])
+      .filter((dest) => dest.scheduled_at)
+      .map((dest, index) => ({
+        dayIndex: index + 1,
+        scheduledAt: dest.scheduled_at,
+        slot: new Date(dest.scheduled_at).toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "America/Sao_Paulo",
+        }),
+        slotSource: "warmup_fixed" as const,
+      })) ?? [];
 
   return {
     jobId: job.id,
@@ -330,6 +348,15 @@ export function buildJobStatusFromJob(job: ScheduleJobRow): ScheduleJobStatusRes
     steps: view.steps,
     updatedAt: job.updated_at,
     timing,
+    batchId: job.upload_batch_id,
+    scheduleMode: (job.schedule_mode as ScheduleJobStatusResponse["scheduleMode"]) ?? "auto",
+    warmupPattern:
+      schedulePlan?.warmupPattern ??
+      (job.schedule_mode === "warmup" ? "3→3→4→4→7" : null),
+    skippedPastSlots: schedulePlan?.skippedPastSlots ?? [],
+    plannedPosts: schedulePlan?.plannedPosts?.length
+      ? schedulePlan.plannedPosts
+      : plannedFromItems,
   };
 }
 

@@ -37,6 +37,7 @@ import {
 import { formatApiError } from "@/lib/api-errors";
 import type { ScheduleInsertionPreview, ScheduleInsertionStrategy } from "@/lib/schedule-insertion";
 import { deriveUploadSessionView } from "@/lib/upload/session-derived";
+import { uploadSessionStore } from "@/lib/upload/session-store";
 import { estimateScheduleDuration, parseTimeSlot, parseTimeSlots, countTodayAvailableSlots, buildEvenTimeSlotStrings, DEFAULT_CUSTOM_START_TIME, DEFAULT_CUSTOM_END_TIME, DEFAULT_CUSTOM_POSTS_PER_DAY } from "@/lib/smart-schedule";
 import type { InstagramAccount, SocialPlatform, TikTokAccount, UploadBatch } from "@/lib/types";
 
@@ -317,6 +318,7 @@ export function BulkUploadForm({
   const [scheduleJobInitialStatus, setScheduleJobInitialStatus] =
     useState<ScheduleJobStatusResponse | null>(null);
   const [scheduleJobNotice, setScheduleJobNotice] = useState<string | null>(null);
+  const [scheduleJobComplete, setScheduleJobComplete] = useState(false);
 
   useEffect(() => {
     setSelectedAccountId(uploadAccountId);
@@ -385,6 +387,7 @@ export function BulkUploadForm({
       uploadView.stats.stalledFiles
     : Math.max(0, totalCount - completedCount - (liveBatch?.failed_files ?? activeBatch?.failed_files ?? 0));
   const batchReady = activeBatch?.status === "ready";
+  const batchFullyDone = scheduleJobComplete || activeBatch?.status === "scheduled";
   const uploadSettled = !isUploading && !uploadSession?.retrying && remainingUploadCount === 0;
   const canSchedulePartial = completedCount > 0 && !uploadSettled;
   const canScheduleAll = completedCount > 0 && uploadSettled;
@@ -600,6 +603,12 @@ export function BulkUploadForm({
   }
 
   useEffect(() => {
+    if (activeBatch?.status === "scheduled") {
+      setScheduleJobComplete(true);
+    }
+  }, [activeBatch?.status]);
+
+  useEffect(() => {
     if (!activeBatch?.id) {
       setScheduleJobId(null);
       return;
@@ -613,9 +622,27 @@ export function BulkUploadForm({
     };
   }, [activeBatch?.id]);
 
+  function handleStartNewBatch() {
+    uploadSessionStore.startNewBatch();
+    setActiveBatch(null);
+    setScheduleJobId(null);
+    setScheduleJobInitialStatus(null);
+    setScheduleJobComplete(false);
+    setScheduleJobNotice(null);
+    setResult(null);
+    setScheduling(false);
+    setLoadingStep("");
+    setProgress(0);
+    setCompletedSteps([]);
+    restoredBatchIdRef.current = null;
+  }
+
   function handleScheduleJobComplete(status: ScheduleJobStatusResponse) {
     if (status.phase === "completed") {
-      setResult(`✓ ${status.postsSaved} posts salvos no calendário.`);
+      setScheduleJobComplete(true);
+      setScheduleJobNotice(null);
+      setScheduling(false);
+      setLoadingStep("");
     } else if (status.phase === "partial_completed") {
       setResult(
         `${status.postsSaved} posts salvos. ${status.failed} com erro — use Retomar agendamento.`,
@@ -650,7 +677,12 @@ export function BulkUploadForm({
         "alreadyCompleted" in created && created.alreadyCompleted
           ? "Agendamento já concluído para este lote."
           : "Agendamento em andamento — acompanhe o progresso abaixo.";
-      setScheduleJobNotice(msg);
+      if ("alreadyCompleted" in created && created.alreadyCompleted) {
+        setScheduleJobComplete(true);
+        setScheduleJobNotice(null);
+      } else {
+        setScheduleJobNotice(msg);
+      }
     } else if (created.message) {
       setScheduleJobNotice(created.message);
     }
@@ -1211,6 +1243,8 @@ export function BulkUploadForm({
               onBatchUpdate={handleBatchUpdate}
               onUploadingChange={handleUploadingChange}
               onSchedulePartial={handleSchedulePartial}
+              onStartNewBatch={handleStartNewBatch}
+              suppressCompletionActions={Boolean(scheduleJobId && scheduleJobComplete)}
             />
           </div>
 
@@ -1436,7 +1470,7 @@ export function BulkUploadForm({
         </div>
       )}
 
-      {canSchedulePartial && (
+      {!batchFullyDone && canSchedulePartial && (
         <button
           type="button"
           disabled={scheduling || isUploading || !destinationReady}
@@ -1447,6 +1481,7 @@ export function BulkUploadForm({
         </button>
       )}
 
+      {!batchFullyDone && (
       <button
         type="submit"
         disabled={scheduling || isUploading || !canScheduleAll || !destinationReady}
@@ -1460,6 +1495,7 @@ export function BulkUploadForm({
               ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
               : "Aguardando vídeos para agendar"}
       </button>
+      )}
 
       {!canScheduleAll && completedCount === 0 && totalCount > 0 && (
         <p className="text-center text-sm text-ig-muted">
@@ -1467,7 +1503,7 @@ export function BulkUploadForm({
         </p>
       )}
 
-      {scheduleJobNotice && (
+      {scheduleJobNotice && !scheduleJobComplete && (
         <div className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
           {scheduleJobNotice}
         </div>
@@ -1478,8 +1514,12 @@ export function BulkUploadForm({
           jobId={scheduleJobId}
           videoCount={completedCount || totalCount}
           initialStatus={scheduleJobInitialStatus}
+          platform={uploadPlatform}
+          accountId={uploadAccountId}
+          batchId={activeBatch?.id}
           onComplete={handleScheduleJobComplete}
           onBatchRefresh={() => void refreshActiveBatch()}
+          onStartNewBatch={handleStartNewBatch}
         />
       )}
 

@@ -15,6 +15,8 @@ import type {
   ScheduleJobItemRow,
   ScheduleJobRow,
 } from "@/lib/schedule-jobs/types";
+import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
+import { WARMUP_PATTERN } from "@/lib/account-warmup";
 import {
   describeSmartSchedule,
   ensureFutureScheduleSlot,
@@ -100,14 +102,27 @@ export async function processCalendarTask(
   }
 
   if (!job.schedule_summary) {
-    const postsPerDay =
-      ctx.scheduleMode === "custom"
-        ? (ctx.custom?.postsPerDay ?? 15)
-        : resolveAutoPostsPerDay(job.total_items, ctx.auto?.profile ?? "growing");
-    const schedule_summary = `${postsPerDay} posts/dia · ${describeSmartSchedule(insertion.totalSchedule, "auto")}`;
+    const schedule_summary =
+      ctx.scheduleMode === "warmup"
+        ? buildWarmupScheduleSummary({
+            schedule: insertion.totalSchedule,
+            count: job.total_items,
+            skippedPastSlots: insertion.skippedPastSlots,
+          })
+        : `${resolveAutoPostsPerDay(job.total_items, ctx.auto?.profile ?? "growing")} posts/dia · ${describeSmartSchedule(insertion.totalSchedule, "auto")}`;
+
+    const configPatch = {
+      ...job.config,
+      schedule_plan: {
+        warmupPattern: ctx.scheduleMode === "warmup" ? WARMUP_PATTERN : null,
+        skippedPastSlots: insertion.skippedPastSlots ?? [],
+        plannedPosts: insertion.plannedPosts ?? [],
+      },
+    };
 
     await updateJobCounters(supabase, job.id, {
       schedule_summary,
+      config: configPatch,
       status: "processing",
       current_step: "captions",
     } as Partial<ScheduleJobRow>);

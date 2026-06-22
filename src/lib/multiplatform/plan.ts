@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { generateBulkCaptions } from "@/lib/ai/captions";
-import { groupWarmupScheduleByDay } from "@/lib/account-warmup";
+import { groupWarmupScheduleByDay, WARMUP_PATTERN } from "@/lib/account-warmup";
+import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import {
   TIKTOK_SCHEDULE_OFFSET_MINUTES,
@@ -57,12 +58,14 @@ function buildScheduleMetadata(params: {
   warmup?: WarmupScheduleOptions;
   custom?: CustomScheduleOptions;
   auto?: AutoScheduleOptions;
+  scheduleSummaryFromPlan?: string;
+  skippedPastSlots?: import("@/lib/account-warmup").WarmupSkippedSlot[];
 }) {
   const postsPerDay =
     params.mode === "custom"
       ? (params.custom?.postsPerDay ?? 15)
       : params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new")
-        ? 7
+        ? undefined
         : resolveAutoPostsPerDay(params.totalCount, params.auto?.profile ?? "growing");
 
   const duration =
@@ -74,7 +77,7 @@ function buildScheduleMetadata(params: {
 
   const autoProfileLabel =
     params.auto?.profile === "new"
-      ? "Conta nova · aquecimento 3→3→4→4→7"
+      ? `Conta nova · aquecimento ${WARMUP_PATTERN}`
       : params.auto?.profile === "strong"
         ? `${postsPerDay} posts/dia (conta forte)`
         : params.auto?.profile === "growing"
@@ -82,20 +85,26 @@ function buildScheduleMetadata(params: {
           : `${postsPerDay} posts/dia`;
 
   const schedule_summary =
-    params.mode === "warmup"
-      ? `Aquecimento 3→3→4→4→7 · ${describeSmartSchedule(params.schedule, "auto")}`
+    params.scheduleSummaryFromPlan ??
+    (params.mode === "warmup"
+      ? buildWarmupScheduleSummary({
+          schedule: params.schedule,
+          count: params.totalCount,
+          skippedPastSlots: params.skippedPastSlots,
+          warmupDays: params.warmup?.warmupDays,
+        })
       : params.mode === "custom"
         ? `${postsPerDay} posts/dia · ${describeSmartSchedule(params.schedule, "auto")}`
         : params.mode === "auto"
           ? `${autoProfileLabel} · ${describeSmartSchedule(params.schedule, "auto")}`
-          : describeSmartSchedule(params.schedule, params.mode);
+          : describeSmartSchedule(params.schedule, params.mode));
 
   const warmup_breakdown =
-    params.mode === "warmup" || params.mode === "auto"
+    params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new")
       ? groupWarmupScheduleByDay(params.schedule)
       : undefined;
 
-  return { postsPerDay, duration, schedule_summary, warmup_breakdown };
+  return { postsPerDay: postsPerDay ?? 0, duration, schedule_summary, warmup_breakdown };
 }
 
 export async function buildMultiplatformPlan(params: {
@@ -155,6 +164,8 @@ export async function buildMultiplatformPlan(params: {
     warmup: params.warmup,
     custom: params.custom,
     auto: params.auto,
+    scheduleSummaryFromPlan: insertion.scheduleSummary,
+    skippedPastSlots: insertion.skippedPastSlots,
   });
   const { postsPerDay, duration, schedule_summary, warmup_breakdown } = meta;
 

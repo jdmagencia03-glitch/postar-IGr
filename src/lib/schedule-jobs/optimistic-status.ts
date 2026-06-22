@@ -63,6 +63,11 @@ export function buildOptimisticScheduleJobStatus(
       processingMs: null,
       chunks: [],
     },
+    batchId: null,
+    scheduleMode: "warmup",
+    warmupPattern: null,
+    skippedPastSlots: [],
+    plannedPosts: [],
   };
 }
 

@@ -6,9 +6,14 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildScheduleJobDiagnostics } from "@/lib/schedule-jobs/admin-diagnostics";
 
-const bodySchema = z.object({
-  batchId: z.string().uuid(),
-});
+const bodySchema = z
+  .object({
+    batchId: z.string().uuid().optional(),
+    jobId: z.string().uuid().optional(),
+  })
+  .refine((value) => Boolean(value.batchId || value.jobId), {
+    message: "Informe batchId ou jobId",
+  });
 
 /** Diagnóstico de jobs de agendamento por lote (admin). */
 export async function POST(request: NextRequest) {
@@ -32,6 +37,7 @@ export async function POST(request: NextRequest) {
     supabase,
     sessionOwnerId,
     parsed.data.batchId,
+    parsed.data.jobId,
   );
 
   if (!result.ok) {

@@ -25,9 +25,19 @@ export async function GET(
       job = await finalizeJobStatusFromDb(supabase, job);
     }
 
+    let items = undefined;
+    if (!job.config?.schedule_plan?.plannedPosts?.length) {
+      const { data } = await supabase
+        .from("schedule_job_items")
+        .select("*")
+        .eq("schedule_job_id", id)
+        .order("sort_order", { ascending: true });
+      items = data ?? undefined;
+    }
+
     logScheduleJobEvent("schedule-job-status", job);
 
-    return NextResponse.json(buildJobStatusFromJob(job), {
+    return NextResponse.json(buildJobStatusFromJob(job, items), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

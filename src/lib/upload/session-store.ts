@@ -2060,7 +2060,7 @@ class UploadSessionStore {
         this.stopRetryCountdown();
         this.fileRuntime = {};
         if (remote.status === "completed") {
-          this.message = "Upload concluído com sucesso. A IA pode agendar suas publicações.";
+          this.message = null;
         } else if (remote.status === "partial_failed") {
           this.message = `${remote.failed} vídeo(s) falharam. ${remote.completed} prontos para agendar.`;
         } else if (remote.status === "failed") {
@@ -2264,6 +2264,34 @@ class UploadSessionStore {
     this.pausedByUser = false;
     await setBatchPaused(this.batch.id, false);
     await this.resumePausedUpload();
+  }
+
+  /** Limpa a sessão local para um novo lote, mantendo conta/plataforma. */
+  startNewBatch() {
+    this.engine?.stop();
+    const previousBatchId = this.batch?.id;
+    if (previousBatchId) {
+      resetUploadBatchStatsMonotonic(previousBatchId);
+    }
+    this.engine = null;
+    this.lastFileMap = new Map();
+    this.batch = null;
+    this.progress = null;
+    this.progressMap = {};
+    this.running = false;
+    this.pausedByUser = false;
+    this.retrying = false;
+    this.resuming = false;
+    this.message = null;
+    this.validationPreview = null;
+    this.batchHealthMessage = null;
+    this.fileRuntime = {};
+    this.autoRetryPass = 0;
+    this.stopRetryCountdown();
+    this.stopPolling();
+    this.stopAdaptiveMonitor();
+    for (const listener of this.batchListeners) listener(null);
+    this.emit();
   }
 
   async cancelBatch() {

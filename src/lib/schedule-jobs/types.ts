@@ -40,6 +40,16 @@ export type ScheduleJobConfig = {
   content_objective?: string | null;
   auto_profile?: "new" | "growing" | "strong";
   niche?: string;
+  schedule_plan?: {
+    warmupPattern?: string | null;
+    skippedPastSlots?: Array<{ date: string; time: string; reason: "past_time" }>;
+    plannedPosts?: Array<{
+      dayIndex: number;
+      scheduledAt: string;
+      slot: string;
+      slotSource: "warmup_fixed";
+    }>;
+  };
 };
 
 export type ScheduleJobRow = {
@@ -141,4 +151,14 @@ export type ScheduleJobStatusResponse = {
   steps: Record<ScheduleStepId, ScheduleStepState>;
   updatedAt: string;
   timing: ScheduleJobTiming;
+  batchId: string | null;
+  scheduleMode: ScheduleJobScheduleMode;
+  warmupPattern: string | null;
+  skippedPastSlots: Array<{ date: string; time: string; reason: "past_time" }>;
+  plannedPosts: Array<{
+    dayIndex: number;
+    scheduledAt: string;
+    slot: string;
+    slotSource: "warmup_fixed";
+  }>;
 };

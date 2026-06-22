@@ -521,7 +521,7 @@ export function estimateScheduleDuration(
     return {
       days: est.days,
       months: est.months,
-      postsPerDay: 1,
+      postsPerDay: 0,
       label: est.label,
       shortLabel: est.shortLabel,
     };

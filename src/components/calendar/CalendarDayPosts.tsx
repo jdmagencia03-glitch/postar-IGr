@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatInAppTimezone } from "@/lib/timezone";
@@ -10,9 +11,17 @@ type Props = {
   posts: ScheduledPost[];
   isPublishedDay: boolean;
   initialVisible?: number;
+  cancelledCount?: number;
+  cancelledHref?: string;
 };
 
-export function CalendarDayPosts({ posts, isPublishedDay, initialVisible = 6 }: Props) {
+export function CalendarDayPosts({
+  posts,
+  isPublishedDay,
+  initialVisible = 6,
+  cancelledCount = 0,
+  cancelledHref,
+}: Props) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? posts : posts.slice(0, initialVisible);
   const hidden = posts.length - initialVisible;
@@ -55,6 +64,17 @@ export function CalendarDayPosts({ posts, isPublishedDay, initialVisible = 6 }: 
         >
           {expanded ? "Ver menos" : `Ver mais (+${hidden})`}
         </button>
+      )}
+      {cancelledCount > 0 && cancelledHref && (
+        <Link
+          href={cancelledHref}
+          className={cn(
+            "block text-xs font-medium underline-offset-2 hover:underline",
+            isPublishedDay ? "text-ig-on-primary/80" : "text-ig-muted",
+          )}
+        >
+          {cancelledCount} cancelado{cancelledCount > 1 ? "s" : ""}
+        </Link>
       )}
     </div>
   );

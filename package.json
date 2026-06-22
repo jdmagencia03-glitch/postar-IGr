@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "migrate:tiktok": "node scripts/run-tiktok-migrations.mjs"
+    "migrate:tiktok": "node scripts/run-tiktok-migrations.mjs",
+    "test:warmup": "npx tsx scripts/test-warmup-schedule.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

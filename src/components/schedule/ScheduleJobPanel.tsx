@@ -33,13 +33,19 @@ import {
   shouldPollScheduleJob,
 } from "@/lib/schedule-jobs/optimistic-status";
 import { isSmallScheduleJob, scheduleJobPollIntervalMs } from "@/lib/schedule-jobs/polling";
+import { BatchCompletionActions } from "@/components/upload/BatchCompletionActions";
+import type { SocialPlatform } from "@/lib/types";
 
 type Props = {
   jobId: string;
   videoCount: number;
   initialStatus?: ScheduleJobStatusResponse | null;
+  platform?: SocialPlatform;
+  accountId?: string;
+  batchId?: string | null;
   onComplete?: (status: ScheduleJobStatusResponse) => void;
   onBatchRefresh?: () => void;
+  onStartNewBatch?: () => void;
 };
 
 const STEP_ORDER: Array<{
@@ -107,8 +113,12 @@ export function ScheduleJobPanel({
   jobId,
   videoCount,
   initialStatus = null,
+  platform = "instagram",
+  accountId,
+  batchId,
   onComplete,
   onBatchRefresh,
+  onStartNewBatch,
 }: Props) {
   const smallBatch = isSmallScheduleJob(videoCount);
   const [status, setStatus] = useState<ScheduleJobStatusResponse | null>(
@@ -259,20 +269,27 @@ export function ScheduleJobPanel({
   const isBusy = action !== null;
   const showStalledActions = Boolean(status?.isStalled && status.isActive);
   const showResume = Boolean(status?.canResume && !isBusy && !isDone && !showStalledActions);
+  const showCompletionBanner = Boolean(banner && !isDone);
+  const headline = isDone
+    ? "Agendamento concluído"
+    : status?.isStalled
+      ? "Agendamento travado detectado"
+      : (status?.headline ?? "Agendamento em andamento");
+  const subheadline = isDone
+    ? `${status?.postsSaved ?? 0} de ${total} posts salvos no calendário`
+    : isPartial
+      ? `${status?.postsSaved ?? 0} de ${total} posts salvos · ${status?.failed ?? 0} com erro`
+      : (status?.progressLabel ?? "Preparando agendamento…");
 
   return (
     <section className="ig-panel space-y-4 p-5">
       <div>
-        <p className="text-sm font-semibold text-ig-text">
-          {status?.isStalled
-            ? "Agendamento travado detectado"
-            : (status?.headline ?? "Agendamento em andamento")}
-        </p>
+        <p className="text-lg font-semibold text-ig-text">{headline}</p>
         <p className="mt-1 text-sm text-ig-muted">
-          {status?.progressLabel ?? "Preparando agendamento…"}
-          {status && status.failed > 0 ? ` · ${status.failed} com erro` : ""}
+          {subheadline}
+          {!isDone && !isPartial && status && status.failed > 0 ? ` · ${status.failed} com erro` : ""}
         </p>
-        {status && (
+        {status && !isDone && (
           <div className="mt-2 space-y-1 text-xs text-ig-muted">
             <p>Etapa atual: {status.stepLabel}</p>
             <p>
@@ -286,14 +303,16 @@ export function ScheduleJobPanel({
         )}
       </div>
 
-      <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
-        <div
-          className="h-full rounded-full bg-ig-primary transition-all duration-300"
-          style={{ width: `${status?.progressPercent ?? 0}%` }}
-        />
-      </div>
+      {!isDone && (
+        <div className="h-2 overflow-hidden rounded-full bg-ig-secondary">
+          <div
+            className="h-full rounded-full bg-ig-primary transition-all duration-300"
+            style={{ width: `${status?.progressPercent ?? 0}%` }}
+          />
+        </div>
+      )}
 
-      {banner && (
+      {showCompletionBanner && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             status?.isStalled
@@ -347,6 +366,16 @@ export function ScheduleJobPanel({
       )}
 
       <div className="flex flex-wrap gap-2">
+        {isDone && onStartNewBatch && accountId ? (
+          <BatchCompletionActions
+            platform={platform}
+            accountId={accountId}
+            batchId={batchId}
+            onStartNewBatch={onStartNewBatch}
+            onViewDetails={() => setShowDetails(true)}
+          />
+        ) : null}
+
         {showStalledActions && (
           <>
             {status?.canForceContinue && (
@@ -448,27 +477,36 @@ export function ScheduleJobPanel({
           </button>
         )}
 
-        {status?.isActive && !showStalledActions && !showResume && (
+        {status?.isActive && !showStalledActions && !showResume && !isDone && (
           <span className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-ig-muted">
             <Loader2 size={16} className="animate-spin" />
             Processando no servidor…
           </span>
         )}
 
-        {(status?.canOpenCalendar || isDone || isPartial) && (
-          <Link href="/dashboard/calendar" className="ig-btn-secondary px-4 py-2 text-sm font-semibold">
+        {!isDone && (status?.canOpenCalendar || isPartial) && (
+          <Link
+            href={
+              accountId
+                ? `/dashboard/calendar?${new URLSearchParams({ platform, account: accountId }).toString()}`
+                : "/dashboard/calendar"
+            }
+            className="ig-btn-secondary px-4 py-2 text-sm font-semibold"
+          >
             Abrir calendário
           </Link>
         )}
 
-        <button
-          type="button"
-          onClick={() => setShowDetails((v) => !v)}
-          className="ig-btn-secondary inline-flex items-center gap-1 px-4 py-2 text-sm font-semibold"
-        >
-          {showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          Ver detalhes
-        </button>
+        {!isDone && (
+          <button
+            type="button"
+            onClick={() => setShowDetails((v) => !v)}
+            className="ig-btn-secondary inline-flex items-center gap-1 px-4 py-2 text-sm font-semibold"
+          >
+            {showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            Ver detalhes
+          </button>
+        )}
       </div>
 
       {showDetails && status && (

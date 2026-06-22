@@ -19,6 +19,8 @@ import {
 } from "@/lib/upload/adaptive";
 import { largeBatchWarning } from "@/lib/upload/queue";
 import { uploadSessionStore } from "@/lib/upload/session-store";
+import { isUploadBatchFullyScheduled, isUploadBatchTerminal } from "@/lib/upload/batch-terminal";
+import { BatchCompletionActions } from "@/components/upload/BatchCompletionActions";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
 
 function resumeButtonLabel() {
@@ -34,6 +36,8 @@ interface Props {
   onBatchUpdate?: (batch: UploadBatch | null) => void;
   onUploadingChange?: (uploading: boolean) => void;
   onSchedulePartial?: () => void;
+  onStartNewBatch?: () => void;
+  suppressCompletionActions?: boolean;
 }
 
 const FileStatusRow = memo(function FileStatusRow({
@@ -103,6 +107,8 @@ export function SupremeUploadManager({
   onBatchUpdate,
   onUploadingChange,
   onSchedulePartial,
+  onStartNewBatch,
+  suppressCompletionActions = false,
 }: Props) {
   const store = useUploadSessionStore();
   const session = useUploadSession();
@@ -178,6 +184,20 @@ export function SupremeUploadManager({
   const hasFileRetry = Object.values(session.fileRuntime).some(
     (runtime) => runtime.status === "retrying",
   );
+
+  const batchStatus = session.batch?.status;
+  const batchTerminal = isUploadBatchTerminal(batchStatus);
+  const batchFullyScheduled = isUploadBatchFullyScheduled(batchStatus);
+  const showUploadCompletionActions =
+    batchFullyScheduled && !suppressCompletionActions && Boolean(onStartNewBatch);
+
+  const handleStartNewBatch = () => {
+    if (onStartNewBatch) {
+      onStartNewBatch();
+      return;
+    }
+    uploadSessionStore.startNewBatch();
+  };
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
   const speedPresets =
@@ -477,67 +497,80 @@ export function SupremeUploadManager({
               </>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-              {(session.running || session.engineStarting) && (
-                <button
-                  type="button"
-                  className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
-                  onClick={() => void uploadSessionStore.togglePause()}
-                >
-                  <Pause size={14} /> Pausar
-                </button>
+              {showUploadCompletionActions ? (
+                <BatchCompletionActions
+                  platform={platform}
+                  accountId={accountId}
+                  batchId={session.batch?.id}
+                  onStartNewBatch={handleStartNewBatch}
+                />
+              ) : (
+                <>
+                  {(session.running || session.engineStarting) && (
+                    <button
+                      type="button"
+                      className="ig-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+                      onClick={() => void uploadSessionStore.togglePause()}
+                    >
+                      <Pause size={14} /> Pausar
+                    </button>
+                  )}
+                  {view.canResume && !session.running && (
+                    <button
+                      type="button"
+                      className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                      disabled={session.resuming}
+                      onClick={() => void uploadSessionStore.resumePausedUpload()}
+                    >
+                      <Play size={14} /> {resumeButtonLabel()}
+                    </button>
+                  )}
+                  {view.canSelectFiles && !session.running && (
+                    <button
+                      type="button"
+                      className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                      disabled={session.resuming}
+                      onClick={() => uploadSessionStore.openChooseVideos()}
+                    >
+                      <Upload size={14} /> Selecionar arquivos
+                    </button>
+                  )}
+                  {view.showRecoverButton && (
+                    <button
+                      type="button"
+                      className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                      disabled={session.resuming || session.recoveringFromStall}
+                      onClick={() => void uploadSessionStore.recoverBatchUpload("manual_recover")}
+                    >
+                      Recuperar upload
+                    </button>
+                  )}
+                  {view.canRetryFailed && (
+                    <button
+                      type="button"
+                      className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                      disabled={session.resuming}
+                      onClick={() => void uploadSessionStore.retryAllFailedFiles()}
+                    >
+                      Tentar novamente arquivos com erro
+                    </button>
+                  )}
+                  {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
+                    <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
+                      Agendar vídeos enviados
+                    </button>
+                  )}
+                  {!batchTerminal && (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted"
+                      onClick={() => void uploadSessionStore.cancelBatch()}
+                    >
+                      Cancelar lote
+                    </button>
+                  )}
+                </>
               )}
-              {view.canResume && !session.running && (
-                <button
-                  type="button"
-                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={session.resuming}
-                  onClick={() => void uploadSessionStore.resumePausedUpload()}
-                >
-                  <Play size={14} /> {resumeButtonLabel()}
-                </button>
-              )}
-              {view.canSelectFiles && !session.running && (
-                <button
-                  type="button"
-                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={session.resuming}
-                  onClick={() => uploadSessionStore.openChooseVideos()}
-                >
-                  <Upload size={14} /> Selecionar arquivos
-                </button>
-              )}
-              {view.showRecoverButton && (
-                <button
-                  type="button"
-                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={session.resuming || session.recoveringFromStall}
-                  onClick={() => void uploadSessionStore.recoverBatchUpload("manual_recover")}
-                >
-                  Recuperar upload
-                </button>
-              )}
-              {view.canRetryFailed && (
-                <button
-                  type="button"
-                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
-                  disabled={session.resuming}
-                  onClick={() => void uploadSessionStore.retryAllFailedFiles()}
-                >
-                  Tentar novamente arquivos com erro
-                </button>
-              )}
-              {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
-                <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
-                  Agendar vídeos enviados
-                </button>
-              )}
-              <button
-                type="button"
-                className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted"
-                onClick={() => void uploadSessionStore.cancelBatch()}
-              >
-                Cancelar lote
-              </button>
             </div>
           </div>
 
@@ -594,7 +627,10 @@ export function SupremeUploadManager({
         </p>
       )}
 
-      {session.message && !hasFileRetry && !session.retrying && (
+      {session.message &&
+        !hasFileRetry &&
+        !session.retrying &&
+        !batchTerminal && (
         <p
           className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") || session.message.includes("falhou") ? "text-ig-danger" : "text-ig-text"}`}
         >
