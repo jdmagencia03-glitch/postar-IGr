@@ -42,26 +42,25 @@ export async function GET(request: NextRequest) {
     return unauthorized();
   }
 
-  const recalcJobId =
-    request.nextUrl.searchParams.get("recalculateWarmupJob") ??
-    process.env.RECALCULATE_WARMUP_JOB_ID?.trim();
+  const recalcJobId = request.nextUrl.searchParams.get("recalculateWarmupJob")?.trim();
   if (recalcJobId) {
-    try {
-      const { executeWarmupRecalculate } = await import("@/lib/warmup-recalculate");
-      const recalculate = await executeWarmupRecalculate(recalcJobId);
-      return NextResponse.json({
-        ok: true,
-        recalculate,
-        message: "warmup recalculate completed",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[cron/schedule-jobs/recalculate-warmup]", message, error);
-      return NextResponse.json(
-        { ok: false, error: "recalculate_failed", message, recalculateJobId: recalcJobId },
-        { status: 500 },
-      );
-    }
+    const { executeWarmupRecalculate } = await import("@/lib/warmup-recalculate");
+    waitUntil(
+      executeWarmupRecalculate(recalcJobId)
+        .then((recalculate) => {
+          console.info("[cron/schedule-jobs/recalculate-warmup]", { jobId: recalcJobId, recalculate });
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[cron/schedule-jobs/recalculate-warmup]", { jobId: recalcJobId, message, error });
+        }),
+    );
+    return NextResponse.json({
+      ok: true,
+      accepted: true,
+      recalculateJobId: recalcJobId,
+      message: "warmup recalculate started in background",
+    });
   }
 
   let supabase;

@@ -172,8 +172,27 @@ export async function buildExistingValidPostsByLocalDate(
   },
 ): Promise<Record<string, number>> {
   const uniqueDates = [...new Set(params.localDates.filter(Boolean))];
-  const result: Record<string, number> = {};
+  if (!uniqueDates.length) return {};
 
+  if (uniqueDates.length > 3) {
+    const sorted = [...uniqueDates].sort();
+    const [sy, sm, sd] = sorted[0]!.split("-").map(Number);
+    const [ey, em, ed] = sorted[sorted.length - 1]!.split("-").map(Number);
+    const dayCount = Math.max(
+      1,
+      Math.round((Date.UTC(ey, em - 1, ed) - Date.UTC(sy, sm - 1, sd)) / 86_400_000) + 1,
+    );
+    return buildExistingValidPostsByDateRange(supabase, {
+      accountId: params.accountId,
+      platform: params.platform,
+      contentType: params.contentType,
+      startLocalDate: sorted[0]!,
+      dayCount,
+      excludePostIds: params.excludePostIds,
+    });
+  }
+
+  const result: Record<string, number> = {};
   await Promise.all(
     uniqueDates.map(async (localDate) => {
       result[localDate] = await getExistingValidPostsForLocalDate(supabase, {
@@ -187,6 +206,57 @@ export async function buildExistingValidPostsByLocalDate(
   );
 
   return result;
+}
+
+/** Uma query para o intervalo — evita dezenas de round-trips no recálculo. */
+export async function buildExistingValidPostsByDateRange(
+  supabase: SupabaseClient,
+  params: {
+    accountId: string;
+    platform: SocialPlatform;
+    startLocalDate: string;
+    dayCount: number;
+    contentType?: ContentType;
+    excludePostIds?: string[];
+  },
+): Promise<Record<string, number>> {
+  const dates = enumerateLocalDatesFromAnchor(params.startLocalDate, params.dayCount);
+  if (!dates.length) return {};
+
+  const rangeStart = localDateUtcRange(dates[0]!).start;
+  const lastStart = localDateUtcRange(dates[dates.length - 1]!).start;
+  const rangeEnd = atHourOnDayOffsetInAppTz(lastStart, 1, 0, 0);
+
+  let query = supabase
+    .from("scheduled_posts")
+    .select("id, scheduled_at")
+    .gte("scheduled_at", rangeStart.toISOString())
+    .lt("scheduled_at", rangeEnd.toISOString())
+    .in("status", WARMUP_CAPACITY_STATUSES);
+
+  if (params.platform === "tiktok") {
+    query = query.eq("platform", "tiktok").eq("tiktok_account_id", params.accountId);
+  } else {
+    query = query.eq("account_id", params.accountId);
+  }
+
+  if (params.contentType) {
+    query = query.eq("content_type", params.contentType);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const exclude = new Set(params.excludePostIds?.filter(Boolean) ?? []);
+  const counts = Object.fromEntries(dates.map((date) => [date, 0]));
+
+  for (const post of data ?? []) {
+    if (exclude.has(post.id as string)) continue;
+    const key = localDateKeyFromUtc(new Date(post.scheduled_at as string));
+    if (key in counts) counts[key] = (counts[key] ?? 0) + 1;
+  }
+
+  return counts;
 }
 
 export async function buildIgnoredStatusCountsByLocalDate(
