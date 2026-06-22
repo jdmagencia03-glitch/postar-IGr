@@ -1,4 +1,14 @@
 {
+  "crons": [
+    {
+      "path": "/api/cron/recalculate-warmup-job",
+      "schedule": "0 0 1 1 *"
+    },
+    {
+      "path": "/api/cron/schedule-job-status",
+      "schedule": "0 0 1 1 *"
+    }
+  ],
   "functions": {
     "src/app/api/cron/publish/route.ts": {
       "maxDuration": 300
