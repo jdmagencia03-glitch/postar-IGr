@@ -139,6 +139,7 @@ export async function processCalendarTask(
         nowUsedForPlanning: now.toISOString(),
         skippedPastSlots: insertion.skippedPastSlots ?? [],
         plannedPosts: insertion.plannedPosts ?? [],
+        planningMeta: insertion.warmupPlanningMeta ?? null,
       },
     };
 

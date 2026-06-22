@@ -360,7 +360,27 @@ export type WarmupSchedulePlanResult = {
   skippedPastSlots: WarmupSkippedSlot[];
   plannedPosts: WarmupPlannedPost[];
   warnings: string[];
+  planningMeta?: WarmupPlanningMeta;
 };
+
+export type WarmupPlanningMeta = {
+  existingValidPostsToday: number;
+  remainingSlotsToday: number;
+  warmupStartDate: string;
+  effectiveFirstScheduledDate: string | null;
+  timezone: typeof APP_TIMEZONE;
+};
+
+/** Limite de posts por dia da rampa (1 = Dia 1). */
+export function getWarmupDailyPostLimit(rampDayIndex: number): number {
+  if (rampDayIndex <= 2) return 3;
+  if (rampDayIndex <= 4) return 4;
+  return POST_WARMUP_POSTS_PER_DAY;
+}
+
+function calendarLocalDateKey(calendarStart: Date, calendarDay: number) {
+  return warmupDateKey(atHourOnDayOffsetInAppTz(calendarStart, calendarDay, 0, 0));
+}
 
 export function getWarmupDayOffset(warmupStartedAt: string | Date | null, now = new Date()) {
   if (!warmupStartedAt) return 0;
@@ -512,6 +532,8 @@ export function buildWarmupSchedulePlan(params: {
   firstScheduledAt?: Date;
   startDate?: Date;
   now?: Date;
+  /** Posts válidos já existentes por data local (YYYY-MM-DD). */
+  existingValidPostsByLocalDate?: Record<string, number>;
 }): WarmupSchedulePlanResult {
   const count = params.count;
   const warnings: string[] = [];
@@ -523,9 +545,11 @@ export function buildWarmupSchedulePlan(params: {
 
   const warmupDayOffset = params.warmupDayOffset ?? 0;
   const now = params.now ?? new Date();
+  const todayKey = warmupDateKey(now);
   const anchorSource =
     params.firstScheduledAt ?? params.startDate ?? resolveNewWarmupAnchorDate(now);
   const calendar = resolveWarmupCalendarStart({ firstScheduledAt: anchorSource, now });
+  const existingByDate = params.existingValidPostsByLocalDate ?? {};
 
   const schedule: Date[] = [];
   let calendarDay = 0;
@@ -533,10 +557,30 @@ export function buildWarmupSchedulePlan(params: {
 
   while (schedule.length < count && calendarDay < maxCalendarDays) {
     const absoluteWarmupDay = warmupDayOffset + calendarDay;
-    const slotTimes = slotsForAbsoluteDay(absoluteWarmupDay, 0);
+    const rampDayIndex = absoluteWarmupDay + 1;
+    const dailyLimit = getWarmupDailyPostLimit(rampDayIndex);
+    const dayKey = calendarLocalDateKey(calendar.calendarStart, calendarDay);
+    const existingOnDay = existingByDate[dayKey] ?? 0;
+    const remainingCapacity = Math.max(0, dailyLimit - existingOnDay);
 
-    for (const { hour, minute } of slotTimes) {
+    if (remainingCapacity === 0) {
+      if (existingOnDay > 0) {
+        warnings.push(
+          `Dia ${dayKey}: ${existingOnDay} post(s) já ocupam a meta do Dia ${rampDayIndex} (${dailyLimit}). Próximos vídeos começam no dia seguinte.`,
+        );
+      }
+      calendarDay++;
+      continue;
+    }
+
+    const slotTimes = slotsForAbsoluteDay(absoluteWarmupDay, 0);
+    let scheduledOnDay = 0;
+
+    for (let slotIndex = 0; slotIndex < slotTimes.length; slotIndex++) {
       if (schedule.length >= count) break;
+      if (scheduledOnDay >= remainingCapacity) break;
+
+      const { hour, minute } = slotTimes[slotIndex]!;
 
       const scheduled = atHourOnDayOffsetInAppTz(
         calendar.calendarStart,
@@ -554,7 +598,12 @@ export function buildWarmupSchedulePlan(params: {
         continue;
       }
 
+      if (slotIndex < existingOnDay) {
+        continue;
+      }
+
       schedule.push(scheduled);
+      scheduledOnDay++;
     }
 
     calendarDay++;
@@ -567,11 +616,25 @@ export function buildWarmupSchedulePlan(params: {
     );
   }
 
+  const startDayKey = calendar.warmupStartDate;
+  const existingOnStartDay = existingByDate[startDayKey] ?? existingByDate[todayKey] ?? 0;
+  const remainingSlotsToday = Math.max(
+    0,
+    getWarmupDailyPostLimit(1) - (existingByDate[todayKey] ?? existingOnStartDay),
+  );
+
   return {
     schedule,
     skippedPastSlots,
     plannedPosts: buildPlannedPostsFromSchedule(schedule),
     warnings,
+    planningMeta: {
+      existingValidPostsToday: existingByDate[todayKey] ?? existingOnStartDay,
+      remainingSlotsToday,
+      warmupStartDate: startDayKey,
+      effectiveFirstScheduledDate: schedule[0] ? warmupDateKey(schedule[0]) : null,
+      timezone: APP_TIMEZONE,
+    },
   };
 }
 
@@ -623,6 +686,7 @@ export function generateWarmupScheduleSliceWithPlan(params: {
   firstScheduledAt?: Date;
   now?: Date;
   warnings?: string[];
+  existingValidPostsByLocalDate?: Record<string, number>;
 }): WarmupSchedulePlanResult {
   const offset = params.planSlotOffset ?? 0;
   const total = offset + params.count;
@@ -635,6 +699,7 @@ export function generateWarmupScheduleSliceWithPlan(params: {
     skippedPastSlots: plan.skippedPastSlots,
     plannedPosts: plan.plannedPosts.slice(offset),
     warnings: plan.warnings,
+    planningMeta: plan.planningMeta,
   };
 }
 

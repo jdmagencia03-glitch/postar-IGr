@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
+import { zonedDateTimeToUtc } from "@/lib/timezone";
 import type {
   PostStatus,
   PublishLog,
@@ -270,6 +271,125 @@ export async function getOwnerScheduledPosts(
   }
 
   return filtered;
+}
+
+export type CalendarMonthView = "active" | "all" | "pending" | "published" | "cancelled";
+
+const CALENDAR_CANCELLED_LIMIT = 800;
+const CALENDAR_MONTH_LIMIT = 3000;
+
+function calendarMonthUtcRange(monthYyyyMm: string) {
+  const [year, month] = monthYyyyMm.split("-").map(Number);
+  const start = zonedDateTimeToUtc(year, month, 1, 0, 0);
+  const endMonth = month === 12 ? 1 : month + 1;
+  const endYear = month === 12 ? year + 1 : year;
+  const end = zonedDateTimeToUtc(endYear, endMonth, 1, 0, 0);
+  return { start, end };
+}
+
+/** Posts do calendário limitados ao mês exibido (evita carregar milhares de cancelados). */
+export async function getOwnerPostsForCalendarMonth(
+  supabase: SupabaseClient,
+  ownerId: string,
+  params: {
+    month: string;
+    platform?: SocialPlatform | "all";
+    accountId?: string;
+    view?: CalendarMonthView;
+  },
+): Promise<{ posts: ScheduledPost[]; truncated: boolean }> {
+  const view = params.view ?? "active";
+  const { start, end } = calendarMonthUtcRange(params.month);
+  const limit =
+    view === "cancelled"
+      ? CALENDAR_CANCELLED_LIMIT
+      : CALENDAR_MONTH_LIMIT;
+
+  const accountRefs = await getOwnerAccountRefs(supabase, ownerId);
+  let igIds = accountRefs.filter((a) => a.platform === "instagram").map((a) => a.id);
+  let ttIds = accountRefs.filter((a) => a.platform === "tiktok").map((a) => a.id);
+
+  if (params.accountId) {
+    const selected = accountRefs.find((a) => a.id === params.accountId);
+    if (!selected) return { posts: [], truncated: false };
+    if (selected.platform === "instagram") {
+      igIds = [selected.id];
+      ttIds = [];
+    } else {
+      ttIds = [selected.id];
+      igIds = [];
+    }
+  } else if (params.platform === "instagram") {
+    ttIds = [];
+  } else if (params.platform === "tiktok") {
+    igIds = [];
+  }
+
+  const rangeFilter = {
+    gte: start.toISOString(),
+    lt: end.toISOString(),
+  };
+
+  async function queryPlatform(
+    platform: "instagram" | "tiktok",
+    ids: string[],
+  ): Promise<ScheduledPost[]> {
+    if (!ids.length) return [];
+
+    let query = supabase
+      .from("scheduled_posts")
+      .select(POST_SELECT_MINIMAL)
+      .eq("platform", platform)
+      .gte("scheduled_at", rangeFilter.gte)
+      .lt("scheduled_at", rangeFilter.lt)
+      .order("scheduled_at", { ascending: true })
+      .limit(limit + 1);
+
+    if (platform === "tiktok") {
+      query = query.in("tiktok_account_id", ids);
+    } else {
+      query = query.in("account_id", ids);
+    }
+
+    if (view === "cancelled") {
+      query = query.eq("status", "cancelled");
+    } else if (view === "published") {
+      query = query.eq("status", "published");
+    } else if (view === "active") {
+      query = query.neq("status", "cancelled");
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error("[calendar-posts] query failed:", error.message);
+      return [];
+    }
+
+    return ((data ?? []) as unknown as ScheduledPost[]).map((post) => ({
+      ...post,
+      platform: post.platform ?? platform,
+    }));
+  }
+
+  const [igPosts, ttPosts] = await Promise.all([
+    params.platform === "tiktok" ? [] : queryPlatform("instagram", igIds),
+    params.platform === "instagram" ? [] : queryPlatform("tiktok", ttIds),
+  ]);
+
+  let merged = dedupePosts([...igPosts, ...ttPosts]).sort(
+    (a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
+  );
+
+  if (view === "pending") {
+    merged = merged.filter((post) =>
+      ["pending", "processing", "retrying", "failed", "failed_persistent", "needs_media"].includes(
+        post.status,
+      ),
+    );
+  }
+
+  const truncated = merged.length > limit;
+  return { posts: merged.slice(0, limit), truncated };
 }
 
 function tagInstagramPosts(posts: ScheduledPost[]) {

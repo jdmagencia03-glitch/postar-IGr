@@ -14,6 +14,9 @@ export type WarmupJobDiagnostics = {
   timezone: string;
   warmupStartDate: string;
   nowUsedForPlanning: string;
+  existingValidPostsToday?: number;
+  remainingSlotsToday?: number;
+  effectiveFirstScheduledDate?: string | null;
   plannedPosts: WarmupDiagnosticsPlannedPost[];
   invalidSlots: WarmupInvalidSlotReport[];
   createdPosts: Array<{ id: string; scheduledAt: string; status: string }>;
@@ -74,6 +77,9 @@ export function buildWarmupJobDiagnostics(params: {
     timezone: schedulePlan?.timezone ?? APP_TIMEZONE,
     warmupStartDate,
     nowUsedForPlanning: schedulePlan?.nowUsedForPlanning ?? now.toISOString(),
+    existingValidPostsToday: schedulePlan?.planningMeta?.existingValidPostsToday,
+    remainingSlotsToday: schedulePlan?.planningMeta?.remainingSlotsToday,
+    effectiveFirstScheduledDate: schedulePlan?.planningMeta?.effectiveFirstScheduledDate ?? null,
     plannedPosts,
     invalidSlots,
     createdPosts: params.createdPosts,

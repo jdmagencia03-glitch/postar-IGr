@@ -57,6 +57,9 @@
     "src/app/api/schedule-jobs/[id]/status/route.ts": {
       "maxDuration": 30
     },
+    "src/app/api/calendar/posts/bulk-delete/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/admin/tiktok/test-publish/route.ts": {
       "maxDuration": 300
     },

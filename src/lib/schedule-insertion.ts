@@ -6,9 +6,12 @@ import {
   generateWarmupScheduleSliceWithPlan,
   groupWarmupScheduleByDay,
   resolveWarmupScheduleContext,
+  warmupDateKey,
   type WarmupPlannedPost,
+  type WarmupPlanningMeta,
   type WarmupSkippedSlot,
 } from "@/lib/account-warmup";
+import { buildExistingValidPostsByLocalDate } from "@/lib/posts/warmup-capacity";
 import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
 import type { ContentType, SocialPlatform } from "@/lib/types";
 import { APP_TIMEZONE, getAppDateParts, atHourOnDayOffsetInAppTz, zonedDateTimeToUtc } from "@/lib/timezone";
@@ -88,6 +91,7 @@ export interface ScheduleInsertionResult {
   plannedPosts?: WarmupPlannedPost[];
   scheduleSummary?: string;
   warmupStartDate?: string;
+  warmupPlanningMeta?: WarmupPlanningMeta;
 }
 
 const ACTIVE_STATUSES = ["pending", "processing", "retrying"];
@@ -255,7 +259,7 @@ function buildAutoContinuationSchedule(params: {
   return sanitizeScheduleDates(full, params.now).slice(params.planSlotOffset);
 }
 
-function buildWarmupOrAutoNewSchedule(params: {
+async function buildWarmupOrAutoNewSchedule(params: {
   count: number;
   planSlotOffset: number;
   anchorStartDate?: Date;
@@ -265,13 +269,18 @@ function buildWarmupOrAutoNewSchedule(params: {
   strategy: ScheduleInsertionStrategy;
   now: Date;
   warmupWarnings?: string[];
-}): {
+  supabase: SupabaseClient;
+  accountId: string;
+  platform: SocialPlatform;
+  contentType: ContentType;
+}): Promise<{
   schedule: Date[];
   skippedPastSlots: WarmupSkippedSlot[];
   plannedPosts: WarmupPlannedPost[];
   scheduleSummary?: string;
   warmupStartDate?: string;
-} {
+  warmupPlanningMeta?: WarmupPlanningMeta;
+}> {
   const useWarmup =
     params.mode === "warmup" || (params.mode === "auto" && params.auto?.profile === "new");
 
@@ -281,6 +290,16 @@ function buildWarmupOrAutoNewSchedule(params: {
       anchorStartDate: params.anchorStartDate,
       now: params.now,
     });
+    const todayKey = warmupDateKey(params.now);
+    const existingValidPostsByLocalDate = await buildExistingValidPostsByLocalDate(
+      params.supabase,
+      {
+        accountId: params.accountId,
+        platform: params.platform,
+        contentType: params.contentType,
+        localDates: [todayKey, warmupContext.warmupStartDate],
+      },
+    );
     const plan = generateWarmupScheduleSliceWithPlan({
       count: params.count,
       planSlotOffset: params.planSlotOffset,
@@ -289,12 +308,14 @@ function buildWarmupOrAutoNewSchedule(params: {
       firstScheduledAt: warmupContext.firstScheduledAt,
       now: params.now,
       warnings: params.warmupWarnings,
+      existingValidPostsByLocalDate,
     });
     return {
       schedule: plan.schedule,
       skippedPastSlots: plan.skippedPastSlots,
       plannedPosts: plan.plannedPosts,
       warmupStartDate: warmupContext.warmupStartDate,
+      warmupPlanningMeta: plan.planningMeta,
       scheduleSummary: buildWarmupScheduleSummary({
         schedule: plan.schedule,
         count: plan.schedule.length,
@@ -681,6 +702,7 @@ export async function resolveScheduleInsertionPlan(
   let plannedPosts: WarmupPlannedPost[] = [];
   let scheduleSummary: string | undefined;
   let warmupStartDate: string | undefined;
+  let warmupPlanningMeta: WarmupPlanningMeta | undefined;
 
   if (params.mode === "today") {
     schedule = buildTodayContinuation({
@@ -724,7 +746,7 @@ export async function resolveScheduleInsertionPlan(
         now,
       });
     } else {
-      const warmupPlan = buildWarmupOrAutoNewSchedule({
+      const warmupPlan = await buildWarmupOrAutoNewSchedule({
         count: params.newVideoCount,
         planSlotOffset: params.strategy === "new_plan" ? 0 : planSlotOffset,
         anchorStartDate: params.strategy === "new_plan" ? undefined : anchorStartDate,
@@ -734,15 +756,20 @@ export async function resolveScheduleInsertionPlan(
         strategy: params.strategy,
         now,
         warmupWarnings: extraWarnings,
+        supabase: params.supabase,
+        accountId: params.accountId,
+        platform: params.platform,
+        contentType: params.contentType,
       });
       schedule = warmupPlan.schedule;
       skippedPastSlots = warmupPlan.skippedPastSlots;
       plannedPosts = warmupPlan.plannedPosts;
       scheduleSummary = warmupPlan.scheduleSummary;
       warmupStartDate = warmupPlan.warmupStartDate;
+      warmupPlanningMeta = warmupPlan.warmupPlanningMeta;
     }
   } else {
-    const warmupPlan = buildWarmupOrAutoNewSchedule({
+    const warmupPlan = await buildWarmupOrAutoNewSchedule({
       count: params.newVideoCount,
       planSlotOffset: 0,
       auto: params.auto,
@@ -750,12 +777,17 @@ export async function resolveScheduleInsertionPlan(
       strategy: params.strategy,
       now,
       warmupWarnings: extraWarnings,
+      supabase: params.supabase,
+      accountId: params.accountId,
+      platform: params.platform,
+      contentType: params.contentType,
     });
     schedule = warmupPlan.schedule;
     skippedPastSlots = warmupPlan.skippedPastSlots;
     plannedPosts = warmupPlan.plannedPosts;
     scheduleSummary = warmupPlan.scheduleSummary;
     warmupStartDate = warmupPlan.warmupStartDate;
+    warmupPlanningMeta = warmupPlan.warmupPlanningMeta;
   }
 
   const usesWarmupSlots =
@@ -787,7 +819,15 @@ export async function resolveScheduleInsertionPlan(
     skippedPast: skippedPastSlots.length,
   });
 
-  return { schedule, preview, skippedPastSlots, plannedPosts, scheduleSummary, warmupStartDate };
+  return {
+    schedule,
+    preview,
+    skippedPastSlots,
+    plannedPosts,
+    scheduleSummary,
+    warmupStartDate,
+    warmupPlanningMeta,
+  };
 }
 
 export interface BuildScheduleWithInsertionParams extends Omit<

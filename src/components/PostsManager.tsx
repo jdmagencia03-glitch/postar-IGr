@@ -28,6 +28,30 @@ type RegeneratePreviewItem = {
   new_caption: string;
 };
 
+function isBulkDeleteDebugEnabled() {
+  if (typeof window === "undefined") return false;
+  return (
+    process.env.NODE_ENV === "development" ||
+    window.localStorage.getItem("postarigr_debug") === "1"
+  );
+}
+
+function formatBulkDeleteMessage(data: {
+  deleted?: number;
+  ignoredPublished?: number;
+  failed?: number;
+  ignoredNotDeletable?: number;
+  notFound?: number;
+}) {
+  const parts: string[] = [];
+  if (data.deleted) parts.push(`${data.deleted} removido(s)`);
+  if (data.ignoredPublished) parts.push(`${data.ignoredPublished} publicado(s) ignorado(s)`);
+  if (data.ignoredNotDeletable) parts.push(`${data.ignoredNotDeletable} não removível(is)`);
+  if (data.notFound) parts.push(`${data.notFound} não encontrado(s)`);
+  if (data.failed) parts.push(`${data.failed} falhou(ram)`);
+  return parts.length ? parts.join(" · ") : "Nenhum post foi removido.";
+}
+
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
   const response = await fetch(input, { ...init, credentials: "include" });
   if (response.status === 401) {
@@ -35,6 +59,43 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
     throw new Error("Sessão expirada. Faça login novamente.");
   }
   return response;
+}
+
+async function bulkDeletePosts(postIds: string[]) {
+  if (isBulkDeleteDebugEnabled()) {
+    console.info("[bulk_delete_started]", { count: postIds.length });
+  }
+
+  const response = await apiFetch("/api/calendar/posts/bulk-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postIds, ignorePublished: true }),
+  });
+
+  const data = await response.json();
+
+  if (isBulkDeleteDebugEnabled()) {
+    console.info("[bulk_delete_response]", data);
+  }
+
+  if (!response.ok) {
+    if (isBulkDeleteDebugEnabled()) {
+      console.error("[bulk_delete_failed]", data);
+    }
+    throw new Error(String(data.error ?? "Não foi possível excluir os posts. Tente novamente."));
+  }
+
+  if ((data.deleted ?? 0) === 0 && (data.failed ?? 0) > 0) {
+    throw new Error("Não foi possível excluir os posts. Tente novamente.");
+  }
+
+  return data as {
+    deleted: number;
+    ignoredPublished: number;
+    failed: number;
+    ignoredNotDeletable?: number;
+    notFound?: number;
+  };
 }
 
 function fromDateTimeLocalValue(value: string) {
@@ -223,7 +284,31 @@ export function PostsManager({
     }
   }
 
-  async function runBulkAction(action: "delete" | "reschedule" | "update_caption" | "duplicate") {
+  async function runBulkDelete() {
+    if (!selectedIds.length) return;
+
+    setBulkLoading(true);
+    setBulkMessage(null);
+
+    try {
+      const data = await bulkDeletePosts(selectedIds);
+      setBulkDialog(null);
+      setSelectedIds([]);
+      setBulkMessage(formatBulkDeleteMessage(data));
+      router.refresh();
+      if (isBulkDeleteDebugEnabled()) {
+        console.info("[bulk_delete_refetch_done]");
+      }
+    } catch (error) {
+      setBulkMessage(
+        error instanceof Error ? error.message : "Não foi possível excluir os posts. Tente novamente.",
+      );
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function runBulkAction(action: "reschedule" | "update_caption" | "duplicate") {
     if (!selectedIds.length) return;
 
     setBulkLoading(true);
@@ -404,7 +489,7 @@ export function PostsManager({
                 type="button"
                 className="rounded-lg bg-ig-danger px-4 py-2 text-sm font-medium text-white"
                 disabled={bulkLoading}
-                onClick={() => runBulkAction("delete")}
+                onClick={() => void runBulkDelete()}
               >
                 {bulkLoading ? "Excluindo..." : "Excluir definitivamente"}
               </button>

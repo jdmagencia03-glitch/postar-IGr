@@ -52,6 +52,13 @@ export type ScheduleJobConfig = {
       slot: string;
       slotSource: "warmup_fixed";
     }>;
+    planningMeta?: {
+      existingValidPostsToday: number;
+      remainingSlotsToday: number;
+      warmupStartDate: string;
+      effectiveFirstScheduledDate: string | null;
+      timezone: string;
+    } | null;
   };
 };
 

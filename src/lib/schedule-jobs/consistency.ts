@@ -41,6 +41,9 @@ export type JobDiagnosticsEnrichment = {
   timezone?: string | null;
   nowUsedForPlanning?: string | null;
   warmupStartDate?: string | null;
+  existingValidPostsToday?: number | null;
+  remainingSlotsToday?: number | null;
+  effectiveFirstScheduledDate?: string | null;
   plannedPosts: Array<{
     dayIndex: number;
     scheduledAt: string;
@@ -461,6 +464,18 @@ export async function buildJobDiagnosticsEnrichment(
       warmupDiagnostics?.nowUsedForPlanning ?? schedulePlan?.nowUsedForPlanning ?? null,
     warmupStartDate:
       warmupDiagnostics?.warmupStartDate ?? schedulePlan?.warmupStartDate ?? null,
+    existingValidPostsToday:
+      warmupDiagnostics?.existingValidPostsToday ??
+      schedulePlan?.planningMeta?.existingValidPostsToday ??
+      null,
+    remainingSlotsToday:
+      warmupDiagnostics?.remainingSlotsToday ??
+      schedulePlan?.planningMeta?.remainingSlotsToday ??
+      null,
+    effectiveFirstScheduledDate:
+      warmupDiagnostics?.effectiveFirstScheduledDate ??
+      schedulePlan?.planningMeta?.effectiveFirstScheduledDate ??
+      null,
     plannedPosts: warmupDiagnostics?.plannedPosts ?? plannedPosts,
     invalidSlots: warmupDiagnostics?.invalidSlots ?? [],
     createdPosts,
