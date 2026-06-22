@@ -369,6 +369,15 @@ export type WarmupPlanningMeta = {
   warmupStartDate: string;
   effectiveFirstScheduledDate: string | null;
   timezone: typeof APP_TIMEZONE;
+  existingValidPostsByDate?: Array<{
+    date: string;
+    validCount: number;
+    cancelledCount: number;
+    limit: number;
+    remaining: number;
+  }>;
+  ignoredStatusesByDate?: Record<string, { cancelled?: number; failed_persistent?: number; needs_media?: number }>;
+  reasonFirstDateSkipped?: string | null;
 };
 
 /** Limite de posts por dia da rampa (1 = Dia 1). */
@@ -618,10 +627,20 @@ export function buildWarmupSchedulePlan(params: {
 
   const startDayKey = calendar.warmupStartDate;
   const existingOnStartDay = existingByDate[startDayKey] ?? existingByDate[todayKey] ?? 0;
-  const remainingSlotsToday = Math.max(
-    0,
-    getWarmupDailyPostLimit(1) - (existingByDate[todayKey] ?? existingOnStartDay),
-  );
+  const existingValidPostsToday = existingByDate[todayKey] ?? existingOnStartDay;
+  const remainingSlotsToday = Math.max(0, getWarmupDailyPostLimit(1) - existingValidPostsToday);
+
+  const effectiveFirstScheduledDate = schedule[0] ? warmupDateKey(schedule[0]) : null;
+  let reasonFirstDateSkipped: string | null = null;
+  if (effectiveFirstScheduledDate && effectiveFirstScheduledDate > todayKey) {
+    if (remainingSlotsToday === 0) {
+      reasonFirstDateSkipped = "current_day_full";
+    } else if (skippedPastSlots.length > 0) {
+      reasonFirstDateSkipped = "past_slots_exhausted";
+    } else {
+      reasonFirstDateSkipped = "capacity_on_prior_days";
+    }
+  }
 
   return {
     schedule,
@@ -629,11 +648,12 @@ export function buildWarmupSchedulePlan(params: {
     plannedPosts: buildPlannedPostsFromSchedule(schedule),
     warnings,
     planningMeta: {
-      existingValidPostsToday: existingByDate[todayKey] ?? existingOnStartDay,
+      existingValidPostsToday,
       remainingSlotsToday,
       warmupStartDate: startDayKey,
-      effectiveFirstScheduledDate: schedule[0] ? warmupDateKey(schedule[0]) : null,
+      effectiveFirstScheduledDate,
       timezone: APP_TIMEZONE,
+      reasonFirstDateSkipped,
     },
   };
 }

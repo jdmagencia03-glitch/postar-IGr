@@ -58,6 +58,15 @@ export type ScheduleJobConfig = {
       warmupStartDate: string;
       effectiveFirstScheduledDate: string | null;
       timezone: string;
+      existingValidPostsByDate?: Array<{
+        date: string;
+        validCount: number;
+        cancelledCount: number;
+        limit: number;
+        remaining: number;
+      }>;
+      ignoredStatusesByDate?: Record<string, { cancelled?: number; failed_persistent?: number; needs_media?: number }>;
+      reasonFirstDateSkipped?: string | null;
     } | null;
   };
 };

@@ -88,4 +88,31 @@ assertPlan("Teste 6 — 22/06 22:00 · 4 vídeos", june22_2200, 4, [
   "2026-06-24 08:00",
 ]);
 
+const june22_1627 = zonedDateTimeToUtc(2026, 6, 22, 16, 27);
+const day23 = "2026-06-23";
+
+assertPlan(
+  "Teste 7 — 22/06 16:27 · 3 válidos hoje · início 23/06",
+  june22_1627,
+  4,
+  ["2026-06-23 08:30", "2026-06-23 14:30", "2026-06-23 21:00", "2026-06-24 08:00"],
+  { [day22]: 3 },
+);
+
+assertPlan(
+  "Teste 8 — 22/06 16:27 · 2 válidos hoje · slot 21:00 hoje",
+  june22_1627,
+  4,
+  ["2026-06-22 21:00", "2026-06-23 08:30", "2026-06-23 14:30", "2026-06-23 21:00"],
+  { [day22]: 2 },
+);
+
+assertPlan(
+  "Teste 9 — cancelados não ocupam (0 válidos mesmo com chave ausente)",
+  june22_1627,
+  3,
+  ["2026-06-22 21:00", "2026-06-23 08:30", "2026-06-23 14:30"],
+  {},
+);
+
 console.log(process.exitCode === 1 ? "\nFalhou." : "\nTodos os testes passaram.");

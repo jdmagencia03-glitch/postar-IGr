@@ -2,12 +2,22 @@ import {
   buildWarmupDiagnosticsPlannedPosts,
   buildWarmupSchedulePlan,
   detectInvalidWarmupSlots,
+  getWarmupDailyPostLimit,
   resolveWarmupScheduleContext,
   type WarmupDiagnosticsPlannedPost,
   type WarmupInvalidSlotReport,
+  type WarmupPlanningMeta,
 } from "@/lib/account-warmup";
+import {
+  buildExistingValidPostsByLocalDate,
+  buildWarmupCapacityDiagnostics,
+  enumerateLocalDatesFromAnchor,
+  type WarmupCapacityDaySnapshot,
+} from "@/lib/posts/warmup-capacity";
 import { APP_TIMEZONE } from "@/lib/timezone";
+import type { ContentType, SocialPlatform } from "@/lib/types";
 import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type WarmupJobDiagnostics = {
   scheduleMode: "warmup";
@@ -17,6 +27,15 @@ export type WarmupJobDiagnostics = {
   existingValidPostsToday?: number;
   remainingSlotsToday?: number;
   effectiveFirstScheduledDate?: string | null;
+  reasonFirstDateSkipped?: string | null;
+  existingValidPostsByDate?: Array<{
+    date: string;
+    validCount: number;
+    cancelledCount: number;
+    limit: number;
+    remaining: number;
+  }>;
+  ignoredStatusesByDate?: Record<string, { cancelled?: number; failed_persistent?: number; needs_media?: number }>;
   plannedPosts: WarmupDiagnosticsPlannedPost[];
   invalidSlots: WarmupInvalidSlotReport[];
   createdPosts: Array<{ id: string; scheduledAt: string; status: string }>;
@@ -72,14 +91,19 @@ export function buildWarmupJobDiagnostics(params: {
       list.findIndex((entry) => entry.scheduledAt === slot.scheduledAt) === index,
   );
 
+  const planningMeta = schedulePlan?.planningMeta;
+
   return {
     scheduleMode: "warmup",
     timezone: schedulePlan?.timezone ?? APP_TIMEZONE,
     warmupStartDate,
     nowUsedForPlanning: schedulePlan?.nowUsedForPlanning ?? now.toISOString(),
-    existingValidPostsToday: schedulePlan?.planningMeta?.existingValidPostsToday,
-    remainingSlotsToday: schedulePlan?.planningMeta?.remainingSlotsToday,
-    effectiveFirstScheduledDate: schedulePlan?.planningMeta?.effectiveFirstScheduledDate ?? null,
+    existingValidPostsToday: planningMeta?.existingValidPostsToday,
+    remainingSlotsToday: planningMeta?.remainingSlotsToday,
+    effectiveFirstScheduledDate: planningMeta?.effectiveFirstScheduledDate ?? null,
+    reasonFirstDateSkipped: planningMeta?.reasonFirstDateSkipped ?? null,
+    existingValidPostsByDate: planningMeta?.existingValidPostsByDate,
+    ignoredStatusesByDate: planningMeta?.ignoredStatusesByDate,
     plannedPosts,
     invalidSlots,
     createdPosts: params.createdPosts,
@@ -93,25 +117,60 @@ export type WarmupRecalculateResult = {
   updated: number;
   before: Array<{ postId: string; scheduledAt: string }>;
   after: Array<{ postId: string; scheduledAt: string }>;
+  planningMeta: WarmupPlanningMeta | null;
 };
 
-export function buildWarmupRecalculatePlan(params: {
+export async function buildWarmupRecalculatePlan(params: {
+  supabase: SupabaseClient;
+  accountId: string;
+  platform: SocialPlatform;
+  contentType?: ContentType;
   pendingCount: number;
-  strategy: "continue" | "new_plan" | "fill_gaps";
-  anchorStartDate?: Date;
+  excludePostIds?: string[];
   now?: Date;
 }) {
   const now = params.now ?? new Date();
   const context = resolveWarmupScheduleContext({
-    strategy: params.strategy,
-    anchorStartDate: params.anchorStartDate,
+    strategy: "new_plan",
     now,
+  });
+  const planningDays = Math.max(params.pendingCount * 2, 60);
+  const planningDates = enumerateLocalDatesFromAnchor(context.warmupStartDate, planningDays);
+  const existingValidPostsByLocalDate = await buildExistingValidPostsByLocalDate(params.supabase, {
+    accountId: params.accountId,
+    platform: params.platform,
+    contentType: params.contentType,
+    localDates: planningDates,
+    excludePostIds: params.excludePostIds,
+  });
+  const capacityDiagnostics = await buildWarmupCapacityDiagnostics(params.supabase, {
+    accountId: params.accountId,
+    platform: params.platform,
+    contentType: params.contentType,
+    localDates: planningDates.slice(0, 14),
+    warmupStartDate: context.warmupStartDate,
+    dailyLimitForRampDay: getWarmupDailyPostLimit,
+    excludePostIds: params.excludePostIds,
   });
   const plan = buildWarmupSchedulePlan({
     count: params.pendingCount,
     warmupDayOffset: context.warmupDayOffset,
     firstScheduledAt: context.firstScheduledAt,
     now,
+    existingValidPostsByLocalDate,
   });
-  return { context, plan };
+  const planningMeta = plan.planningMeta
+    ? {
+        ...plan.planningMeta,
+        existingValidPostsByDate: capacityDiagnostics.existingValidPostsByDate.map((entry) => ({
+          date: entry.date,
+          validCount: entry.validCount,
+          cancelledCount: entry.cancelledCount,
+          limit: entry.limit,
+          remaining: entry.remaining,
+        })),
+        ignoredStatusesByDate: capacityDiagnostics.ignoredStatusesByDate,
+      }
+    : null;
+  return { context, plan, planningMeta };
 }

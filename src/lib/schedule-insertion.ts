@@ -4,6 +4,7 @@ import {
   WARMUP_RAMP_POSTS,
   buildWarmupRamp,
   generateWarmupScheduleSliceWithPlan,
+  getWarmupDailyPostLimit,
   groupWarmupScheduleByDay,
   resolveWarmupScheduleContext,
   warmupDateKey,
@@ -11,7 +12,7 @@ import {
   type WarmupPlanningMeta,
   type WarmupSkippedSlot,
 } from "@/lib/account-warmup";
-import { buildExistingValidPostsByLocalDate } from "@/lib/posts/warmup-capacity";
+import { buildExistingValidPostsByLocalDate, buildWarmupCapacityDiagnostics, enumerateLocalDatesFromAnchor } from "@/lib/posts/warmup-capacity";
 import { buildWarmupScheduleSummary } from "@/lib/schedule-plan";
 import type { ContentType, SocialPlatform } from "@/lib/types";
 import { APP_TIMEZONE, getAppDateParts, atHourOnDayOffsetInAppTz, zonedDateTimeToUtc } from "@/lib/timezone";
@@ -168,6 +169,9 @@ export function resolveDefaultInsertionStrategy(params: {
   if (params.batchScheduledCount > 0) {
     return "continue";
   }
+  if (params.mode === "warmup") {
+    return "new_plan";
+  }
   if (params.accountPendingCount > 0) {
     return "continue";
   }
@@ -210,6 +214,10 @@ function computePlanContext(params: {
   }
 
   if (params.strategy === "continue") {
+    if (params.mode === "warmup" && batchScheduled === 0) {
+      return { planSlotOffset: 0, anchorStartDate: undefined as Date | undefined, continuing: false };
+    }
+
     const planSlotOffset =
       batchScheduled > 0
         ? batchScheduled
@@ -290,16 +298,28 @@ async function buildWarmupOrAutoNewSchedule(params: {
       anchorStartDate: params.anchorStartDate,
       now: params.now,
     });
-    const todayKey = warmupDateKey(params.now);
+    const planningDays = Math.max(params.count * 2, 60);
+    const planningDates = enumerateLocalDatesFromAnchor(
+      warmupContext.warmupStartDate,
+      planningDays,
+    );
     const existingValidPostsByLocalDate = await buildExistingValidPostsByLocalDate(
       params.supabase,
       {
         accountId: params.accountId,
         platform: params.platform,
         contentType: params.contentType,
-        localDates: [todayKey, warmupContext.warmupStartDate],
+        localDates: planningDates,
       },
     );
+    const capacityDiagnostics = await buildWarmupCapacityDiagnostics(params.supabase, {
+      accountId: params.accountId,
+      platform: params.platform,
+      contentType: params.contentType,
+      localDates: planningDates.slice(0, 14),
+      warmupStartDate: warmupContext.warmupStartDate,
+      dailyLimitForRampDay: getWarmupDailyPostLimit,
+    });
     const plan = generateWarmupScheduleSliceWithPlan({
       count: params.count,
       planSlotOffset: params.planSlotOffset,
@@ -310,12 +330,25 @@ async function buildWarmupOrAutoNewSchedule(params: {
       warnings: params.warmupWarnings,
       existingValidPostsByLocalDate,
     });
+    const warmupPlanningMeta = plan.planningMeta
+      ? {
+          ...plan.planningMeta,
+          existingValidPostsByDate: capacityDiagnostics.existingValidPostsByDate.map((entry) => ({
+            date: entry.date,
+            validCount: entry.validCount,
+            cancelledCount: entry.cancelledCount,
+            limit: entry.limit,
+            remaining: entry.remaining,
+          })),
+          ignoredStatusesByDate: capacityDiagnostics.ignoredStatusesByDate,
+        }
+      : undefined;
     return {
       schedule: plan.schedule,
       skippedPastSlots: plan.skippedPastSlots,
       plannedPosts: plan.plannedPosts,
       warmupStartDate: warmupContext.warmupStartDate,
-      warmupPlanningMeta: plan.planningMeta,
+      warmupPlanningMeta,
       scheduleSummary: buildWarmupScheduleSummary({
         schedule: plan.schedule,
         count: plan.schedule.length,

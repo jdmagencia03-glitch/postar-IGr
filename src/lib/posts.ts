@@ -275,6 +275,9 @@ export async function getOwnerScheduledPosts(
 
 export type CalendarMonthView = "active" | "all" | "pending" | "published" | "cancelled";
 
+const CALENDAR_PENDING_STATUSES = ["pending", "processing", "retrying", "failed"] as const;
+const CALENDAR_ALL_STATUSES = [...CALENDAR_PENDING_STATUSES, "published"] as const;
+
 const CALENDAR_CANCELLED_LIMIT = 800;
 const CALENDAR_MONTH_LIMIT = 3000;
 
@@ -356,7 +359,9 @@ export async function getOwnerPostsForCalendarMonth(
     } else if (view === "published") {
       query = query.eq("status", "published");
     } else if (view === "active") {
-      query = query.neq("status", "cancelled");
+      query = query.in("status", [...CALENDAR_PENDING_STATUSES]);
+    } else if (view === "all") {
+      query = query.in("status", [...CALENDAR_ALL_STATUSES]);
     }
 
     const { data, error } = await query;

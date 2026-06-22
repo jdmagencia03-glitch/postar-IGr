@@ -47,6 +47,15 @@ export type JobDiagnosticsEnrichment = {
   existingValidPostsToday?: number | null;
   remainingSlotsToday?: number | null;
   effectiveFirstScheduledDate?: string | null;
+  reasonFirstDateSkipped?: string | null;
+  existingValidPostsByDate?: Array<{
+    date: string;
+    validCount: number;
+    cancelledCount: number;
+    limit: number;
+    remaining: number;
+  }>;
+  ignoredStatusesByDate?: Record<string, { cancelled?: number; failed_persistent?: number; needs_media?: number }>;
   plannedPosts: Array<{
     dayIndex: number;
     scheduledAt: string;
@@ -498,6 +507,18 @@ export async function buildJobDiagnosticsEnrichment(
       warmupDiagnostics?.effectiveFirstScheduledDate ??
       schedulePlan?.planningMeta?.effectiveFirstScheduledDate ??
       null,
+    reasonFirstDateSkipped:
+      warmupDiagnostics?.reasonFirstDateSkipped ??
+      schedulePlan?.planningMeta?.reasonFirstDateSkipped ??
+      null,
+    existingValidPostsByDate:
+      warmupDiagnostics?.existingValidPostsByDate ??
+      schedulePlan?.planningMeta?.existingValidPostsByDate ??
+      undefined,
+    ignoredStatusesByDate:
+      warmupDiagnostics?.ignoredStatusesByDate ??
+      schedulePlan?.planningMeta?.ignoredStatusesByDate ??
+      undefined,
     plannedPosts: warmupDiagnostics?.plannedPosts ?? plannedPosts,
     invalidSlots: warmupDiagnostics?.invalidSlots ?? [],
     createdPosts,

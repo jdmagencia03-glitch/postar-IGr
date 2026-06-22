@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { contentTypeForPlatform } from "@/lib/content-types";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import type { ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { SocialPlatform } from "@/lib/types";
 import { buildWarmupRecalculatePlan } from "@/lib/warmup-diagnostics";
 
 export const dynamic = "force-dynamic";
@@ -25,10 +27,20 @@ export async function POST(
   if (job.schedule_mode !== "warmup") {
     return NextResponse.json({ error: "job_not_warmup" }, { status: 400 });
   }
+  if (!job.upload_batch_id) {
+    return NextResponse.json({ error: "job_missing_batch" }, { status: 400 });
+  }
+
+  const platform = (job.platform === "tiktok" ? "tiktok" : "instagram") as SocialPlatform;
+  const accountId =
+    platform === "tiktok" ? job.tiktok_account_id : job.account_id;
+  if (!accountId) {
+    return NextResponse.json({ error: "job_missing_account" }, { status: 400 });
+  }
 
   const { data: posts, error: postsError } = await supabase
     .from("scheduled_posts")
-    .select("id, scheduled_at, status, upload_file_id")
+    .select("id, scheduled_at, status")
     .eq("upload_batch_id", job.upload_batch_id)
     .in("status", ACTIVE_POST_STATUSES)
     .order("scheduled_at", { ascending: true });
@@ -50,16 +62,16 @@ export async function POST(
 
   const jobItems = (items ?? []) as ScheduleJobItemRow[];
   const now = new Date();
-  const strategy = job.config?.schedule_strategy ?? "new_plan";
-  const anchorStartDate =
-    strategy === "continue" && pendingPosts[0]?.scheduled_at
-      ? new Date(pendingPosts[0].scheduled_at as string)
-      : undefined;
+  const excludePostIds = pendingPosts.map((post) => post.id as string);
+  const contentType = contentTypeForPlatform(platform);
 
-  const { context: warmupContext, plan } = buildWarmupRecalculatePlan({
+  const { context: warmupContext, plan, planningMeta } = await buildWarmupRecalculatePlan({
+    supabase,
+    accountId,
+    platform,
+    contentType,
     pendingCount: pendingPosts.length,
-    strategy,
-    anchorStartDate,
+    excludePostIds,
     now,
   });
 
@@ -111,8 +123,10 @@ export async function POST(
         schedule_plan: {
           ...job.config?.schedule_plan,
           warmupStartDate: warmupContext.warmupStartDate,
+          nowUsedForPlanning: now.toISOString(),
           plannedPosts: plan.plannedPosts,
           skippedPastSlots: plan.skippedPastSlots,
+          planningMeta,
         },
       },
       updated_at: now.toISOString(),
@@ -123,6 +137,7 @@ export async function POST(
     ok: true,
     warmupStartDate: warmupContext.warmupStartDate,
     updated: pendingPosts.length,
+    planningMeta,
     before,
     after,
   });

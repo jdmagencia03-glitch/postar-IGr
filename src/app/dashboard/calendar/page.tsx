@@ -98,7 +98,7 @@ export default async function CalendarPage({
   const viewMonth = parseMonthParam(params.month);
   const monthKey = format(viewMonth, "yyyy-MM");
 
-  const [{ posts: monthPosts, truncated }, { posts: activeMonthPosts }] = await Promise.all([
+  const [{ posts: monthPosts, truncated }, { posts: cancelledMonthPosts }] = await Promise.all([
     getOwnerPostsForCalendarMonth(supabase, ownerId, {
       month: monthKey,
       platform: platformFilter,
@@ -110,14 +110,15 @@ export default async function CalendarPage({
           month: monthKey,
           platform: platformFilter,
           accountId: selectedAccountId,
-          view: "all",
+          view: "cancelled",
         })
       : Promise.resolve({ posts: [] as ScheduledPost[], truncated: false }),
   ]);
 
   const visiblePosts = monthPosts;
   const postsByDay = indexPostsByLocalDate(visiblePosts);
-  const allPostsByDay = calendarView === "active" ? indexPostsByLocalDate(activeMonthPosts) : postsByDay;
+  const cancelledPostsByDay =
+    calendarView === "active" ? indexPostsByLocalDate(cancelledMonthPosts) : postsByDay;
 
   const now = new Date();
   const prevMonth = subMonths(viewMonth, 1);
@@ -189,11 +190,9 @@ export default async function CalendarPage({
         {days.map((day) => {
           const dayKey = warmupDateKey(day);
           const dayPosts = postsByDay.get(dayKey) ?? [];
-          const allDayPosts = allPostsByDay.get(dayKey) ?? [];
+          const cancelledDayPosts = cancelledPostsByDay.get(dayKey) ?? [];
           const cancelledCount =
-            calendarView === "active"
-              ? allDayPosts.filter((post) => post.status === "cancelled").length
-              : 0;
+            calendarView === "active" ? cancelledDayPosts.length : 0;
           const isPastDay = isBefore(startOfDay(day), startOfDay(now));
           const hasPublished = dayPosts.some((post) => post.status === "published");
           const isPublishedDay = isPastDay && hasPublished;
