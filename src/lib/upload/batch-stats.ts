@@ -2,6 +2,12 @@ import type { UploadBatch, UploadBatchFile } from "@/lib/types";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
 import { buildSpeedDisplay } from "@/lib/upload/adaptive";
 import { getFileDisplayPercent } from "@/lib/upload/batch-status";
+import { isUploadDebugEnabled } from "@/lib/upload/debug";
+import {
+  applyMonotonicBatchProgress,
+  resetProgressGuardForBatch,
+  validateBatchProgressEvent,
+} from "@/lib/upload/progress-guard";
 import { formatBytes } from "@/lib/upload/validate";
 
 export type UploadFileStatusCounts = {
@@ -45,9 +51,6 @@ export type UploadBatchStats = {
   hasActiveByteProgress: boolean;
   hasActiveUploads: boolean;
 };
-
-const maxProgressByBatch = new Map<string, number>();
-const maxBytesByBatch = new Map<string, number>();
 
 export function getUploadFiles(batch: UploadBatch | null) {
   return batch?.upload_files?.filter((file) => !file.removed) ?? [];
@@ -159,41 +162,27 @@ function computeProgressPercent(params: {
 }
 
 function applyMonotonicProgress(batchId: string, computedPercent: number, computedBytes: number) {
-  const prevPercent = maxProgressByBatch.get(batchId) ?? 0;
-  const prevBytes = maxBytesByBatch.get(batchId) ?? 0;
-
-  if (computedPercent < prevPercent || computedBytes < prevBytes) {
-    logUploadProgressRegression({
-      batchId,
-      previousPercent: prevPercent,
-      newPercent: computedPercent,
-      previousBytes: prevBytes,
-      newBytes: computedBytes,
-      ignored: true,
-    });
-  }
-
-  const nextPercent = Math.max(prevPercent, computedPercent);
-  const nextBytes = Math.max(prevBytes, computedBytes);
-  maxProgressByBatch.set(batchId, nextPercent);
-  maxBytesByBatch.set(batchId, nextBytes);
-  return { progressPercent: nextPercent, displayUploadedBytes: nextBytes };
+  return applyMonotonicBatchProgress(batchId, computedPercent, computedBytes, {
+    source: "getUploadBatchStats",
+  });
 }
 
 export function resetUploadBatchStatsMonotonic(batchId: string) {
-  maxProgressByBatch.delete(batchId);
-  maxBytesByBatch.delete(batchId);
+  resetProgressGuardForBatch(batchId);
 }
 
 export function logUploadStats(payload: Record<string, unknown>) {
+  if (!isUploadDebugEnabled()) return;
   console.info("[upload-stats]", payload);
 }
 
 export function logUploadProgressRegression(payload: Record<string, unknown>) {
+  if (!isUploadDebugEnabled()) return;
   console.info("[upload-progress-regression]", payload);
 }
 
 export function logUploadStatsReconcile(payload: Record<string, unknown>) {
+  if (!isUploadDebugEnabled()) return;
   console.info("[upload-stats-reconcile]", payload);
 }
 
@@ -257,7 +246,7 @@ export function getUploadBatchStats(
 
   let displayUploadedBytes = byteTotals.displayUploadedBytes;
 
-  if (monotonic && batch.id) {
+  if (monotonic && batch.id && validateBatchProgressEvent(batch.id)) {
     const monotonicResult = applyMonotonicProgress(
       batch.id,
       progressPercent,

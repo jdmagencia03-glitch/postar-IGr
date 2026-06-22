@@ -1,6 +1,7 @@
 import type { UploadBatch, UploadBatchFile, UploadBatchStatus, UploadFileStatus } from "@/lib/types";
 import type { UploadEngineProgress } from "@/lib/upload/engine";
-import { getUploadBatchStats, logUploadProgressRegression } from "@/lib/upload/batch-stats";
+import { getUploadBatchStats } from "@/lib/upload/batch-stats";
+import { applyMonotonicFilePercent } from "@/lib/upload/progress-guard";
 
 /** Status agregado do lote para polling leve. */
 export type UploadBatchRemoteAggregateStatus =
@@ -102,17 +103,12 @@ export function mergeUploadProgressPercent(
 ) {
   if (remoteStatus === "completed" || localStatus === "completed") return 100;
   const merged = Math.max(localPercent, remotePercent, 0);
-  if (remotePercent < localPercent && localPercent >= 5) {
-    logUploadProgressRegression({
-      batchId: context?.batchId,
-      fileId: context?.fileId,
-      previousPercent: localPercent,
-      newPercent: remotePercent,
-      ignored: true,
-      source: "mergeUploadProgressPercent",
-    });
+  if (!context?.batchId || !context?.fileId) {
+    return merged;
   }
-  return merged;
+  return applyMonotonicFilePercent(context.batchId, context.fileId, merged, {
+    source: "mergeUploadProgressPercent",
+  });
 }
 
 export function mergeBytesUploaded(
@@ -191,6 +187,7 @@ export function reconcileUploadBatchState(
             remoteFile.progress,
             localFile.status,
             remoteFile.status,
+            { batchId: localBatch.id, fileId: localFile.id },
           );
           const mergedBytes = mergeBytesUploaded(
             Number(localFile.bytes_uploaded ?? 0),

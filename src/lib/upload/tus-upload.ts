@@ -1,5 +1,10 @@
 import * as tus from "tus-js-client";
 import {
+  buildTusFingerprint,
+} from "@/lib/upload/progress-guard";
+
+export { buildTusFingerprint };
+import {
   STORAGE_CACHE_CONTROL,
   TUS_CHUNK_SIZE,
   UPLOAD_FILE_TIMEOUT_MS,
@@ -13,10 +18,6 @@ export interface TusPrepareResponse {
   publicUrl: string;
   contentType: string;
   chunkSize: number;
-}
-
-export function buildTusFingerprint(batchId: string, recordId: string, file: File) {
-  return `postarigr:${batchId}:${recordId}:${file.name}:${file.size}:${file.lastModified}`;
 }
 
 export function uploadFileWithTus(params: {

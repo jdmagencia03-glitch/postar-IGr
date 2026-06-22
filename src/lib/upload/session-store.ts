@@ -36,7 +36,23 @@ import {
   reconcileUploadBatchState,
 } from "@/lib/upload/batch-status";
 import { resetUploadBatchStatsMonotonic } from "@/lib/upload/batch-stats";
-import { getSpeedPresets, UPLOAD_BATCH_STALL_TIMEOUT_MS, UPLOAD_BATCH_WATCHDOG_INTERVAL_MS, UPLOAD_FILE_CONCURRENCY, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+import {
+  cleanupStaleTusEntries,
+  applyMonotonicFilePercent,
+  resetProgressGuardForBatch,
+  setActiveUploadBatchId,
+  validateBatchProgressEvent,
+  validateFileProgressEvent,
+} from "@/lib/upload/progress-guard";
+import {
+  getSpeedPresets,
+  UPLOAD_BATCH_STALL_TIMEOUT_MS,
+  UPLOAD_BATCH_WATCHDOG_INTERVAL_MS,
+  UPLOAD_FILE_CONCURRENCY,
+  UPLOAD_NEAR_COMPLETE_PERCENT,
+  UPLOAD_NEAR_COMPLETE_STALL_MS,
+  UPLOAD_STALL_TIMEOUT_MS,
+} from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
@@ -133,6 +149,82 @@ class UploadSessionStore {
   private stallRecoveryCount = 0;
   private recoveringFromStall = false;
   private batchWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private nearCompleteWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private nearCompleteSince = new Map<string, number>();
+  private stopNearCompleteWatchdog() {
+    if (this.nearCompleteWatchdogTimer) {
+      clearInterval(this.nearCompleteWatchdogTimer);
+      this.nearCompleteWatchdogTimer = null;
+    }
+    this.nearCompleteSince.clear();
+  }
+
+  private startNearCompleteWatchdog(batchId: string) {
+    this.stopNearCompleteWatchdog();
+    this.nearCompleteWatchdogTimer = setInterval(() => {
+      void this.checkNearCompleteStalledFiles(batchId);
+    }, 15_000);
+  }
+
+  private async checkNearCompleteStalledFiles(batchId: string) {
+    if (!this.batch || this.batch.id !== batchId) return;
+    if (!validateBatchProgressEvent(batchId)) return;
+
+    const now = Date.now();
+    for (const file of this.batch.upload_files ?? []) {
+      if (file.removed || file.status === "completed" || file.status === "failed") {
+        this.nearCompleteSince.delete(file.id);
+        continue;
+      }
+
+      const percent = applyMonotonicFilePercent(
+        batchId,
+        file.id,
+        this.progressMap[file.id] ?? 0,
+        { source: "near_complete_watchdog" },
+      );
+
+      if (percent < UPLOAD_NEAR_COMPLETE_PERCENT) {
+        this.nearCompleteSince.delete(file.id);
+        continue;
+      }
+
+      const since = this.nearCompleteSince.get(file.id) ?? now;
+      if (!this.nearCompleteSince.has(file.id)) {
+        this.nearCompleteSince.set(file.id, since);
+        continue;
+      }
+
+      if (now - since < UPLOAD_NEAR_COMPLETE_STALL_MS) continue;
+
+      this.setFileRuntime(file.id, {
+        status: "completed_local_pending_server_confirm",
+        message: "Aguardando confirmação do servidor…",
+      });
+      this.logUpload("near_complete_stall", { batchId, fileId: file.id, percent });
+      await this.reconcileAndMaybeContinue(file.id, "near_complete_stall");
+      this.nearCompleteSince.delete(file.id);
+    }
+  }
+
+  private teardownUploadSessionTimers() {
+    this.stopStallWatchdog();
+    this.stopBatchWatchdog();
+    this.stopAdaptiveMonitor();
+    this.stopNearCompleteWatchdog();
+    this.stopRetryCountdown();
+    this.stopPolling();
+    if (this.autoRecoveryTimer) {
+      clearTimeout(this.autoRecoveryTimer);
+      this.autoRecoveryTimer = null;
+    }
+    this.autoRecoveryScheduled = false;
+    for (const timer of this.claimConflictTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.claimConflictTimers.clear();
+  }
+
   private workerId: string | null = null;
   private serverReconcileTick = 0;
   private recentRetryTimestamps: number[] = [];
@@ -1225,7 +1317,10 @@ class UploadSessionStore {
 
   private syncBatch(next: UploadBatch | null) {
     if (next) {
+      setActiveUploadBatchId(next.id);
       this.touchBatchAdvanceFromBatch(next);
+    } else {
+      setActiveUploadBatchId(null);
     }
     this.batch = next;
     for (const listener of this.batchListeners) listener(next);
@@ -1250,6 +1345,9 @@ class UploadSessionStore {
   }
 
   private scheduleProgressUpdate = (next: UploadEngineProgress) => {
+    if (!validateBatchProgressEvent(next.batchId ?? this.batch?.id)) {
+      return;
+    }
     this.pendingProgress = next;
     this.touchBatchAdvance(next.completed, next.failed);
     if (next.bytesUploaded > this.lastProgressBytes) {
@@ -1604,6 +1702,7 @@ class UploadSessionStore {
       const engine = new UploadEngine(this.getEffectiveFileConcurrency(), {
         onProgress: this.scheduleProgressUpdate,
         onBatchUpdate: (next) => {
+          if (!validateBatchProgressEvent(next.id)) return;
           if (this.cancelledBatchIds.has(next.id)) return;
           this.batch = next;
           for (const listener of this.batchListeners) listener(next);
@@ -1611,10 +1710,13 @@ class UploadSessionStore {
           this.ensurePolling();
         },
         onFileProgress: (fileId, loaded, total) => {
+          if (!validateFileProgressEvent(batchId, fileId)) return;
           const percent = Math.round((loaded / total) * 100);
           this.touchProgress();
           const prev = this.progressMap[fileId] ?? 0;
-          const next = Math.max(prev, percent);
+          const next = applyMonotonicFilePercent(batchId, fileId, Math.max(prev, percent), {
+            source: "onFileProgress",
+          });
           if (next !== prev) {
             this.progressMap = { ...this.progressMap, [fileId]: next };
             this.emit();
@@ -1704,6 +1806,11 @@ class UploadSessionStore {
       this.startStallWatchdog();
       this.startBatchWatchdog();
       this.startAdaptiveMonitor();
+      this.startNearCompleteWatchdog(batchId);
+      cleanupStaleTusEntries({ keepBatchId: batchId, maxAgeHours: 24 });
+      setActiveUploadBatchId(batchId);
+      resetProgressGuardForBatch(batchId);
+      resetUploadBatchStatsMonotonic(batchId);
 
       await engine.run({
         batch: currentBatch,
@@ -1720,6 +1827,7 @@ class UploadSessionStore {
     } finally {
       this.stopStallWatchdog();
       this.stopAdaptiveMonitor();
+      this.stopNearCompleteWatchdog();
       this.running = false;
       this.engineStarting = false;
       this.autoRecoveryInProgress.delete(batchId);
@@ -1814,6 +1922,7 @@ class UploadSessionStore {
           uploadSpeedMode: this.speedMode,
           files: toUpload,
         });
+        cleanupStaleTusEntries({ keepBatchId: currentBatch.id, maxAgeHours: 24 });
         this.syncBatch(currentBatch);
 
         await saveManifestEntries(
@@ -2011,6 +2120,7 @@ class UploadSessionStore {
   async reconcileActiveBatch(source: "foreground" | "polling" = "polling") {
     if (this.reconcilePolling) return;
     if (!this.batch) return;
+    if (!validateBatchProgressEvent(this.batch.id)) return;
     if (this.batch.status === "ready" || this.batch.status === "cancelled") {
       this.stopPolling();
       return;
@@ -2070,7 +2180,13 @@ class UploadSessionStore {
         this.stopAdaptiveMonitor();
         const mergedProgressMap = { ...reconciled.progressMap };
         for (const [fileId, localPercent] of Object.entries(this.progressMap)) {
-          mergedProgressMap[fileId] = Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0);
+          if (!validateFileProgressEvent(this.batch?.id, fileId)) continue;
+          mergedProgressMap[fileId] = applyMonotonicFilePercent(
+            this.batch!.id,
+            fileId,
+            Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0),
+            { source: "reconcile_merge" },
+          );
         }
         this.progressMap = mergedProgressMap;
         this.syncBatch(reconciled.batch);
@@ -2129,7 +2245,13 @@ class UploadSessionStore {
       if (!batchFinished && stateChanged) {
         const mergedProgressMap = { ...reconciled.progressMap };
         for (const [fileId, localPercent] of Object.entries(this.progressMap)) {
-          mergedProgressMap[fileId] = Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0);
+          if (!validateFileProgressEvent(this.batch?.id, fileId)) continue;
+          mergedProgressMap[fileId] = applyMonotonicFilePercent(
+            this.batch!.id,
+            fileId,
+            Math.max(localPercent ?? 0, mergedProgressMap[fileId] ?? 0),
+            { source: "reconcile_merge" },
+          );
         }
         this.progressMap = mergedProgressMap;
         this.syncBatch(reconciled.batch);
@@ -2268,11 +2390,14 @@ class UploadSessionStore {
 
   /** Limpa a sessão local para um novo lote, mantendo conta/plataforma. */
   startNewBatch() {
-    this.engine?.stop();
     const previousBatchId = this.batch?.id;
     if (previousBatchId) {
+      this.cancelledBatchIds.add(previousBatchId);
       resetUploadBatchStatsMonotonic(previousBatchId);
+      resetProgressGuardForBatch(previousBatchId);
     }
+    this.engine?.abortAll();
+    this.teardownUploadSessionTimers();
     this.engine = null;
     this.lastFileMap = new Map();
     this.batch = null;
@@ -2287,9 +2412,8 @@ class UploadSessionStore {
     this.batchHealthMessage = null;
     this.fileRuntime = {};
     this.autoRetryPass = 0;
-    this.stopRetryCountdown();
-    this.stopPolling();
-    this.stopAdaptiveMonitor();
+    cleanupStaleTusEntries({ keepBatchId: null, maxAgeHours: 24 });
+    setActiveUploadBatchId(null);
     for (const listener of this.batchListeners) listener(null);
     this.emit();
   }

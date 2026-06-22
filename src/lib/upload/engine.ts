@@ -9,6 +9,7 @@ import {
 type UploadOutcome = "done" | "requeue" | "stopped" | "claim_wait" | "local_completed_pending";
 
 export interface UploadEngineProgress {
+  batchId?: string;
   completed: number;
   failed: number;
   uploading: number;
@@ -230,6 +231,7 @@ export class UploadEngine {
     const hasByteProgress = Date.now() - this.lastProgressByteAt < 45_000;
 
     this.callbacks.onProgress?.({
+      batchId: batch.id,
       completed,
       failed,
       uploading,
@@ -327,14 +329,17 @@ export class UploadEngine {
           workerId: runWorkerId,
           signal: controller.signal,
           onProgress: (loaded, total) => {
+            const prevLoaded = this.liveLoadedBytes.get(currentRecord.id) ?? 0;
+            const safeLoaded = Math.max(prevLoaded, loaded);
+            const percent = Math.round((safeLoaded / total) * 100);
             fileProgress.set(currentRecord.id, {
-              percent: Math.round((loaded / total) * 100),
+              percent,
               filename: currentRecord.filename,
             });
 
-            this.liveLoadedBytes.set(currentRecord.id, loaded);
+            this.liveLoadedBytes.set(currentRecord.id, safeLoaded);
             this.updateSpeed(this.sumPersistedAndLiveBytes(batch));
-            this.callbacks.onFileProgress?.(currentRecord.id, loaded, total);
+            this.callbacks.onFileProgress?.(currentRecord.id, safeLoaded, total);
             this.emitProgress(batch, fileProgress);
           },
           onRetryScheduled: (detail) => {

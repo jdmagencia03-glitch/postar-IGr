@@ -6,10 +6,18 @@ import {
   inspectUploadFileClaim,
   UPLOAD_FILE_LEASE_MS,
 } from "@/lib/upload/queue";
-import { UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+import { UPLOAD_NEAR_COMPLETE_PERCENT, UPLOAD_STALL_TIMEOUT_MS } from "@/lib/upload/storage-config";
+
+export type UploadFileDiagnosticAction =
+  | "mark_completed"
+  | "retry_reconcile"
+  | "retry_upload"
+  | "ignore_stale_event"
+  | "wait";
 
 export type UploadBatchDiagnostics = {
   ok: true;
+  batchId: string;
   batch: {
     id: string;
     status: string;
@@ -20,20 +28,30 @@ export type UploadBatchDiagnostics = {
     pending: number;
   };
   files: Array<{
-    id: string;
-    fileName: string;
+    fileId: string;
     status: string;
     progress: number;
+    bytesUploaded: number;
+    totalBytes: number;
+    tusCompleted: boolean;
+    storageExists: boolean;
+    dbStatus: string;
     updatedAt: string | null;
     lastError: string | null;
     retryCount: number;
     isStale: boolean;
     canRelease: boolean;
+    recommendedAction: UploadFileDiagnosticAction;
     mediaAssetId: string | null;
     storagePath: string | null;
     workerId: string | null;
     leaseUntil: string | null;
   }>;
+  stalledFiles: string[];
+  staleTusEntries: number;
+  progressRegressionsIgnored: number;
+  staleBatchEventsIgnored: number;
+  missingBatchOrFileEventsIgnored: number;
   recommendedAction: "wait" | "resume" | "release_stalled_file" | "already_completed";
 };
 
@@ -62,6 +80,43 @@ function canReleaseFile(file: UploadBatchFile, now = Date.now()) {
   );
 }
 
+function recommendFileAction(
+  file: UploadBatchFile,
+  progress: number,
+  storageExists: boolean,
+): UploadFileDiagnosticAction {
+  if (file.status === "completed") return "ignore_stale_event";
+  if (storageExists && file.public_url && progress >= UPLOAD_NEAR_COMPLETE_PERCENT) {
+    return "mark_completed";
+  }
+  if (file.status === "failed") return "retry_upload";
+  if (isFileStale(file) || (progress >= UPLOAD_NEAR_COMPLETE_PERCENT && file.status === "uploading")) {
+    return "retry_reconcile";
+  }
+  if (file.status === "uploading" || file.status === "retrying" || file.status === "stalled") {
+    return "retry_reconcile";
+  }
+  return "wait";
+}
+
+async function storageObjectExists(
+  supabase: SupabaseClient,
+  file: UploadBatchFile,
+): Promise<boolean> {
+  if (file.public_url) return true;
+  if (!file.storage_path) return false;
+  try {
+    const { data, error } = await supabase.storage.from("media").list(
+      file.storage_path.split("/").slice(0, -1).join("/") || "",
+      { search: file.storage_path.split("/").pop() },
+    );
+    if (error) return false;
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return Boolean(file.storage_path);
+  }
+}
+
 export async function buildUploadBatchDiagnostics(
   supabase: SupabaseClient,
   ownerId: string,
@@ -83,21 +138,42 @@ export async function buildUploadBatchDiagnostics(
   const active = ((files ?? []) as UploadBatchFile[]).filter((f) => !f.removed);
   const filtered = fileId ? active.filter((f) => f.id === fileId) : active;
 
-  const fileRows = filtered.map((file) => ({
-    id: file.id,
-    fileName: file.filename,
-    status: file.status,
-    progress: fileProgress(file),
-    updatedAt: file.updated_at ?? null,
-    lastError: file.error_message ?? null,
-    retryCount: file.retry_count ?? 0,
-    isStale: isFileStale(file, now),
-    canRelease: canReleaseFile(file, now),
-    mediaAssetId: (file as UploadBatchFile & { media_asset_id?: string }).media_asset_id ?? null,
-    storagePath: file.storage_path ?? null,
-    workerId: file.worker_id ?? null,
-    leaseUntil: file.lease_until ?? null,
-  }));
+  const fileRows = await Promise.all(
+    filtered.map(async (file) => {
+      const progress = fileProgress(file);
+      const totalBytes = Number(file.file_size) || 0;
+      const bytesUploaded = Number(file.bytes_uploaded ?? 0);
+      const storageExists = await storageObjectExists(supabase, file);
+      const tusCompleted =
+        progress >= UPLOAD_NEAR_COMPLETE_PERCENT ||
+        bytesUploaded >= totalBytes * 0.96;
+
+      return {
+        fileId: file.id,
+        status: file.status,
+        progress,
+        bytesUploaded,
+        totalBytes,
+        tusCompleted,
+        storageExists,
+        dbStatus: file.status,
+        updatedAt: file.updated_at ?? null,
+        lastError: file.error_message ?? null,
+        retryCount: file.retry_count ?? 0,
+        isStale: isFileStale(file, now),
+        canRelease: canReleaseFile(file, now),
+        recommendedAction: recommendFileAction(file, progress, storageExists),
+        mediaAssetId: (file as UploadBatchFile & { media_asset_id?: string }).media_asset_id ?? null,
+        storagePath: file.storage_path ?? null,
+        workerId: file.worker_id ?? null,
+        leaseUntil: file.lease_until ?? null,
+      };
+    }),
+  );
+
+  const stalledFiles = fileRows
+    .filter((row) => row.isStale || (row.progress >= UPLOAD_NEAR_COMPLETE_PERCENT && row.dbStatus !== "completed"))
+    .map((row) => row.fileId);
 
   let recommendedAction: UploadBatchDiagnostics["recommendedAction"] = "wait";
   if (health.completed === health.total && health.total > 0) {
@@ -110,6 +186,7 @@ export async function buildUploadBatchDiagnostics(
 
   return {
     ok: true,
+    batchId,
     batch: {
       id: batchId,
       status: health.status,
@@ -120,6 +197,11 @@ export async function buildUploadBatchDiagnostics(
       pending: health.pending,
     },
     files: fileRows,
+    stalledFiles,
+    staleTusEntries: 0,
+    progressRegressionsIgnored: 0,
+    staleBatchEventsIgnored: 0,
+    missingBatchOrFileEventsIgnored: 0,
     recommendedAction,
   };
 }

@@ -46,6 +46,18 @@ export const UPLOAD_BATCH_WATCHDOG_INTERVAL_MS = readPositiveInt(
   30_000,
 );
 
+/** Percentual em que o TUS costuma pausar aguardando confirmação do servidor. */
+export const UPLOAD_NEAR_COMPLETE_PERCENT = readPositiveInt(
+  process.env.UPLOAD_NEAR_COMPLETE_PERCENT,
+  96,
+);
+
+/** Sem avanço neste percentual → reconciliar / confirmar no servidor. */
+export const UPLOAD_NEAR_COMPLETE_STALL_MS = readPositiveInt(
+  process.env.UPLOAD_NEAR_COMPLETE_STALL_MS,
+  75_000,
+);
+
 /** Timeout absoluto por arquivo (fallback para conexões zumbis). */
 export const UPLOAD_FILE_TIMEOUT_MS = readPositiveInt(
   process.env.UPLOAD_FILE_TIMEOUT_MS,
