@@ -3,6 +3,7 @@ import { loadItemIdsForPhase } from "@/lib/schedule-jobs/queue/tasks";
 import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
 import type { ScheduleJobRow, ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
 import { buildWarmupJobDiagnostics } from "@/lib/warmup-diagnostics";
+import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
 
 export type ConsistencyErrorCode =
   | "save_posts_marked_completed_but_no_posts_saved"
@@ -295,6 +296,22 @@ export async function loadJobConsistencySnapshot(
   }
 
   const errors: ConsistencyError[] = [];
+  const allPostsInCalendar =
+    postsInCalendar >= job.total_items && job.total_items > 0;
+
+  if (allPostsInCalendar) {
+    return {
+      postsInCalendar,
+      pendingSaveItems,
+      savePostsTasksCompleted,
+      savePostsTasksTotal,
+      errors: [],
+      isInconsistent: false,
+      recommendedAction:
+        job.status === "completed" || job.status === "partial_failed" ? "completed" : null,
+    };
+  }
+
   const savePostsMarkedDone = savePostsTasksCompleted > 0;
   const allPostsSaved =
     job.completed_items === job.total_items &&
@@ -458,7 +475,7 @@ export async function buildJobDiagnosticsEnrichment(
     warmupPattern:
       schedulePlan?.warmupPattern ??
       (job.schedule_mode === "warmup" ? "3→3→4→4→7" : null),
-    scheduleSummary: job.schedule_summary ?? null,
+    scheduleSummary: normalizeWarmupScheduleSummary(job.schedule_summary),
     timezone: warmupDiagnostics?.timezone ?? schedulePlan?.timezone ?? null,
     nowUsedForPlanning:
       warmupDiagnostics?.nowUsedForPlanning ?? schedulePlan?.nowUsedForPlanning ?? null,

@@ -21,6 +21,8 @@ import {
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
 import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
+import { reconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
+import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
   return {
@@ -28,6 +30,25 @@ function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
     media_urls: Array.isArray(row.media_urls) ? (row.media_urls as string[]) : [],
     destinations: row.destinations as ScheduleJobItemRow["destinations"],
   };
+}
+
+export async function findLatestJobForBatch(
+  supabase: SupabaseClient,
+  ownerId: string,
+  uploadBatchId: string,
+) {
+  const { data, error } = await supabase
+    .from("schedule_jobs")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("upload_batch_id", uploadBatchId)
+    .neq("status", "cancelled")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data as ScheduleJobRow | null;
 }
 
 export async function findActiveJobForBatch(
@@ -331,7 +352,7 @@ export function buildJobStatusFromJob(
     planChunksDone: view.planChunksDone,
     insertChunksTotal: view.insertChunksTotal,
     insertChunksDone: view.insertChunksDone,
-    scheduleSummary: job.schedule_summary,
+    scheduleSummary: normalizeWarmupScheduleSummary(job.schedule_summary),
     planReady: view.planReady,
     errorMessage: job.error_message,
     isActive: view.isActive,
@@ -384,8 +405,9 @@ export async function buildJobStatusForJob(
   job: ScheduleJobRow,
   items?: ScheduleJobItemRow[],
 ) {
-  const consistency = await loadJobConsistencySnapshot(supabase, job);
-  return buildJobStatusFromJob(job, items, consistency);
+  const reconciledJob = (await reconcileJobFromCalendarPosts(supabase, job)) ?? job;
+  const consistency = await loadJobConsistencySnapshot(supabase, reconciledJob);
+  return buildJobStatusFromJob(reconciledJob, items, consistency);
 }
 
 export function buildJobStatus(
@@ -410,6 +432,11 @@ export async function finalizeJobStatusFromDb(
   job: ScheduleJobRow,
 ) {
   await repairSavePostsTaskConsistency(supabase, job.id);
+
+  const reconciled = await reconcileJobFromCalendarPosts(supabase, job);
+  if (reconciled) {
+    return reconciled;
+  }
 
   const counts = await syncJobCountersFromDb(supabase, job.id);
   const consistency = await loadJobConsistencySnapshot(supabase, job);

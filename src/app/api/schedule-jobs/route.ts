@@ -8,7 +8,7 @@ import {
   bootstrapJobQueue,
 } from "@/lib/schedule-jobs/queue/tasks";
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
-import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch, buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
+import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch, findLatestJobForBatch, buildJobStatusForJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD, SCHEDULE_JOB_SMALL_BATCH_MAX } from "@/lib/schedule-jobs/constants";
 import { QUEUE_CRON_MAX_MS } from "@/lib/schedule-jobs/queue/constants";
 import { getBatchForOwner } from "@/lib/upload/batches";
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
         total: existing.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
         message: "Agendamento em andamento — acompanhe o progresso abaixo.",
-        status: buildJobStatusFromJob(existing),
+        status: await buildJobStatusForJob(supabase, existing),
       });
     }
 
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         total: completedJob.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
         message: "Agendamento já concluído para este lote.",
-        status: buildJobStatusFromJob(completedJob),
+        status: await buildJobStatusForJob(supabase, completedJob),
       });
     }
 
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         jobId: created.job.id,
         total: created.job.total_items,
         largeBatch: files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD,
-        status: buildJobStatusFromJob(header ?? created.job),
+        status: await buildJobStatusForJob(supabase, header ?? created.job),
         message:
           files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD
             ? "Agendamento criado e enviado para fila. Você pode fechar esta aba."
@@ -185,7 +185,7 @@ export async function GET(request: NextRequest) {
     }
 
     const supabase = createAdminClient();
-    const job = await findActiveJobForBatch(supabase, ownerId, batchId);
+    const job = await findLatestJobForBatch(supabase, ownerId, batchId);
 
     return NextResponse.json({ jobId: job?.id ?? null });
   } catch (error) {

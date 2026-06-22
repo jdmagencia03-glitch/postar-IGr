@@ -1244,7 +1244,9 @@ export function BulkUploadForm({
               onUploadingChange={handleUploadingChange}
               onSchedulePartial={handleSchedulePartial}
               onStartNewBatch={handleStartNewBatch}
-              suppressCompletionActions={Boolean(scheduleJobId && scheduleJobComplete)}
+              suppressCompletionActions={false}
+              scheduleJobActive={Boolean(scheduleJobId && !scheduleJobComplete)}
+              scheduleJobComplete={scheduleJobComplete}
             />
           </div>
 

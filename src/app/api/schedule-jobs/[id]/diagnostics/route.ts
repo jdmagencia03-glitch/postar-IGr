@@ -6,7 +6,8 @@ import {
   repairSavePostsTaskConsistency,
 } from "@/lib/schedule-jobs/consistency";
 import { getScheduleJobDiagnostics } from "@/lib/schedule-jobs/queue/repair";
-import { buildJobStatusFromJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
+import { buildJobStatusForJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
+import { reconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -23,10 +24,16 @@ export async function GET(
   const supabase = createAdminClient();
 
   try {
-    const job = await getScheduleJobHeader(supabase, ownerId, id);
+    let job = await getScheduleJobHeader(supabase, ownerId, id);
     if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
 
     await repairSavePostsTaskConsistency(supabase, id);
+
+    const refreshed = await getScheduleJobHeader(supabase, ownerId, id);
+    if (refreshed) job = refreshed;
+
+    const reconciled = await reconcileJobFromCalendarPosts(supabase, job);
+    if (reconciled) job = reconciled;
 
     const { data: items } = await supabase
       .from("schedule_job_items")
@@ -42,7 +49,7 @@ export async function GET(
       items ?? [],
       consistency,
     );
-    const status = buildJobStatusFromJob(job, items ?? undefined, consistency);
+    const status = await buildJobStatusForJob(supabase, job, items ?? undefined);
 
     return NextResponse.json(
       {

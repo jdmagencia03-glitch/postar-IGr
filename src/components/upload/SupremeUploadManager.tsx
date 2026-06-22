@@ -38,6 +38,9 @@ interface Props {
   onSchedulePartial?: () => void;
   onStartNewBatch?: () => void;
   suppressCompletionActions?: boolean;
+  /** Job de agendamento em andamento no servidor (upload já recebido). */
+  scheduleJobActive?: boolean;
+  scheduleJobComplete?: boolean;
 }
 
 const FileStatusRow = memo(function FileStatusRow({
@@ -109,6 +112,8 @@ export function SupremeUploadManager({
   onSchedulePartial,
   onStartNewBatch,
   suppressCompletionActions = false,
+  scheduleJobActive = false,
+  scheduleJobComplete = false,
 }: Props) {
   const store = useUploadSessionStore();
   const session = useUploadSession();
@@ -188,8 +193,24 @@ export function SupremeUploadManager({
   const batchStatus = session.batch?.status;
   const batchTerminal = isUploadBatchTerminal(batchStatus);
   const batchFullyScheduled = isUploadBatchFullyScheduled(batchStatus);
+  const uploadFullyReceived =
+    view.totalCount > 0 &&
+    view.completedCount >= view.totalCount &&
+    !view.isActivelyUploading &&
+    !session.running &&
+    !session.retrying &&
+    !hasFileRetry;
+  const showReceivedForSchedule =
+    scheduleJobActive && (batchTerminal || uploadFullyReceived || batchStatus === "ready");
+  const scheduleProcessingLabel = scheduleJobComplete
+    ? "Processamento finalizado"
+    : "Processamento no servidor";
   const showUploadCompletionActions =
-    batchFullyScheduled && !suppressCompletionActions && Boolean(onStartNewBatch);
+    (batchFullyScheduled ||
+      batchTerminal ||
+      (uploadFullyReceived && scheduleJobActive)) &&
+    !suppressCompletionActions &&
+    Boolean(onStartNewBatch);
 
   const handleStartNewBatch = () => {
     if (onStartNewBatch) {
@@ -407,7 +428,9 @@ export function SupremeUploadManager({
         <>
           <div className="rounded-2xl border border-ig-info-border bg-ig-info-bg p-5">
             <p className="text-lg font-semibold text-ig-text">
-              {session.batch.status === "ready"
+              {showReceivedForSchedule
+                ? "Lote recebido"
+                : session.batch.status === "ready" || uploadFullyReceived
                 ? "Upload concluído"
                 : view.isActivelyUploading
                   ? session.recoveringFromStall
@@ -425,10 +448,19 @@ export function SupremeUploadManager({
                           ? `${view.failedCount} vídeo(s) com erro`
                           : "Upload em andamento"}
             </p>
-            <p className="mt-1 text-sm font-medium text-ig-text">{view.headlineText}</p>
-            <p className="mt-1 text-sm text-ig-muted">
-              {view.statusCounterText} · Lote #{session.batch.batch_number} · @{username}
+            <p className="mt-1 text-sm font-medium text-ig-text">
+              {showReceivedForSchedule
+                ? `${view.completedCount || view.totalCount} vídeos enviados com sucesso`
+                : view.headlineText}
             </p>
+            {showReceivedForSchedule && (
+              <p className="mt-1 text-sm text-ig-muted">{scheduleProcessingLabel}</p>
+            )}
+            {!showReceivedForSchedule && (
+              <p className="mt-1 text-sm text-ig-muted">
+                {view.statusCounterText} · Lote #{session.batch.batch_number} · @{username}
+              </p>
+            )}
             {view.bytesSummaryText !== "—" && (
               <p className="mt-1 text-sm text-ig-muted">{view.bytesSummaryText}</p>
             )}
@@ -477,7 +509,7 @@ export function SupremeUploadManager({
                   )}
                 </div>
               )}
-            {session.batch.status !== "ready" && (
+            {session.batch.status !== "ready" && !showReceivedForSchedule && (
               <>
                 <div className="mt-4 h-2 overflow-hidden rounded-full bg-ig-secondary">
                   <div
@@ -560,7 +592,7 @@ export function SupremeUploadManager({
                       Agendar vídeos enviados
                     </button>
                   )}
-                  {!batchTerminal && (
+                  {!batchTerminal && !uploadFullyReceived && !showReceivedForSchedule && (
                     <button
                       type="button"
                       className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted"

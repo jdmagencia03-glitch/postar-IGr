@@ -202,8 +202,16 @@ export function getUploadBatchStats(
   const statusCounts = countUploadFilesByStatus(files);
   const hasFileList = files.length > 0;
 
-  const totalFiles = hasFileList ? files.length : batch.total_files ?? 0;
-  const completedFiles = hasFileList ? statusCounts.completed : batch.completed_files ?? 0;
+  const totalFiles = hasFileList
+    ? files.length
+    : batch.status === "ready" || batch.status === "scheduled"
+      ? Math.max(batch.total_files ?? 0, batch.completed_files ?? 0)
+      : batch.total_files ?? 0;
+  const completedFiles = hasFileList
+    ? statusCounts.completed
+    : batch.status === "ready" || batch.status === "scheduled"
+      ? Math.max(batch.completed_files ?? 0, totalFiles)
+      : batch.completed_files ?? 0;
   const failedFiles = hasFileList ? statusCounts.failed : batch.failed_files ?? 0;
   const pendingFiles = hasFileList
     ? statusCounts.pending

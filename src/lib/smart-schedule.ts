@@ -656,6 +656,24 @@ export function buildSmartScheduleSlice(params: {
   };
 }
 
+/** Apenas o intervalo de dias/datas — sem repetir contagem de posts. */
+export function describeScheduleDaySpan(schedule: Date[]) {
+  if (!schedule.length) return "Nenhum horário disponível";
+
+  const dateTimeFmt = new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: APP_TIMEZONE,
+  });
+
+  const first = schedule[0];
+  const last = schedule[schedule.length - 1];
+  const dayMs = 86_400_000;
+  const days = Math.max(1, Math.ceil((last.getTime() - first.getTime()) / dayMs) + 1);
+  const dayLabel = days === 1 ? "1 dia" : `~${days} dias`;
+  return `${dayLabel} (${dateTimeFmt.format(first)} → ${dateTimeFmt.format(last)})`;
+}
+
 export function describeSmartSchedule(schedule: Date[], mode: ScheduleMode = "today") {
   if (!schedule.length) return "Nenhum horário disponível";
 
@@ -677,8 +695,5 @@ export function describeSmartSchedule(schedule: Date[], mode: ScheduleMode = "to
     return `${schedule.length} posts hoje entre ${timeFmt.format(first)} e ${timeFmt.format(last)}`;
   }
 
-  const dayMs = 86_400_000;
-  const days = Math.max(1, Math.ceil((last.getTime() - first.getTime()) / dayMs) + 1);
-  const dayLabel = days === 1 ? "1 dia" : `~${days} dias`;
-  return `${schedule.length} posts em ${dayLabel} (${dateTimeFmt.format(first)} → ${dateTimeFmt.format(last)})`;
+  return `${schedule.length} posts em ${describeScheduleDaySpan(schedule)}`;
 }

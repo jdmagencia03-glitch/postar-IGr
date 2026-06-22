@@ -8,7 +8,7 @@ import {
   type WarmupSchedulePlanResult,
   type WarmupSkippedSlot,
 } from "@/lib/account-warmup";
-import { describeSmartSchedule, type ScheduleMode } from "@/lib/smart-schedule";
+import { describeScheduleDaySpan } from "@/lib/smart-schedule";
 import { getAppDateParts } from "@/lib/timezone";
 
 export type SchedulePlanMode = "warmup" | "auto" | "today" | "custom";
@@ -51,11 +51,17 @@ export function buildWarmupScheduleSummary(params: {
   warmupDays?: number;
 }) {
   const pattern = WARMUP_PATTERN;
-  const range = describeSmartSchedule(params.schedule, "auto");
+  const range = describeScheduleDaySpan(params.schedule);
   const summary = `Aquecimento ${pattern} · ${params.count} posts em ${range}`;
 
   const skipWarning = formatSkippedPastWarning(params.skippedPastSlots ?? []);
   return skipWarning ? `${summary}\n${skipWarning}` : summary;
+}
+
+/** Corrige summaries legados com contagem duplicada ("50 posts em 50 posts em"). */
+export function normalizeWarmupScheduleSummary(summary: string | null | undefined) {
+  if (!summary) return summary ?? null;
+  return summary.replace(/(\d+)\s+posts em \1\s+posts em /gi, "$1 posts em ");
 }
 
 /** Fonte única para preview, apply, job e diagnóstico (modo warmup). */
