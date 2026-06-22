@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { DashboardLoadErrorBanner } from "@/components/dashboard/DashboardLoadErrorBanner";
 import { DashboardNextPostsPanel } from "@/components/dashboard/DashboardNextPostsPanel";
 import { DashboardStatsRow } from "@/components/dashboard/DashboardStatsRow";
 import { DashboardUploadCard } from "@/components/dashboard/DashboardUploadCard";
@@ -9,7 +10,8 @@ import { ownerHasConfiguredPlaybook } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { SocialPlatform } from "@/lib/types";
+import type { ScheduledPost, SocialPlatform } from "@/lib/types";
+import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
 
@@ -31,16 +33,40 @@ export default async function DashboardPage({
     : "all";
 
   const supabase = createAdminClient();
+  let loadError: string | null = null;
 
-  const playbookReady = await ownerHasConfiguredPlaybook(ownerId);
+  const playbookReadyResult = await withTimeoutOrNull(
+    ownerHasConfiguredPlaybook(ownerId),
+    DB_ROUTE_TIMEOUT_MS,
+    "dashboard-playbook",
+  );
+  if (playbookReadyResult === null) {
+    loadError = "Não foi possível carregar contas agora. Tente novamente em instantes.";
+  }
+  const playbookReady = playbookReadyResult ?? false;
 
   const postFilters = {
     platform: platformFilter,
     order: "asc" as const,
   };
 
-  const posts = await getOwnerScheduledPosts(supabase, ownerId, { ...postFilters, limit: 12 });
-  const allPosts = await getOwnerScheduledPosts(supabase, ownerId, postFilters);
+  const recentPostsResult = await withTimeoutOrNull(
+    getOwnerScheduledPosts(supabase, ownerId, { ...postFilters, limit: 12 }),
+    DB_ROUTE_TIMEOUT_MS,
+    "dashboard-posts-recent",
+  );
+  const allPostsResult = await withTimeoutOrNull(
+    getOwnerScheduledPosts(supabase, ownerId, postFilters),
+    DB_ROUTE_TIMEOUT_MS,
+    "dashboard-posts-all",
+  );
+
+  if (recentPostsResult === null || allPostsResult === null) {
+    loadError = "Não foi possível carregar contas agora. Tente novamente em instantes.";
+  }
+
+  const posts: ScheduledPost[] = recentPostsResult ?? [];
+  const allPosts: ScheduledPost[] = allPostsResult ?? [];
 
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -60,6 +86,8 @@ export default async function DashboardPage({
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-4">
+      {loadError ? <DashboardLoadErrorBanner message={loadError} /> : null}
+
       <PublisherHealthBanner />
 
       <DashboardWelcomeBanner />

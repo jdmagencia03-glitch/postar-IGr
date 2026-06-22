@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ShieldAlert } from "lucide-react";
+import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
 
 export function AdminAuditNavLink({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -11,7 +12,7 @@ export function AdminAuditNavLink({ onNavigate }: { onNavigate?: () => void }) {
   const active = pathname.startsWith("/dashboard/operations/audit");
 
   useEffect(() => {
-    fetch("/api/admin/audit/access", { credentials: "include", cache: "no-store" })
+    fetchWithTimeout("/api/admin/audit/access", { credentials: "include", cache: "no-store" }, 3_000)
       .then((res) => res.json())
       .then((data) => setAllowed(Boolean(data.allowed)))
       .catch(() => setAllowed(false));

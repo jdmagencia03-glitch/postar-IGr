@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
+import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
 
 interface HealthResponse {
   cron_configured: boolean;
@@ -14,7 +15,7 @@ export function PublisherHealthBanner() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
   useEffect(() => {
-    fetch("/api/health/publisher", { credentials: "include", cache: "no-store" })
+    fetchWithTimeout("/api/health/publisher", { credentials: "include", cache: "no-store" }, 3_000)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setHealth(data))
       .catch(() => setHealth(null));

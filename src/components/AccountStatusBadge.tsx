@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
+import { fetchWithTimeout, parseAccountsListPayload } from "@/lib/client-fetch-timeout";
 
 type AccountStatus = "active" | "error" | "loading";
 
@@ -11,6 +12,8 @@ interface HealthResponse {
   username?: string | null;
 }
 
+const FETCH_TIMEOUT_MS = 3_000;
+
 export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolean }) {
   const [status, setStatus] = useState<AccountStatus>("loading");
   const [message, setMessage] = useState("Verificando conta...");
@@ -19,16 +22,28 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
   const fetchHealth = useCallback(async () => {
     try {
       const [healthRes, igAccountsRes, tiktokAccountsRes] = await Promise.all([
-        fetch("/api/instagram/health", { credentials: "include", cache: "no-store" }),
-        fetch("/api/accounts", { credentials: "include", cache: "no-store" }),
-        fetch("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }),
+        fetchWithTimeout("/api/instagram/health", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
+        fetchWithTimeout("/api/accounts", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
+        fetchWithTimeout("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
       ]);
 
-      const igAccounts = igAccountsRes.ok ? await igAccountsRes.json() : [];
-      const tiktokAccounts = tiktokAccountsRes.ok ? await tiktokAccountsRes.json() : [];
-      const igCount = Array.isArray(igAccounts) ? igAccounts.length : 0;
-      const tiktokCount = Array.isArray(tiktokAccounts) ? tiktokAccounts.length : 0;
+      const igAccountsJson = igAccountsRes.ok ? await igAccountsRes.json() : [];
+      const tiktokAccountsJson = tiktokAccountsRes.ok ? await tiktokAccountsRes.json() : [];
+      const igAccounts = parseAccountsListPayload(igAccountsJson);
+      const tiktokAccounts = parseAccountsListPayload(tiktokAccountsJson);
+      const igCount = igAccounts.length;
+      const tiktokCount = tiktokAccounts.length;
       const totalCount = igCount + tiktokCount;
+
+      const dbSlow =
+        (!igAccountsRes.ok && igAccountsRes.status >= 500) ||
+        (igAccountsJson && typeof igAccountsJson === "object" && "error" in igAccountsJson && (igAccountsJson as { error?: string }).error === "db_timeout");
+
+      if (dbSlow && totalCount === 0) {
+        setStatus("error");
+        setMessage("Contas indisponíveis no momento");
+        return;
+      }
 
       setAccountCount(totalCount);
 

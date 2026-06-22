@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { APP_TAGLINE } from "@/lib/brand";
 import { getSessionUserId } from "@/lib/auth/session";
+import { withTimeout } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const userId = await getSessionUserId();
+  const userId = await withTimeout(getSessionUserId(), 2_000, null, "login-session");
   const params = await searchParams;
   const nextPath =
     params.next && params.next.startsWith("/") && !params.next.startsWith("//")

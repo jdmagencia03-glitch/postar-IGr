@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { formatZodError } from "@/lib/api-errors";
+import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
 import {
   clampWarmupDays,
   DEFAULT_WARMUP_DAYS,
@@ -9,6 +10,7 @@ import { getOwnerAccounts, getOwnerAccountById, ownerAccountsFilter } from "@/li
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
+import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 import { z } from "zod";
 
 function mapAccountResponse(account: Awaited<ReturnType<typeof getOwnerAccounts>>[number]) {
@@ -46,7 +48,15 @@ export async function GET() {
   }
 
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
+  const accounts = await withTimeoutOrNull(
+    getOwnerAccounts(supabase, ownerId),
+    DB_ROUTE_TIMEOUT_MS,
+    "api-accounts-list",
+  );
+
+  if (accounts === null) {
+    return dbTimeoutJsonResponse([]);
+  }
 
   return NextResponse.json(accounts.map(mapAccountResponse));
 }

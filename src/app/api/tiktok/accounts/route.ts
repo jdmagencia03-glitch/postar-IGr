@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
 import {
   getOwnerTikTokAccounts,
   getOwnerTikTokAccountById,
@@ -7,6 +8,7 @@ import {
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logSecurityEvent } from "@/lib/security/audit";
+import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export async function GET() {
   const ownerId = await getSessionUserId();
@@ -15,7 +17,15 @@ export async function GET() {
   }
 
   const supabase = createAdminClient();
-  const accounts = await getOwnerTikTokAccounts(supabase, ownerId);
+  const accounts = await withTimeoutOrNull(
+    getOwnerTikTokAccounts(supabase, ownerId),
+    DB_ROUTE_TIMEOUT_MS,
+    "api-tiktok-accounts-list",
+  );
+
+  if (accounts === null) {
+    return dbTimeoutJsonResponse([]);
+  }
 
   return NextResponse.json(accounts.map(mapTikTokAccountResponse));
 }

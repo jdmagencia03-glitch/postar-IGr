@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerAccountById, getOwnerAccounts, getAccountAccessToken } from "@/lib/accounts";
 import { checkInstagramAccountHealth } from "@/lib/meta/instagram";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { withTimeout, withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +17,26 @@ export async function GET(request: NextRequest) {
   const accountId = request.nextUrl.searchParams.get("account_id");
   const supabase = createAdminClient();
 
-  let account = null;
-  if (accountId) {
-    account = await getOwnerAccountById(supabase, ownerId, accountId);
-  } else {
-    const accounts = await getOwnerAccounts(supabase, ownerId);
-    account = accounts[0] ?? null;
+  const account = await withTimeoutOrNull(
+    (async () => {
+      if (accountId) {
+        return getOwnerAccountById(supabase, ownerId, accountId);
+      }
+      const accounts = await getOwnerAccounts(supabase, ownerId);
+      return accounts[0] ?? null;
+    })(),
+    DB_ROUTE_TIMEOUT_MS,
+    "api-instagram-health-account",
+  );
+
+  if (account === null) {
+    return dbTimeoutJsonResponse({
+      account_status: "error",
+      status_message: "Banco temporariamente lento",
+      account_id: null,
+      username: null,
+      checked_at: new Date().toISOString(),
+    });
   }
 
   const accessToken = account ? getAccountAccessToken(account) : null;
@@ -35,10 +51,19 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const health = await checkInstagramAccountHealth(accessToken, {
-    provider: account.auth_provider === "facebook" ? "facebook" : "instagram",
-    igUserId: account.ig_user_id,
-  });
+  const health = await withTimeout(
+    checkInstagramAccountHealth(accessToken, {
+      provider: account.auth_provider === "facebook" ? "facebook" : "instagram",
+      igUserId: account.ig_user_id,
+    }),
+    DB_ROUTE_TIMEOUT_MS,
+    {
+      status: "error" as const,
+      message: "Verificação indisponível no momento",
+      error_code: undefined,
+    },
+    "api-instagram-health-meta",
+  );
 
   return NextResponse.json({
     account_status: health.status,

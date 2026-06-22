@@ -4,12 +4,17 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { buildJobStatusReadOnly, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { withTimeout, withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
+
+const DB_TIMEOUT_SENTINEL = "__db_timeout__" as const;
+type JobLookupResult = ScheduleJobRow | null | typeof DB_TIMEOUT_SENTINEL;
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
 
 function statusErrorResponse(jobId: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  const dbTimeout = message === "db_timeout";
   console.error("[schedule-job-status-failed]", { jobId, error: message });
   return NextResponse.json(
     {
@@ -18,8 +23,11 @@ function statusErrorResponse(jobId: string, error: unknown) {
       status: "unknown",
       phase: "status_error",
       statusError: true,
-      statusErrorMessage: message,
+      statusErrorMessage: dbTimeout ? "Banco temporariamente lento" : message,
+      error: dbTimeout ? "db_timeout" : "status_error",
+      message: dbTimeout ? "Banco temporariamente lento" : message,
       recommendedAction: "manual_review",
+      data: null,
     },
     { status: 200, headers: { "Cache-Control": "no-store" } },
   );
@@ -40,21 +48,46 @@ export async function GET(
     }
 
     const supabase = createAdminClient();
-    let job: ScheduleJobRow | null = null;
+    let job: JobLookupResult = null;
     if (ownerId) {
-      job = await getScheduleJobHeader(supabase, ownerId, id);
+      job = await withTimeout<JobLookupResult>(
+        getScheduleJobHeader(supabase, ownerId, id),
+        DB_ROUTE_TIMEOUT_MS,
+        DB_TIMEOUT_SENTINEL,
+        "schedule-job-status-header",
+      );
     } else if (cronAuthorized) {
-      const { data, error } = await supabase
-        .from("schedule_jobs")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      job = (data as ScheduleJobRow | null) ?? null;
+      job = await withTimeout<JobLookupResult>(
+        (async () => {
+          const { data, error } = await supabase
+            .from("schedule_jobs")
+            .select("id, status, schedule_mode, upload_batch_id, platform, account_id, tiktok_account_id, total_items, completed_items, failed_items, schedule_summary, config, updated_at, error_message, last_heartbeat_at")
+            .eq("id", id)
+            .maybeSingle();
+          if (error) throw new Error(error.message);
+          return (data as ScheduleJobRow | null) ?? null;
+        })(),
+        DB_ROUTE_TIMEOUT_MS,
+        DB_TIMEOUT_SENTINEL,
+        "schedule-job-status-cron-header",
+      );
+    }
+
+    if (job === DB_TIMEOUT_SENTINEL) {
+      return statusErrorResponse(id, new Error("db_timeout"));
     }
     if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
 
-    const status = await buildJobStatusReadOnly(supabase, job);
+    const status = await withTimeoutOrNull(
+      buildJobStatusReadOnly(supabase, job),
+      DB_ROUTE_TIMEOUT_MS,
+      "schedule-job-status-readonly",
+    );
+
+    if (status === null) {
+      return statusErrorResponse(id, new Error("db_timeout"));
+    }
+
     return NextResponse.json(status, {
       headers: { "Cache-Control": "no-store" },
     });

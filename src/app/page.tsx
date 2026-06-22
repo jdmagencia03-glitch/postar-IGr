@@ -1,11 +1,8 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Check } from "lucide-react";
 import { BrandLogo } from "@/components/BrandLogo";
+import { HomeSessionRedirect } from "@/components/HomeSessionRedirect";
 import { APP_TAGLINE } from "@/lib/brand";
-import { getSessionUserId } from "@/lib/auth/session";
-
-export const dynamic = "force-dynamic";
 
 const FEATURES = [
   "Legendas geradas por IA",
@@ -15,12 +12,11 @@ const FEATURES = [
   "APIs oficiais Meta e TikTok",
 ] as const;
 
-export default async function HomePage() {
-  const userId = await getSessionUserId();
-  if (userId) redirect("/dashboard");
-
+export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col items-center justify-center px-4 text-center">
+      <HomeSessionRedirect />
+
       <div className="mb-6">
         <BrandLogo className="ig-brand-script text-5xl leading-none text-ig-text sm:text-6xl" />
       </div>
