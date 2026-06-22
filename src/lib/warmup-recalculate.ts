@@ -2,15 +2,23 @@ import { contentTypeForPlatform } from "@/lib/content-types";
 import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { SocialPlatform } from "@/lib/types";
-import { buildWarmupRecalculatePlan } from "@/lib/warmup-diagnostics";
+import {
+  buildExcludedCountByLocalDate,
+  buildWarmupRecalculatePlan,
+} from "@/lib/warmup-diagnostics";
 
 const ACTIVE_POST_STATUSES = ["pending", "processing", "retrying"];
 
 export async function executeWarmupRecalculate(jobId: string) {
   const supabase = createAdminClient();
+  const step = (name: string) => console.info("[warmup-recalculate]", { jobId, step: name });
+
+  step("load_job");
   const { data: job, error } = await supabase
     .from("schedule_jobs")
-    .select("*")
+    .select(
+      "id, schedule_mode, upload_batch_id, platform, account_id, tiktok_account_id, config",
+    )
     .eq("id", jobId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -24,6 +32,7 @@ export async function executeWarmupRecalculate(jobId: string) {
   const accountId = platform === "tiktok" ? row.tiktok_account_id : row.account_id;
   if (!accountId) throw new Error("job_missing_account");
 
+  step("load_pending_posts");
   const { data: posts, error: postsError } = await supabase
     .from("scheduled_posts")
     .select("id, scheduled_at, status")
@@ -37,24 +46,28 @@ export async function executeWarmupRecalculate(jobId: string) {
     return { ok: true as const, updated: 0, before: [], after: [] };
   }
 
+  step("load_job_items");
   const { data: items } = await supabase
     .from("schedule_job_items")
-    .select("*")
+    .select("id, destinations, sort_order, scheduled_at")
     .eq("schedule_job_id", jobId)
     .order("sort_order", { ascending: true });
 
   const jobItems = (items ?? []) as ScheduleJobItemRow[];
   const now = new Date();
-  const excludePostIds = pendingPosts.map((post) => post.id as string);
+  const excludedCountByLocalDate = buildExcludedCountByLocalDate(
+    pendingPosts.map((post) => post.scheduled_at as string),
+  );
   const contentType = contentTypeForPlatform(platform);
 
+  step("build_plan");
   const { context: warmupContext, plan, planningMeta } = await buildWarmupRecalculatePlan({
     supabase,
     accountId,
     platform,
     contentType,
     pendingCount: pendingPosts.length,
-    excludePostIds,
+    excludedCountByLocalDate,
     now,
     includeCapacityDiagnostics: false,
   });
@@ -73,6 +86,7 @@ export async function executeWarmupRecalculate(jobId: string) {
     after.push({ postId: post.id as string, scheduledAt: nextAt });
   }
 
+  step("update_posts");
   const nowIso = now.toISOString();
   for (let offset = 0; offset < pendingPosts.length; offset += 10) {
     const chunk = pendingPosts.slice(offset, offset + 10);
@@ -89,6 +103,7 @@ export async function executeWarmupRecalculate(jobId: string) {
     );
   }
 
+  step("update_job_items");
   for (let offset = 0; offset < jobItems.length; offset += 10) {
     const chunk = jobItems.slice(offset, offset + 10);
     await Promise.all(
@@ -112,6 +127,7 @@ export async function executeWarmupRecalculate(jobId: string) {
     );
   }
 
+  step("update_job_config");
   await supabase
     .from("schedule_jobs")
     .update({
@@ -130,6 +146,7 @@ export async function executeWarmupRecalculate(jobId: string) {
     })
     .eq("id", jobId);
 
+  step("done");
   return {
     ok: true as const,
     warmupStartDate: warmupContext.warmupStartDate,

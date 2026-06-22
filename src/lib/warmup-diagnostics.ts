@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildWarmupDiagnosticsPlannedPosts,
   buildWarmupSchedulePlanAsync,
@@ -12,10 +13,9 @@ import {
   buildWarmupCapacityDiagnostics,
   getExistingValidPostsForLocalDate,
 } from "@/lib/posts/warmup-capacity";
-import { APP_TIMEZONE } from "@/lib/timezone";
+import { APP_TIMEZONE, getAppDateParts } from "@/lib/timezone";
 import type { ContentType, SocialPlatform } from "@/lib/types";
 import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type WarmupJobDiagnostics = {
   scheduleMode: "warmup";
@@ -118,6 +118,16 @@ export type WarmupRecalculateResult = {
   planningMeta: WarmupPlanningMeta | null;
 };
 
+export function buildExcludedCountByLocalDate(scheduledAtValues: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const scheduledAt of scheduledAtValues) {
+    const parts = getAppDateParts(new Date(scheduledAt));
+    const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export async function buildWarmupRecalculatePlan(params: {
   supabase: SupabaseClient;
   accountId: string;
@@ -125,6 +135,8 @@ export async function buildWarmupRecalculatePlan(params: {
   contentType?: ContentType;
   pendingCount: number;
   excludePostIds?: string[];
+  /** Posts do lote por dia local — evita not-in com dezenas de UUIDs no Supabase. */
+  excludedCountByLocalDate?: Record<string, number>;
   now?: Date;
   includeCapacityDiagnostics?: boolean;
 }) {
@@ -139,14 +151,16 @@ export async function buildWarmupRecalculatePlan(params: {
     warmupDayOffset: context.warmupDayOffset,
     firstScheduledAt: context.firstScheduledAt,
     now,
-    resolveExistingOnDay: (localDate) =>
-      getExistingValidPostsForLocalDate(params.supabase, {
+    resolveExistingOnDay: async (localDate) => {
+      const total = await getExistingValidPostsForLocalDate(params.supabase, {
         accountId: params.accountId,
         platform: params.platform,
         contentType: params.contentType,
         localDate,
-        excludePostIds: params.excludePostIds,
-      }),
+      });
+      const excluded = params.excludedCountByLocalDate?.[localDate] ?? 0;
+      return Math.max(0, total - excluded);
+    },
   });
   const plan = {
     schedule: planResult.schedule,
