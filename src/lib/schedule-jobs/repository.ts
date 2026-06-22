@@ -21,7 +21,7 @@ import {
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
 import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
-import { reconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
+import { safeReconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
 import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
@@ -405,9 +405,20 @@ export async function buildJobStatusForJob(
   job: ScheduleJobRow,
   items?: ScheduleJobItemRow[],
 ) {
-  const reconciledJob = (await reconcileJobFromCalendarPosts(supabase, job)) ?? job;
-  const consistency = await loadJobConsistencySnapshot(supabase, reconciledJob);
-  return buildJobStatusFromJob(reconciledJob, items, consistency);
+  const reconcileResult = await safeReconcileJobFromCalendarPosts(supabase, job);
+  const consistency = await loadJobConsistencySnapshot(supabase, reconcileResult.job);
+  const status = buildJobStatusFromJob(reconcileResult.job, items, consistency);
+
+  if (reconcileResult.error) {
+    return {
+      ...status,
+      reconcileError: true,
+      reconcileErrorMessage: reconcileResult.error,
+      recommendedAction: status.recommendedAction ?? "manual_review",
+    };
+  }
+
+  return status;
 }
 
 export function buildJobStatus(
@@ -433,9 +444,9 @@ export async function finalizeJobStatusFromDb(
 ) {
   await repairSavePostsTaskConsistency(supabase, job.id);
 
-  const reconciled = await reconcileJobFromCalendarPosts(supabase, job);
-  if (reconciled) {
-    return reconciled;
+  const reconcileResult = await safeReconcileJobFromCalendarPosts(supabase, job);
+  if (reconcileResult.reconciled) {
+    return reconcileResult.job;
   }
 
   const counts = await syncJobCountersFromDb(supabase, job.id);

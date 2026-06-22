@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { finalizePostsForJob } from "@/lib/schedule-jobs/finalize-posts";
 import { loadJobConsistencySnapshot } from "@/lib/schedule-jobs/consistency";
-import { reconcileJobFromCalendarPosts } from "@/lib/schedule-jobs/reconcile-calendar";
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
 import { QUEUE_CRON_MAX_MS } from "@/lib/schedule-jobs/queue/constants";
 import { repairScheduleJob } from "@/lib/schedule-jobs/queue/repair";
@@ -100,10 +99,7 @@ export async function GET(
     job = await maybeRecoverStuckJob(supabase, ownerId, id);
     if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
 
-    if (job.status === "failed" || job.status === "partial_failed") {
-      const reconciled = await reconcileJobFromCalendarPosts(supabase, job);
-      if (reconciled) job = reconciled;
-    } else if (job.status === "processing" || job.status === "queued") {
+    if (job.status === "processing" || job.status === "queued") {
       job = await finalizeJobStatusFromDb(supabase, job);
     }
 
@@ -119,6 +115,9 @@ export async function GET(
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    console.error("[schedule-job-status-failed]", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Falha ao carregar status" },
       { status: 500 },

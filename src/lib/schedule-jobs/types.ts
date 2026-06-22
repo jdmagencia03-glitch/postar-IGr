@@ -178,4 +178,6 @@ export type ScheduleJobStatusResponse = {
   pendingSaveItems: number;
   consistencyErrors: Array<{ code: string; message: string }>;
   canDiscardJob?: boolean;
+  reconcileError?: boolean;
+  reconcileErrorMessage?: string | null;
 };

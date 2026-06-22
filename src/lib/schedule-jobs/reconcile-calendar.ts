@@ -1,18 +1,40 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
+import type {
+  ScheduleJobDestination,
+  ScheduleJobItemRow,
+  ScheduleJobRow,
+} from "@/lib/schedule-jobs/types";
 
 type CalendarPost = {
   id: string;
   media_urls: string[] | null;
-  upload_file_id?: string | null;
   parent_publish_group_id?: string | null;
 };
+
+export type ReconcileCalendarResult = {
+  job: ScheduleJobRow;
+  reconciled: boolean;
+  error: string | null;
+};
+
+function parseDestinations(raw: unknown): ScheduleJobDestination[] | null {
+  if (Array.isArray(raw)) return raw as ScheduleJobDestination[];
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed) ? (parsed as ScheduleJobDestination[]) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
   return {
     ...(row as ScheduleJobItemRow),
     media_urls: Array.isArray(row.media_urls) ? (row.media_urls as string[]) : [],
-    destinations: row.destinations as ScheduleJobItemRow["destinations"],
+    destinations: parseDestinations(row.destinations),
   };
 }
 
@@ -20,7 +42,6 @@ function buildPostIndexes(posts: CalendarPost[]) {
   const postIdsInBatch = new Set<string>();
   const postIdByMediaUrl = new Map<string, string>();
   const postIdByGroup = new Map<string, string>();
-  const postIdByUploadFile = new Map<string, string>();
 
   for (const post of posts) {
     postIdsInBatch.add(post.id);
@@ -35,25 +56,21 @@ function buildPostIndexes(posts: CalendarPost[]) {
     if (post.parent_publish_group_id && !postIdByGroup.has(post.parent_publish_group_id)) {
       postIdByGroup.set(post.parent_publish_group_id, post.id);
     }
-
-    if (post.upload_file_id && !postIdByUploadFile.has(post.upload_file_id)) {
-      postIdByUploadFile.set(post.upload_file_id, post.id);
-    }
   }
 
-  return { postIdsInBatch, postIdByMediaUrl, postIdByGroup, postIdByUploadFile };
+  return { postIdsInBatch, postIdByMediaUrl, postIdByGroup };
 }
 
 /**
  * Resolve o post do calendário para um item do job.
- * Prioridade: created_post_id (item/destino) → parent_publish_group_id → upload_file_id → media_urls.
+ * Prioridade: created_post_id (item/destino) → parent_publish_group_id → media_urls.
  * Posts já filtrados por upload_batch_id do job (escopo do lote).
  */
 function resolvePostIdForItem(
   item: ScheduleJobItemRow,
   indexes: ReturnType<typeof buildPostIndexes>,
 ): string | null {
-  const { postIdsInBatch, postIdByMediaUrl, postIdByGroup, postIdByUploadFile } = indexes;
+  const { postIdsInBatch, postIdByMediaUrl, postIdByGroup } = indexes;
 
   if (item.created_post_id && postIdsInBatch.has(item.created_post_id)) {
     return item.created_post_id;
@@ -68,11 +85,6 @@ function resolvePostIdForItem(
   if (item.parent_publish_group_id) {
     const byGroup = postIdByGroup.get(item.parent_publish_group_id);
     if (byGroup) return byGroup;
-  }
-
-  if (item.upload_file_id) {
-    const byFile = postIdByUploadFile.get(item.upload_file_id);
-    if (byFile) return byFile;
   }
 
   const url = item.media_urls?.[0];
@@ -131,14 +143,13 @@ export async function reconcileJobFromCalendarPosts(
 
   const { data: posts, error: postsError } = await supabase
     .from("scheduled_posts")
-    .select("id, media_urls, upload_file_id, parent_publish_group_id")
+    .select("id, media_urls, parent_publish_group_id")
     .eq("upload_batch_id", job.upload_batch_id);
   if (postsError) throw new Error(postsError.message);
 
   const calendarPosts: CalendarPost[] = (posts ?? []).map((post) => ({
     id: post.id as string,
-    media_urls: (post.media_urls as string[]) ?? [],
-    upload_file_id: (post.upload_file_id as string | null) ?? null,
+    media_urls: Array.isArray(post.media_urls) ? (post.media_urls as string[]) : [],
     parent_publish_group_id: (post.parent_publish_group_id as string | null) ?? null,
   }));
 
@@ -177,7 +188,7 @@ export async function reconcileJobFromCalendarPosts(
     repairedItems += 1;
   }
 
-  await supabase
+  const { error: tasksError } = await supabase
     .from("schedule_job_tasks")
     .update({
       status: "completed",
@@ -189,6 +200,8 @@ export async function reconcileJobFromCalendarPosts(
     .eq("schedule_job_id", job.id)
     .eq("phase", "save_posts")
     .neq("status", "cancelled");
+
+  if (tasksError) throw new Error(tasksError.message);
 
   const counts = await syncJobCounters(supabase, job.id);
   const status = counts.failed > 0 ? "partial_failed" : "completed";
@@ -231,4 +244,27 @@ export async function reconcileJobFromCalendarPosts(
     error_message: null,
     updated_at: now,
   } as ScheduleJobRow;
+}
+
+/** Reconciliação com falha não-propaga — retorna job original + erro. */
+export async function safeReconcileJobFromCalendarPosts(
+  supabase: SupabaseClient,
+  job: ScheduleJobRow,
+): Promise<ReconcileCalendarResult> {
+  try {
+    const reconciled = await reconcileJobFromCalendarPosts(supabase, job);
+    return {
+      job: reconciled ?? job,
+      reconciled: Boolean(reconciled),
+      error: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[schedule-job-reconcile-failed]", {
+      jobId: job.id,
+      batchId: job.upload_batch_id,
+      error: message,
+    });
+    return { job, reconciled: false, error: message };
+  }
 }
