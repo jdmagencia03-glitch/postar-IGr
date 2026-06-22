@@ -18,6 +18,9 @@
     "src/app/api/cron/schedule-jobs/health/route.ts": {
       "maxDuration": 30
     },
+    "src/app/api/cron/recalculate-warmup-job/route.ts": {
+      "maxDuration": 120
+    },
     "src/app/api/upload/route.ts": {
       "maxDuration": 300
     },
