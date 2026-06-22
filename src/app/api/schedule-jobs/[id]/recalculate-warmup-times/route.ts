@@ -1,37 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeCronRequest } from "@/lib/admin/cron-auth";
-import { contentTypeForPlatform } from "@/lib/content-types";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
-import type { ScheduleJobItemRow, ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { SocialPlatform } from "@/lib/types";
-import { buildWarmupRecalculatePlan } from "@/lib/warmup-diagnostics";
+import { executeWarmupRecalculate } from "@/lib/warmup-recalculate";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
-
-const ACTIVE_POST_STATUSES = ["pending", "processing", "retrying"];
-
-async function loadJobForRequest(
-  supabase: ReturnType<typeof createAdminClient>,
-  ownerId: string | null,
-  jobId: string,
-  cronAuthorized: boolean,
-): Promise<ScheduleJobRow | null> {
-  if (ownerId) {
-    return getScheduleJobHeader(supabase, ownerId, jobId);
-  }
-  if (!cronAuthorized) return null;
-
-  const { data, error } = await supabase
-    .from("schedule_jobs")
-    .select("*")
-    .eq("id", jobId)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return (data as ScheduleJobRow | null) ?? null;
-}
+export const maxDuration = 300;
 
 /** Recalcula horários de posts pendentes no modo Aquecimento. */
 export async function POST(
@@ -39,144 +14,33 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   const cronAuthorized = authorizeCronRequest(request);
-  let ownerId = await getSessionUserId();
+  const ownerId = cronAuthorized ? null : await getSessionUserId();
   if (!ownerId && !cronAuthorized) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
   }
 
   const { id } = await context.params;
-  const supabase = createAdminClient();
 
-  const job = await loadJobForRequest(supabase, ownerId, id, cronAuthorized);
-  if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
-  if (job.schedule_mode !== "warmup") {
-    return NextResponse.json({ error: "job_not_warmup" }, { status: 400 });
-  }
-  if (!job.upload_batch_id) {
-    return NextResponse.json({ error: "job_missing_batch" }, { status: 400 });
-  }
-
-  const platform = (job.platform === "tiktok" ? "tiktok" : "instagram") as SocialPlatform;
-  const accountId =
-    platform === "tiktok" ? job.tiktok_account_id : job.account_id;
-  if (!accountId) {
-    return NextResponse.json({ error: "job_missing_account" }, { status: 400 });
+  if (ownerId) {
+    const supabase = createAdminClient();
+    const job = await getScheduleJobHeader(supabase, ownerId, id);
+    if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
+    if (job.schedule_mode !== "warmup") {
+      return NextResponse.json({ error: "job_not_warmup" }, { status: 400 });
+    }
   }
 
-  const { data: posts, error: postsError } = await supabase
-    .from("scheduled_posts")
-    .select("id, scheduled_at, status")
-    .eq("upload_batch_id", job.upload_batch_id)
-    .in("status", ACTIVE_POST_STATUSES)
-    .order("scheduled_at", { ascending: true });
-
-  if (postsError) {
-    return NextResponse.json({ error: postsError.message }, { status: 500 });
+  try {
+    const result = await executeWarmupRecalculate(id);
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status =
+      message === "job_not_found"
+        ? 404
+        : message === "job_not_warmup" || message === "job_missing_batch" || message === "job_missing_account"
+          ? 400
+          : 500;
+    return NextResponse.json({ error: message }, { status });
   }
-
-  const pendingPosts = posts ?? [];
-  if (!pendingPosts.length) {
-    return NextResponse.json({ ok: true, updated: 0, before: [], after: [] });
-  }
-
-  const { data: items } = await supabase
-    .from("schedule_job_items")
-    .select("*")
-    .eq("schedule_job_id", id)
-    .order("sort_order", { ascending: true });
-
-  const jobItems = (items ?? []) as ScheduleJobItemRow[];
-  const now = new Date();
-  const excludePostIds = pendingPosts.map((post) => post.id as string);
-  const contentType = contentTypeForPlatform(platform);
-
-  const { context: warmupContext, plan, planningMeta } = await buildWarmupRecalculatePlan({
-    supabase,
-    accountId,
-    platform,
-    contentType,
-    pendingCount: pendingPosts.length,
-    excludePostIds,
-    now,
-  });
-
-  if (plan.schedule.length < pendingPosts.length) {
-    return NextResponse.json({ error: "insufficient_warmup_slots" }, { status: 500 });
-  }
-
-  const before: Array<{ postId: string; scheduledAt: string }> = [];
-  const after: Array<{ postId: string; scheduledAt: string }> = [];
-
-  for (let index = 0; index < pendingPosts.length; index++) {
-    const post = pendingPosts[index]!;
-    const nextAt = plan.schedule[index]!.toISOString();
-    before.push({ postId: post.id as string, scheduledAt: post.scheduled_at as string });
-    after.push({ postId: post.id as string, scheduledAt: nextAt });
-  }
-
-  const nowIso = now.toISOString();
-  for (let offset = 0; offset < pendingPosts.length; offset += 10) {
-    const chunk = pendingPosts.slice(offset, offset + 10);
-    await Promise.all(
-      chunk.map((post, chunkIndex) => {
-        const index = offset + chunkIndex;
-        const nextAt = plan.schedule[index]!.toISOString();
-        return supabase
-          .from("scheduled_posts")
-          .update({ scheduled_at: nextAt, updated_at: nowIso })
-          .eq("id", post.id)
-          .in("status", ACTIVE_POST_STATUSES);
-      }),
-    );
-  }
-
-  for (let offset = 0; offset < jobItems.length; offset += 10) {
-    const chunk = jobItems.slice(offset, offset + 10);
-    await Promise.all(
-      chunk.map((item, chunkIndex) => {
-        const index = offset + chunkIndex;
-        const nextAt = plan.schedule[index]?.toISOString();
-        if (!nextAt || !item.destinations?.length) return Promise.resolve();
-        const destinations = item.destinations.map((dest) => ({
-          ...dest,
-          scheduled_at: nextAt,
-        }));
-        return supabase
-          .from("schedule_job_items")
-          .update({
-            destinations,
-            scheduled_at: nextAt,
-            updated_at: nowIso,
-          })
-          .eq("id", item.id);
-      }),
-    );
-  }
-
-  await supabase
-    .from("schedule_jobs")
-    .update({
-      config: {
-        ...job.config,
-        schedule_plan: {
-          ...job.config?.schedule_plan,
-          warmupStartDate: warmupContext.warmupStartDate,
-          nowUsedForPlanning: now.toISOString(),
-          plannedPosts: plan.plannedPosts,
-          skippedPastSlots: plan.skippedPastSlots,
-          planningMeta,
-        },
-      },
-      updated_at: now.toISOString(),
-    })
-    .eq("id", id);
-
-  return NextResponse.json({
-    ok: true,
-    warmupStartDate: warmupContext.warmupStartDate,
-    updated: pendingPosts.length,
-    planningMeta,
-    before,
-    after,
-  });
 }
