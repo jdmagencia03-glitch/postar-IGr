@@ -128,6 +128,7 @@ export async function buildWarmupRecalculatePlan(params: {
   pendingCount: number;
   excludePostIds?: string[];
   now?: Date;
+  includeCapacityDiagnostics?: boolean;
 }) {
   const now = params.now ?? new Date();
   const context = resolveWarmupScheduleContext({
@@ -143,15 +144,17 @@ export async function buildWarmupRecalculatePlan(params: {
     localDates: planningDates,
     excludePostIds: params.excludePostIds,
   });
-  const capacityDiagnostics = await buildWarmupCapacityDiagnostics(params.supabase, {
-    accountId: params.accountId,
-    platform: params.platform,
-    contentType: params.contentType,
-    localDates: planningDates.slice(0, 7),
-    warmupStartDate: context.warmupStartDate,
-    dailyLimitForRampDay: getWarmupDailyPostLimit,
-    excludePostIds: params.excludePostIds,
-  });
+  const capacityDiagnostics = params.includeCapacityDiagnostics === false
+    ? { existingValidPostsByDate: [], ignoredStatusesByDate: {} }
+    : await buildWarmupCapacityDiagnostics(params.supabase, {
+        accountId: params.accountId,
+        platform: params.platform,
+        contentType: params.contentType,
+        localDates: planningDates.slice(0, 7),
+        warmupStartDate: context.warmupStartDate,
+        dailyLimitForRampDay: getWarmupDailyPostLimit,
+        excludePostIds: params.excludePostIds,
+      });
   const plan = buildWarmupSchedulePlan({
     count: params.pendingCount,
     warmupDayOffset: context.warmupDayOffset,
