@@ -13,16 +13,14 @@ export async function executeWarmupRecalculate(jobId: string) {
   const supabase = createAdminClient();
   const step = (name: string) => console.info("[warmup-recalculate]", { jobId, step: name });
 
-  step("load_job");
   const { data: job, error } = await supabase
     .from("schedule_jobs")
-    .select(
-      "id, schedule_mode, upload_batch_id, platform, account_id, tiktok_account_id, config",
-    )
+    .select("id, schedule_mode, upload_batch_id, platform, account_id, tiktok_account_id")
     .eq("id", jobId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!job) throw new Error("job_not_found");
+  step("load_job");
 
   const row = job as ScheduleJobRow;
   if (row.schedule_mode !== "warmup") throw new Error("job_not_warmup");
@@ -32,7 +30,6 @@ export async function executeWarmupRecalculate(jobId: string) {
   const accountId = platform === "tiktok" ? row.tiktok_account_id : row.account_id;
   if (!accountId) throw new Error("job_missing_account");
 
-  step("load_pending_posts");
   const { data: posts, error: postsError } = await supabase
     .from("scheduled_posts")
     .select("id, scheduled_at, status")
@@ -40,18 +37,19 @@ export async function executeWarmupRecalculate(jobId: string) {
     .in("status", ACTIVE_POST_STATUSES)
     .order("scheduled_at", { ascending: true });
   if (postsError) throw new Error(postsError.message);
+  step("load_pending_posts");
 
   const pendingPosts = posts ?? [];
   if (!pendingPosts.length) {
     return { ok: true as const, updated: 0, before: [], after: [] };
   }
 
-  step("load_job_items");
   const { data: items } = await supabase
     .from("schedule_job_items")
     .select("id, destinations, sort_order, scheduled_at")
     .eq("schedule_job_id", jobId)
     .order("sort_order", { ascending: true });
+  step("load_job_items");
 
   const jobItems = (items ?? []) as ScheduleJobItemRow[];
   const now = new Date();
@@ -60,7 +58,6 @@ export async function executeWarmupRecalculate(jobId: string) {
   );
   const contentType = contentTypeForPlatform(platform);
 
-  step("build_plan");
   const { context: warmupContext, plan, planningMeta } = await buildWarmupRecalculatePlan({
     supabase,
     accountId,
@@ -71,6 +68,7 @@ export async function executeWarmupRecalculate(jobId: string) {
     now,
     includeCapacityDiagnostics: false,
   });
+  step("build_plan");
 
   if (plan.schedule.length < pendingPosts.length) {
     throw new Error("insufficient_warmup_slots");
@@ -86,7 +84,6 @@ export async function executeWarmupRecalculate(jobId: string) {
     after.push({ postId: post.id as string, scheduledAt: nextAt });
   }
 
-  step("update_posts");
   const nowIso = now.toISOString();
   for (let offset = 0; offset < pendingPosts.length; offset += 10) {
     const chunk = pendingPosts.slice(offset, offset + 10);
@@ -102,6 +99,7 @@ export async function executeWarmupRecalculate(jobId: string) {
       }),
     );
   }
+  step("update_posts");
 
   step("update_job_items");
   for (let offset = 0; offset < jobItems.length; offset += 10) {
@@ -126,25 +124,7 @@ export async function executeWarmupRecalculate(jobId: string) {
       }),
     );
   }
-
-  step("update_job_config");
-  await supabase
-    .from("schedule_jobs")
-    .update({
-      config: {
-        ...row.config,
-        schedule_plan: {
-          ...row.config?.schedule_plan,
-          warmupStartDate: warmupContext.warmupStartDate,
-          nowUsedForPlanning: now.toISOString(),
-          plannedPosts: plan.plannedPosts,
-          skippedPastSlots: plan.skippedPastSlots,
-          planningMeta,
-        },
-      },
-      updated_at: nowIso,
-    })
-    .eq("id", jobId);
+  step("update_job_items");
 
   step("done");
   return {
