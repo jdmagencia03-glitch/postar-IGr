@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getOwnerAccounts } from "@/lib/accounts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
+import {
+  filterPostsForCalendarView,
+  getCalendarStatusesForView,
+  normalizeCalendarView,
+} from "@/lib/calendar/status";
 import { zonedDateTimeToUtc } from "@/lib/timezone";
 import type {
   PostStatus,
@@ -275,9 +280,6 @@ export async function getOwnerScheduledPosts(
 
 export type CalendarMonthView = "active" | "all" | "pending" | "published" | "cancelled";
 
-const CALENDAR_PENDING_STATUSES = ["pending", "processing", "retrying", "failed"] as const;
-const CALENDAR_ALL_STATUSES = [...CALENDAR_PENDING_STATUSES, "published"] as const;
-
 const CALENDAR_CANCELLED_LIMIT = 800;
 const CALENDAR_MONTH_LIMIT = 3000;
 
@@ -302,9 +304,10 @@ export async function getOwnerPostsForCalendarMonth(
   },
 ): Promise<{ posts: ScheduledPost[]; truncated: boolean }> {
   const view = params.view ?? "active";
+  const normalizedView = normalizeCalendarView(view);
   const { start, end } = calendarMonthUtcRange(params.month);
   const limit =
-    view === "cancelled"
+    normalizedView === "cancelled"
       ? CALENDAR_CANCELLED_LIMIT
       : CALENDAR_MONTH_LIMIT;
 
@@ -354,14 +357,11 @@ export async function getOwnerPostsForCalendarMonth(
       query = query.in("account_id", ids);
     }
 
-    if (view === "cancelled") {
-      query = query.eq("status", "cancelled");
-    } else if (view === "published") {
-      query = query.eq("status", "published");
-    } else if (view === "active") {
-      query = query.in("status", [...CALENDAR_PENDING_STATUSES]);
-    } else if (view === "all") {
-      query = query.in("status", [...CALENDAR_ALL_STATUSES]);
+    const statuses = getCalendarStatusesForView(view);
+    if (statuses.length === 1) {
+      query = query.eq("status", statuses[0]!);
+    } else {
+      query = query.in("status", [...statuses]);
     }
 
     const { data, error } = await query;
@@ -385,13 +385,7 @@ export async function getOwnerPostsForCalendarMonth(
     (a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
   );
 
-  if (view === "pending") {
-    merged = merged.filter((post) =>
-      ["pending", "processing", "retrying", "failed", "failed_persistent", "needs_media"].includes(
-        post.status,
-      ),
-    );
-  }
+  merged = filterPostsForCalendarView(merged, view);
 
   const truncated = merged.length > limit;
   return { posts: merged.slice(0, limit), truncated };

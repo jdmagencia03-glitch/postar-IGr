@@ -4,7 +4,7 @@ import {
   requireApiSessionSafe,
 } from "@/lib/auth/api-session";
 import { dbTimeoutJsonResponse } from "@/lib/api/db-resilience";
-import { getOwnerPostsForCalendarMonth } from "@/lib/posts";
+import { getOwnerPostsForCalendarMonth, type CalendarMonthView } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { withHardTimeout, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
@@ -21,13 +21,16 @@ export async function GET(request: NextRequest) {
     }
 
     const month = request.nextUrl.searchParams.get("month") ?? "";
+    const viewParam = request.nextUrl.searchParams.get("view");
+    const view = (viewParam ?? "active") as CalendarMonthView;
+
     if (!/^\d{4}-\d{2}$/.test(month)) {
       return NextResponse.json({ ok: false, error: "invalid_month", data: [] }, { status: 400 });
     }
 
     const supabase = createAdminClient();
     const result = await withHardTimeout(
-      getOwnerPostsForCalendarMonth(supabase, session.userId, { month, view: "active" }),
+      getOwnerPostsForCalendarMonth(supabase, session.userId, { month, view }),
       DB_ROUTE_TIMEOUT_MS,
       null,
       "api-calendar-posts",

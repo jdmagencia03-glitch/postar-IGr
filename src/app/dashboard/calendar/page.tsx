@@ -13,6 +13,7 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { warmupDateKey } from "@/lib/account-warmup";
+import { isCalendarPublishedStatus, normalizeCalendarView } from "@/lib/calendar/status";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
 import { CalendarDayPosts } from "@/components/calendar/CalendarDayPosts";
 import { CalendarStatusFilter, type CalendarView } from "@/components/calendar/CalendarStatusFilter";
@@ -81,6 +82,7 @@ export default async function CalendarPage({
 
   const params = await searchParams;
   const calendarView = parseCalendarView(params.view);
+  const normalizedView = normalizeCalendarView(calendarView);
   const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
     ? params.platform ?? "all"
     : "all";
@@ -105,7 +107,7 @@ export default async function CalendarPage({
       accountId: selectedAccountId,
       view: calendarView as CalendarMonthView,
     }),
-    calendarView === "active"
+    calendarView === "active" || normalizedView === "pending"
       ? getOwnerPostsForCalendarMonth(supabase, ownerId, {
           month: monthKey,
           platform: platformFilter,
@@ -118,7 +120,7 @@ export default async function CalendarPage({
   const visiblePosts = monthPosts;
   const postsByDay = indexPostsByLocalDate(visiblePosts);
   const cancelledPostsByDay =
-    calendarView === "active" ? indexPostsByLocalDate(cancelledMonthPosts) : postsByDay;
+    normalizedView === "pending" ? indexPostsByLocalDate(cancelledMonthPosts) : postsByDay;
 
   const now = new Date();
   const prevMonth = subMonths(viewMonth, 1);
@@ -191,10 +193,9 @@ export default async function CalendarPage({
           const dayKey = warmupDateKey(day);
           const dayPosts = postsByDay.get(dayKey) ?? [];
           const cancelledDayPosts = cancelledPostsByDay.get(dayKey) ?? [];
-          const cancelledCount =
-            calendarView === "active" ? cancelledDayPosts.length : 0;
+          const cancelledCount = normalizedView === "pending" ? cancelledDayPosts.length : 0;
           const isPastDay = isBefore(startOfDay(day), startOfDay(now));
-          const hasPublished = dayPosts.some((post) => post.status === "published");
+          const hasPublished = dayPosts.some((post) => isCalendarPublishedStatus(post.status));
           const isPublishedDay = isPastDay && hasPublished;
 
           return (
