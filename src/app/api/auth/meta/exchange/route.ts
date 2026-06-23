@@ -3,7 +3,7 @@ import { attachOAuthSessionCookie } from "@/lib/auth/oauth-callback-persist";
 import { completeMetaOAuthExchange } from "@/lib/auth/meta-oauth-exchange";
 import { getSessionCookieDeleteOptions } from "@/lib/auth/session";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function clearOAuthCookies(response: NextResponse) {
   response.cookies.set("meta_oauth_state", "", getSessionCookieDeleteOptions());

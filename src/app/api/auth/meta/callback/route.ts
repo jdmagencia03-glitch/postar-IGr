@@ -46,22 +46,31 @@ export async function GET(request: NextRequest) {
     return loginErrorRedirect(appUrl, "oauth_invalid");
   }
 
-  if (!storedState || storedState !== state) {
+  if (storedState && storedState !== state) {
     void logSecurityEvent({
       eventType: "login_failed",
       ipAddress: getClientIp(request),
       userAgent: request.headers.get("user-agent"),
-      metadata: {
-        provider: "instagram",
-        reason: storedState ? "oauth_invalid" : "oauth_cookie_missing",
-      },
+      metadata: { provider: "instagram", reason: "oauth_invalid" },
     });
-    return loginErrorRedirect(
-      appUrl,
-      storedState
-        ? "oauth_invalid"
-        : "Sessão OAuth expirou. Use o mesmo navegador e permita cookies.",
-    );
+    return loginErrorRedirect(appUrl, "oauth_invalid");
+  }
+
+  if (!storedState) {
+    const stateLooksValid = /^[a-f0-9]{32}$/i.test(state);
+    if (!stateLooksValid) {
+      void logSecurityEvent({
+        eventType: "login_failed",
+        ipAddress: getClientIp(request),
+        userAgent: request.headers.get("user-agent"),
+        metadata: { provider: "instagram", reason: "oauth_cookie_missing" },
+      });
+      return loginErrorRedirect(
+        appUrl,
+        "Sessão OAuth expirou. Use o mesmo navegador e permita cookies.",
+      );
+    }
+    console.warn("[oauth-callback-cookieless-fallback]");
   }
 
   const finishUrl = new URL(`${appUrl}/login/oauth-callback`);

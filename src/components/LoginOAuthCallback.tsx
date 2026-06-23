@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -11,28 +11,39 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Nenhuma conta Instagram Business/Creator vinculada a uma Página do Facebook.",
 };
 
-async function waitForSession(maxMs = 8_000): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started < maxMs) {
-    try {
-      const res = await fetch("/api/auth/session", {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { authenticated?: boolean };
-        if (data.authenticated === true) return true;
-      }
-    } catch {
-      // retry
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+const EXCHANGE_TIMEOUT_MS = 55_000;
+
+async function postExchange(
+  body: { code: string; state: string; next: string },
+  signal: AbortSignal,
+) {
+  const res = await fetch("/api/auth/meta/exchange", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
+    signal,
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  let data: {
+    ok?: boolean;
+    redirectTo?: string;
+    error?: string;
+    sessionCreated?: boolean;
+  } = {};
+
+  try {
+    data = JSON.parse(text) as typeof data;
+  } catch {
+    throw new Error("invalid_response");
   }
-  return false;
+
+  return { res, data };
 }
 
 export function LoginOAuthCallback() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const started = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,48 +65,57 @@ export function LoginOAuthCallback() {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const timer = setTimeout(() => controller.abort(), EXCHANGE_TIMEOUT_MS);
 
     (async () => {
+      const payload = { code, state, next };
+
       try {
-        const res = await fetch("/api/auth/meta/exchange", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          cache: "no-store",
-          signal: controller.signal,
-          body: JSON.stringify({ code, state, next }),
-        });
+        let lastError = "Não foi possível conectar ao Instagram agora. Tente novamente.";
 
-        const data = (await res.json()) as {
-          ok?: boolean;
-          redirectTo?: string;
-          error?: string;
-          sessionCreated?: boolean;
-        };
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 1_500));
+          }
 
-        if (!res.ok || !data.ok) {
-          setError(data.error ?? "Falha na autenticação. Tente novamente.");
-          return;
+          try {
+            const { res, data } = await postExchange(payload, controller.signal);
+
+            if (!res.ok || !data.ok) {
+              lastError = data.error ?? "Falha na autenticação. Tente novamente.";
+              if (res.status >= 500 && attempt === 0) continue;
+              setError(lastError);
+              return;
+            }
+
+            const target = data.redirectTo?.startsWith("/")
+              ? data.redirectTo
+              : `${next}?connected=1`;
+            window.location.replace(target);
+            return;
+          } catch (inner) {
+            if (inner instanceof Error && inner.message === "invalid_response") {
+              lastError = "Resposta inválida do servidor. Tente novamente.";
+              if (attempt === 0) continue;
+            }
+            if (controller.signal.aborted) {
+              setError("Instagram demorou para responder. Tente novamente.");
+              return;
+            }
+            if (attempt === 0) continue;
+            setError(lastError);
+            return;
+          }
         }
 
-        const sessionOk = await waitForSession();
-        if (!sessionOk) {
-          setError("Não foi possível iniciar sua sessão. Tente novamente.");
-          return;
-        }
-
-        const target = data.redirectTo?.startsWith("/")
-          ? data.redirectTo
-          : `${next}?connected=1`;
-        router.replace(target);
+        setError(lastError);
       } catch {
         setError("Não foi possível conectar ao Instagram agora. Tente novamente.");
       } finally {
         clearTimeout(timer);
       }
     })();
-  }, [router, searchParams]);
+  }, [searchParams]);
 
   if (error) {
     const label = ERROR_MESSAGES[error] ?? error;

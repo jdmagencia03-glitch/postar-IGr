@@ -26,8 +26,8 @@ import {
   userMessageForMetaOAuthError,
 } from "@/lib/auth/meta-oauth-errors";
 
-const TOKEN_EXCHANGE_MS = 12_000;
-const PROFILE_FETCH_MS = 8_000;
+const TOKEN_EXCHANGE_MS = 25_000;
+const PROFILE_FETCH_MS = 20_000;
 const OWNER_LOOKUP_MS = 2_000;
 
 export type MetaOAuthExchangeResult =
@@ -131,7 +131,7 @@ export async function completeMetaOAuthExchange(
     return fail("meta_profile_timeout", 504);
   }
 
-  if (!isProfessionalInstagramAccount(profile.account_type)) {
+  if (profile.account_type && !isProfessionalInstagramAccount(profile.account_type)) {
     return fail("meta_no_instagram", 400);
   }
 

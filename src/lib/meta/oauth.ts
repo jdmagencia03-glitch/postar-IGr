@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import { getMetaRedirectUri } from "@/lib/app-url";
 
-const META_FETCH_TIMEOUT_MS = 8_000;
+const META_FETCH_TIMEOUT_MS = 20_000;
 
 async function fetchWithTimeout(url: string, init?: RequestInit) {
   const controller = new AbortController();
@@ -11,6 +11,15 @@ async function fetchWithTimeout(url: string, init?: RequestInit) {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function withMetaRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (first) {
+    console.warn("[oauth-meta-retry]", { label });
+    return fn();
   }
 }
 
@@ -76,36 +85,38 @@ export function getOAuthStateCookieOptions() {
 }
 
 export async function exchangeCodeForToken(code: string) {
-  const { appId, appSecret } = getInstagramCredentials();
+  return withMetaRetry(async () => {
+    const { appId, appSecret } = getInstagramCredentials();
 
-  const res = await fetchWithTimeout("https://api.instagram.com/oauth/access_token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: appId,
-      client_secret: appSecret,
-      grant_type: "authorization_code",
-      redirect_uri: getRedirectUri(),
-      code,
-    }),
-  });
+    const res = await fetchWithTimeout("https://api.instagram.com/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: appId,
+        client_secret: appSecret,
+        grant_type: "authorization_code",
+        redirect_uri: getRedirectUri(),
+        code,
+      }),
+    });
 
-  const data = await res.json();
+    const data = await res.json();
 
-  if (!res.ok) {
-    throw new Error(data.error_message ?? data.error?.message ?? "Falha ao trocar código por token");
-  }
+    if (!res.ok) {
+      throw new Error(data.error_message ?? data.error?.message ?? "Falha ao trocar código por token");
+    }
 
-  const tokenEntry = Array.isArray(data.data) ? data.data[0] : data;
+    const tokenEntry = Array.isArray(data.data) ? data.data[0] : data;
 
-  if (!tokenEntry?.access_token || !tokenEntry?.user_id) {
-    throw new Error("Resposta de token inválida da API do Instagram");
-  }
+    if (!tokenEntry?.access_token || !tokenEntry?.user_id) {
+      throw new Error("Resposta de token inválida da API do Instagram");
+    }
 
-  return {
-    access_token: tokenEntry.access_token as string,
-    user_id: String(tokenEntry.user_id),
-  };
+    return {
+      access_token: tokenEntry.access_token as string,
+      user_id: String(tokenEntry.user_id),
+    };
+  }, "exchangeCodeForToken");
 }
 
 export async function getLongLivedToken(shortToken: string) {
@@ -159,22 +170,24 @@ export async function getLongLivedToken(shortToken: string) {
 }
 
 export async function getInstagramProfile(accessToken: string) {
-  const fields = "id,username,profile_picture_url,account_type";
-  const res = await fetchWithTimeout(
-    `https://graph.instagram.com/v21.0/me?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
-  );
-  const data = await res.json();
+  return withMetaRetry(async () => {
+    const fields = "id,username,profile_picture_url,account_type";
+    const res = await fetchWithTimeout(
+      `https://graph.instagram.com/v21.0/me?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
+    );
+    const data = await res.json();
 
-  if (!res.ok) {
-    throw new Error(data.error?.message ?? "Falha ao obter perfil Instagram");
-  }
+    if (!res.ok) {
+      throw new Error(data.error?.message ?? "Falha ao obter perfil Instagram");
+    }
 
-  return data as {
-    id: string;
-    username: string;
-    profile_picture_url?: string;
-    account_type?: string;
-  };
+    return data as {
+      id: string;
+      username: string;
+      profile_picture_url?: string;
+      account_type?: string;
+    };
+  }, "getInstagramProfile");
 }
 
 export { getSessionUserId, requireSessionUserId } from "@/lib/auth/session";

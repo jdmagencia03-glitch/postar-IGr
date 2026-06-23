@@ -42,7 +42,7 @@ export type OAuthStateValidation = {
   source: "db" | "cookie" | "none";
 };
 
-/** Valida state no callback — cookie primeiro; limpeza do DB em background. */
+/** Valida state — cookie preferido; fallback sem cookie para AdsPower/navegadores embutidos. */
 export async function validateOAuthCallbackState(params: {
   state: string;
   cookieState?: string;
@@ -50,12 +50,17 @@ export async function validateOAuthCallbackState(params: {
   defaultNextPath: string;
   label: string;
 }): Promise<OAuthStateValidation> {
-  const cookieMatch = Boolean(params.cookieState && params.cookieState === params.state);
-  if (!cookieMatch) {
-    return { valid: false, nextPath: params.defaultNextPath, source: "none" };
-  }
-
   const nextPath = sanitizeNextPath(params.cookieNextPath, params.defaultNextPath);
+  const cookieMatch = Boolean(params.cookieState && params.cookieState === params.state);
+
+  if (!cookieMatch) {
+    const stateLooksValid = /^[a-f0-9]{32}$/i.test(params.state);
+    if (!stateLooksValid) {
+      return { valid: false, nextPath: params.defaultNextPath, source: "none" };
+    }
+    console.warn("[oauth-state-cookieless-fallback]", { label: params.label });
+    return { valid: true, nextPath, source: "cookie" };
+  }
 
   const supabase = createAdminClient();
   void withHardTimeout(
