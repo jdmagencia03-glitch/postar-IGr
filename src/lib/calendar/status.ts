@@ -1,19 +1,17 @@
-import type { PostStatus } from "@/lib/types";
-
 export const CALENDAR_PENDING_STATUSES = [
   "pending",
+  "scheduled",
   "processing",
   "retrying",
   "failed",
-] as const satisfies readonly PostStatus[];
+] as const;
 
-export const CALENDAR_PUBLISHED_STATUSES = ["published"] as const satisfies readonly PostStatus[];
+export const CALENDAR_PUBLISHED_STATUSES = ["published"] as const;
 
-export const CALENDAR_CANCELLED_STATUSES = ["cancelled"] as const satisfies readonly PostStatus[];
+export const CALENDAR_CANCELLED_STATUSES = ["cancelled"] as const;
 
 export const CALENDAR_NORMAL_STATUSES = [
   ...CALENDAR_PENDING_STATUSES,
-  "scheduled",
   ...CALENDAR_PUBLISHED_STATUSES,
 ] as const;
 
@@ -43,7 +41,6 @@ export function normalizeCalendarView(view?: string | null): CalendarViewKey {
 }
 
 export function isCalendarPendingStatus(status: string): boolean {
-  if (status === "scheduled") return true;
   return (CALENDAR_PENDING_STATUSES as readonly string[]).includes(status);
 }
 
@@ -70,10 +67,10 @@ export function getCalendarStatusesForView(view?: string | null): readonly strin
     case "published":
       return CALENDAR_PUBLISHED_STATUSES;
     case "all":
-      return [...CALENDAR_PENDING_STATUSES, "scheduled", ...CALENDAR_PUBLISHED_STATUSES];
+      return CALENDAR_NORMAL_STATUSES;
     case "pending":
     default:
-      return [...CALENDAR_PENDING_STATUSES, "scheduled"];
+      return CALENDAR_PENDING_STATUSES;
   }
 }
 

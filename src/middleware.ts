@@ -85,5 +85,6 @@ export const config = {
     "/api/comment-dm/:path*",
     "/api/calendar/:path*",
     "/api/schedule-jobs/:path*",
+    "/api/debug/:path*",
   ],
 };

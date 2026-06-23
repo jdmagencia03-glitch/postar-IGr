@@ -1,10 +1,13 @@
 /** Máximo de vídeos por requisição API (evita timeout Vercel) */
 export const API_BATCH_SIZE = 50;
 
-export {
-  BATCH_CREATE_CHUNK_SIZE,
-  MAX_VIDEOS_PER_BATCH as MAX_VIDEOS_TOTAL,
-} from "@/lib/upload/storage-config";
+export { BATCH_CREATE_CHUNK_SIZE } from "@/lib/upload/storage-config";
+
+/** Limite estável por lote enquanto o processamento em massa é otimizado. */
+export const MAX_VIDEOS_TOTAL = 50;
+
+export const STABILITY_BATCH_LIMIT_MESSAGE =
+  "Para manter estabilidade enquanto o processamento em massa é otimizado, envie até 50 vídeos por lote.";
 
 /** Tamanho do lote para geração de legendas GPT */
 export const CAPTION_BATCH_SIZE = 25;

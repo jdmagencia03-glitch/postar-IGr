@@ -357,7 +357,9 @@ export async function getOwnerPostsForCalendarMonth(
       query = query.in("account_id", ids);
     }
 
-    const statuses = getCalendarStatusesForView(view);
+    const statuses = getCalendarStatusesForView(view).filter(
+      (status) => status !== "scheduled",
+    );
     if (statuses.length === 1) {
       query = query.eq("status", statuses[0]!);
     } else {

@@ -53,6 +53,7 @@ import {
   UPLOAD_NEAR_COMPLETE_STALL_MS,
   UPLOAD_STALL_TIMEOUT_MS,
 } from "@/lib/upload/storage-config";
+import { MAX_VIDEOS_TOTAL, STABILITY_BATCH_LIMIT_MESSAGE } from "@/lib/autopilot-constants";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
 import type { UploadBatch, UploadBatchFile, UploadSpeedMode } from "@/lib/types";
@@ -1847,6 +1848,21 @@ class UploadSessionStore {
         .filter((file) => !file.removed)
         .map((file) => `${file.filename}|${file.file_size}`),
     );
+    const existingCount = this.batch?.upload_files?.filter((file) => !file.removed).length ?? 0;
+    if (existingCount + files.length > MAX_VIDEOS_TOTAL) {
+      this.validationPreview = {
+        validCount: 0,
+        invalid: files.map((file) => ({
+          file,
+          reason: STABILITY_BATCH_LIMIT_MESSAGE,
+        })),
+        duplicates: [],
+        pendingFiles: [],
+      };
+      this.message = STABILITY_BATCH_LIMIT_MESSAGE;
+      this.emit();
+      return;
+    }
     const validation = validateFiles(files, new Set(), this.maxUploadBytes, existingNameSizes);
     this.validationPreview = {
       validCount: validation.valid.length,
@@ -1897,6 +1913,20 @@ class UploadSessionStore {
 
     const totalInBatch =
       (this.batch?.upload_files?.filter((f) => !f.removed).length ?? 0) + toUpload.length;
+    if (totalInBatch > MAX_VIDEOS_TOTAL) {
+      this.message = STABILITY_BATCH_LIMIT_MESSAGE;
+      this.validationPreview = {
+        validCount: 0,
+        invalid: toUpload.map((item) => ({
+          file: item.file,
+          reason: STABILITY_BATCH_LIMIT_MESSAGE,
+        })),
+        duplicates: validation.duplicates,
+        pendingFiles: [],
+      };
+      this.emit();
+      return;
+    }
     const warning = largeBatchAdaptiveMessage(totalInBatch) ?? largeBatchWarning(totalInBatch);
     if (!this.batch && totalInBatch > 150 && this.speedMode === "turbo") {
       this.speedMode = defaultSpeedModeForBatch(totalInBatch);
