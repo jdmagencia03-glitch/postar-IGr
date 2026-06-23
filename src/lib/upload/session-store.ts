@@ -73,7 +73,6 @@ import { largeBatchWarning, recommendUploadSpeedMode } from "@/lib/upload/queue"
 import {
   ADAPTIVE_RETRY_WINDOW_MS,
   countBatchFileStatuses,
-  defaultSpeedModeForBatch,
   evaluateAdaptiveUpload,
   initialAdaptiveEffectiveMode,
   largeBatchAdaptiveMessage,
@@ -323,7 +322,7 @@ class UploadSessionStore {
   getEffectiveFileConcurrency(): number {
     const presets = this.speedPresets;
     const effective = this.adaptiveEffectiveMode ?? "normal";
-    if (this.safeMode || this.uploadPausedByFailures) {
+    if (this.safeMode) {
       return presets.economy.fileConcurrency;
     }
     if (this.speedMode === "adaptive") {
@@ -389,7 +388,6 @@ class UploadSessionStore {
       this.batchStalled = false;
     }
 
-    if (evaluation.shouldEnterSafeMode) this.safeMode = true;
     if (!evaluation.shouldPauseUploads && evaluation.stability === "stable") {
       this.uploadPausedByFailures = false;
     }
@@ -403,11 +401,6 @@ class UploadSessionStore {
         }
       }
       this.adaptiveActionMessage = evaluation.actionMessage;
-    } else if (evaluation.shouldReduce && this.stallRecoveryCount < 3) {
-      this.reduceConcurrencyOnInstability();
-    } else if (evaluation.shouldEnterSafeMode && this.speedMode !== "economy") {
-      this.safeMode = true;
-      this.setSpeedMode("economy");
     }
 
     if (evaluation.userMessage) {
@@ -1675,10 +1668,7 @@ class UploadSessionStore {
     const totalActive = (currentBatch.upload_files ?? []).filter((f) => !f.removed).length;
     this.initAdaptiveForBatch(totalActive);
     const adaptiveWarning = largeBatchAdaptiveMessage(totalActive) ?? largeBatchWarning(totalActive);
-    if (adaptiveWarning && this.speedMode === "turbo" && totalActive > 150) {
-      this.setSpeedMode("adaptive");
-      this.message = adaptiveWarning;
-    } else if (adaptiveWarning && !this.message) {
+    if (adaptiveWarning && !this.message) {
       this.message = adaptiveWarning;
     }
 
@@ -1913,14 +1903,8 @@ class UploadSessionStore {
       return;
     }
     const warning = largeBatchAdaptiveMessage(totalInBatch) ?? largeBatchWarning(totalInBatch);
-    if (!this.batch && totalInBatch > 150 && this.speedMode === "turbo") {
-      this.speedMode = defaultSpeedModeForBatch(totalInBatch);
-    }
     if (warning) {
       this.message = warning;
-      if (this.speedMode === "turbo" && totalInBatch > 150) {
-        this.setSpeedMode("adaptive");
-      }
     }
 
     this.emit();

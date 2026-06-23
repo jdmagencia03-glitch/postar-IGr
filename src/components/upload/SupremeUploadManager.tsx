@@ -731,13 +731,6 @@ function SpeedModePicker({
 
   const handleChange = (mode: UploadSpeedMode) => {
     if (mode === "turbo" && batchFileCount > 300) {
-      const useAdaptive = window.confirm(
-        `Este lote tem ${batchFileCount} vídeos. O modo Turbo pode causar instabilidade.\n\nOK = usar Adaptativo (recomendado)\nCancelar = ver outras opções`,
-      );
-      if (useAdaptive) {
-        onChange("adaptive");
-        return;
-      }
       if (!window.confirm(turboLargeBatchConfirmMessage(batchFileCount))) {
         return;
       }
