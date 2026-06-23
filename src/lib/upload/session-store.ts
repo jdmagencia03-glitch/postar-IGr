@@ -52,6 +52,7 @@ import {
   UPLOAD_NEAR_COMPLETE_PERCENT,
   UPLOAD_NEAR_COMPLETE_STALL_MS,
   UPLOAD_STALL_TIMEOUT_MS,
+  MAX_VIDEOS_PER_BATCH,
 } from "@/lib/upload/storage-config";
 import type { UploadSessionConfig, UploadLimits, UploadSessionSnapshot, UploadSessionPhase, ValidationPreview, UploadFileRuntimeState } from "@/lib/upload/session-types";
 import { validateFiles } from "@/lib/upload/validate";
@@ -1842,6 +1843,14 @@ class UploadSessionStore {
   handleFileSelection(selected: FileList | null) {
     if (!selected?.length) return;
     const files = Array.from(selected);
+    const existingCount =
+      this.batch?.upload_files?.filter((file) => !file.removed).length ?? 0;
+    if (existingCount + files.length > MAX_VIDEOS_PER_BATCH) {
+      this.message = `Limite de ${MAX_VIDEOS_PER_BATCH} vídeos por lote. Você já tem ${existingCount} e tentou adicionar ${files.length}.`;
+      this.validationPreview = null;
+      this.emit();
+      return;
+    }
     const existingNameSizes = new Set(
       (this.batch?.upload_files ?? [])
         .filter((file) => !file.removed)
@@ -1897,6 +1906,11 @@ class UploadSessionStore {
 
     const totalInBatch =
       (this.batch?.upload_files?.filter((f) => !f.removed).length ?? 0) + toUpload.length;
+    if (totalInBatch > MAX_VIDEOS_PER_BATCH) {
+      this.message = `Limite de ${MAX_VIDEOS_PER_BATCH} vídeos por lote.`;
+      this.emit();
+      return;
+    }
     const warning = largeBatchAdaptiveMessage(totalInBatch) ?? largeBatchWarning(totalInBatch);
     if (!this.batch && totalInBatch > 150 && this.speedMode === "turbo") {
       this.speedMode = defaultSpeedModeForBatch(totalInBatch);

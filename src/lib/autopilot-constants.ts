@@ -10,6 +10,10 @@ export {
 export const LARGE_BATCH_QUEUE_MESSAGE =
   "Seu lote foi recebido. Vamos processar os vídeos em fila. Você pode sair da página e acompanhar o progresso depois.";
 
+/** Limite e aviso exibidos na UI de upload em lote. */
+export const BATCH_UPLOAD_LIMIT_MESSAGE =
+  "Você pode enviar até 600 vídeos por lote. Lotes grandes serão processados em fila e podem levar mais tempo para concluir.";
+
 /** Tamanho do lote para geração de legendas GPT */export const CAPTION_BATCH_SIZE = 25;
 
 /** Máximo de vídeos com prévia detalhada por vídeo */

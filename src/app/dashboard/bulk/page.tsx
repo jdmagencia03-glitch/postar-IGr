@@ -53,7 +53,8 @@ export default async function BulkPage({
         <h1>Agendar vídeos</h1>
         <p>
           Envie uma vez e publique no Instagram Reels, TikTok ou nos dois. A IA adapta legendas e
-          horários para cada plataforma.
+          horários para cada plataforma. Você pode enviar até 600 vídeos por lote. Lotes grandes
+          serão processados em fila e podem levar mais tempo para concluir.
         </p>
       </header>
 

@@ -1,5 +1,5 @@
 -- Estado de pipeline por item (legendas/hashtags) — idempotente, seguro para reexecutar.
--- NÃO aplicar em produção até validação da branch feat/unlimited-batch-queue-pipeline.
+-- Idempotente — seguro reexecutar. Adiciona pipeline jsonb por item em schedule_job_items.
 
 alter table schedule_job_items
   add column if not exists pipeline jsonb default '{}'::jsonb;

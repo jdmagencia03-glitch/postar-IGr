@@ -11,7 +11,9 @@
     "test:warmup": "npx tsx scripts/test-warmup-schedule.ts",
     "test:schedule-pipeline": "npx tsx scripts/test-schedule-job-pipeline.ts",
     "smoke:schedule-batch": "npx tsx scripts/smoke-schedule-job-batch.ts",
-    "smoke:schedule-batch:live": "npx tsx scripts/smoke-schedule-job-batch.ts --live"
+    "smoke:schedule-batch:live": "npx tsx scripts/smoke-schedule-job-batch.ts --live",
+    "backup:prod-tables": "node scripts/backup-prod-tables.mjs",
+    "migrate:pipeline": "node scripts/run-pipeline-migration.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

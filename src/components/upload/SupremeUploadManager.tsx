@@ -11,7 +11,8 @@ import { fileStatusLabel, getCompletedUploadItems } from "@/lib/upload/client";
 import { getFileDisplayPercent } from "@/lib/upload/batch-status";
 import { displayUploadErrorMessage, formatUploadErrorMessage } from "@/lib/upload/errors";
 import { formatBytes } from "@/lib/upload/validate";
-import { getSpeedPresets } from "@/lib/upload/storage-config";
+import { getSpeedPresets, MAX_VIDEOS_PER_BATCH } from "@/lib/upload/storage-config";
+import { BATCH_UPLOAD_LIMIT_MESSAGE } from "@/lib/autopilot-constants";
 import {
   largeBatchAdaptiveMessage,
   recommendSpeedModeForBatch,
@@ -262,10 +263,16 @@ export function SupremeUploadManager({
         Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
       </p>
 
-      <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900">
-        Seu lote foi recebido. Vamos processar os vídeos em fila — você pode sair da página e
-        acompanhar o progresso depois. Lotes muito grandes podem levar mais tempo para concluir.
+      <p className="rounded-xl border border-ig-info-border bg-ig-info-bg px-4 py-3 text-sm text-ig-muted">
+        {BATCH_UPLOAD_LIMIT_MESSAGE}
       </p>
+
+      {showReceivedForSchedule && (
+        <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          Seu lote foi recebido. Vamos processar os vídeos em fila — você pode sair da página e
+          acompanhar o progresso depois.
+        </p>
+      )}
       {!session.initialLoading && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
           <span className="text-xs text-ig-muted">
@@ -363,7 +370,9 @@ export function SupremeUploadManager({
               <Upload size={16} />
               Selecionar vídeos
             </button>
-            <p className="mt-4 text-xs text-ig-muted">MP4, MOV, WEBM · até {maxUploadLabel} por vídeo</p>
+            <p className="mt-4 text-xs text-ig-muted">
+              MP4, MOV, WEBM · até {maxUploadLabel} por vídeo · máx. {MAX_VIDEOS_PER_BATCH} por lote
+            </p>
           </div>
           <SpeedModePicker
             speedMode={session.speedMode}

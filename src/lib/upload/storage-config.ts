@@ -12,8 +12,8 @@ export const MAX_UPLOAD_MB = readPositiveInt(
 
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
-/** Vídeos por lote de upload. */
-export const MAX_VIDEOS_PER_BATCH = readPositiveInt(process.env.MAX_VIDEOS_PER_BATCH, 10_000);
+/** Vídeos por lote de upload (teto fixo em produção: 600). */
+export const MAX_VIDEOS_PER_BATCH = readPositiveInt(process.env.MAX_VIDEOS_PER_BATCH, 600);
 
 /** Metadados por requisição ao criar lote (payload Vercel). */
 /** Metadados por POST ao criar lote — valores altos estouram timeout na Vercel. */
