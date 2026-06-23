@@ -7,6 +7,7 @@ import {
   subDays,
 } from "date-fns";
 import type { ContentType, PostStatus, ScheduledPost, SocialPlatform } from "@/lib/types";
+import { isHudVisibleStatus, isOperationalProblemStatus } from "@/lib/operations/post-status";
 
 export type ReportSortField =
   | "scheduled_at"
@@ -256,9 +257,13 @@ function filterByQuick(posts: ScheduledPost[], quick: ReportQuickFilter | undefi
     case "failed_persistent":
       return posts.filter((post) => post.status === "failed_persistent");
     case "with_error":
-      return posts.filter((post) => Boolean(post.error_message) || isFailedStatus(post.status));
+      return posts.filter(
+        (post) => isOperationalProblemStatus(post.status) && Boolean(post.error_message?.trim()),
+      );
     case "without_error":
-      return posts.filter((post) => !post.error_message && !isFailedStatus(post.status));
+      return posts.filter(
+        (post) => !isOperationalProblemStatus(post.status) || !post.error_message?.trim(),
+      );
     default:
       return posts;
   }
@@ -279,6 +284,8 @@ export function applyReportFilters(
     result = result.filter((post) => isActiveStatus(post.status));
   } else if (filters.status !== "all") {
     result = result.filter((post) => post.status === filters.status);
+  } else {
+    result = result.filter((post) => isHudVisibleStatus(post.status));
   }
 
   result = filterByPeriod(result, filters.period, now);

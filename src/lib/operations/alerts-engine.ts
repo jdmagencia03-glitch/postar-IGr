@@ -73,15 +73,21 @@ export function buildOperationsAlerts(params: {
   }
 
   if (params.coverageDays <= 5) {
-    pushAlert(alerts, {
-      id: "low-queue",
-      type: "queue",
-      severity: "warning",
-      title: "Conteúdo acabando",
+    const pendingInQueue = params.posts.filter(
+      (post) =>
+        post.status === "pending" || post.status === "retrying" || post.status === "needs_media",
+    ).length;
+    if (pendingInQueue > 0) {
+      pushAlert(alerts, {
+        id: "low-queue",
+        type: "queue",
+        severity: "warning",
+        title: "Conteúdo acabando",
       message: `Restam apenas ${params.coverageDays} dia(s) de conteúdo programado.`,
       actionHref: "/dashboard/bulk",
       actionLabel: "Agendar mais vídeos",
     });
+    }
   }
 
   if (params.activeUploadBatchId) {

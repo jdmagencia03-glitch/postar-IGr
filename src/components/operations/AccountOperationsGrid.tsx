@@ -73,12 +73,6 @@ export function AccountOperationsGrid({ accounts }: Props) {
               </span>
             </div>
 
-            {account.lastError && (
-              <p className="mt-3 rounded-lg bg-ig-danger/10 px-3 py-2 text-xs text-ig-danger">
-                {account.lastError}
-              </p>
-            )}
-
             {account.duplicateSlotCount > 0 && (
               <p className="mt-2 text-xs font-medium text-amber-700">
                 Horários duplicados detectados ({account.duplicateSlotCount})
@@ -148,7 +142,7 @@ export function AccountOperationsGrid({ accounts }: Props) {
                   </span>
                 </p>
               )}
-              {account.lastError && (
+              {account.lastError && account.health !== "healthy" && (
                 <p className="flex items-start gap-1 text-ig-danger">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span className="line-clamp-2">{account.lastError}</span>

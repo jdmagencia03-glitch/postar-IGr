@@ -1,5 +1,6 @@
 import { isToday, isWithinInterval, parseISO, startOfDay, subDays } from "date-fns";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
+import { isOperationalProblemStatus } from "@/lib/operations/post-status";
 import type { ContentType, PostStatus, ScheduledPost, SocialPlatform } from "@/lib/types";
 
 export interface StatusBreakdown {
@@ -141,7 +142,7 @@ export function computePublicationMetrics(
     null;
 
   const lastErrorPost = posts
-    .filter((p) => p.error_message)
+    .filter((p) => isOperationalProblemStatus(p.status) && p.error_message?.trim())
     .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())[0];
 
   return {

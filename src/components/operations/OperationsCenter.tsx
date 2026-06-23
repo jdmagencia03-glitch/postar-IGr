@@ -381,7 +381,7 @@ export function OperationsCenter({
         {activeOverview?.recommendedAction && (
           <p className="mt-2 text-sm font-medium text-amber-700">{activeOverview.recommendedAction}</p>
         )}
-        {activeOverview?.lastError && (
+        {activeOverview?.lastError && activeOverview.health !== "healthy" && (
           <p className="mt-2 text-sm text-ig-danger">{activeOverview.lastError}</p>
         )}
 

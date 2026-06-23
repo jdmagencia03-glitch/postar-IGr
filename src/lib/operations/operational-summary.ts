@@ -4,6 +4,7 @@ import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
 import { computeAccountWindowMetrics } from "@/lib/operations/metrics";
 import { deriveAccountTokenStatus } from "@/lib/operations/token-status";
 import type { OwnerAccountRef } from "@/lib/posts";
+import { pickLatestOperationalError } from "@/lib/operations/post-status";
 import {
   ACTIVE_SLOT_STATUSES,
   detectDuplicateSlots,
@@ -71,6 +72,7 @@ export function deriveOperationalHealth(params: {
   tokenStatus: TokenStatus;
   failedCount: number;
   failedPersistentCount: number;
+  needsMediaCount: number;
   retryingCount: number;
   processingCount: number;
   storiesBlocked: number;
@@ -92,6 +94,7 @@ export function deriveOperationalHealth(params: {
 
   if (
     params.failedCount > 0 ||
+    params.needsMediaCount > 0 ||
     params.retryingCount > 0 ||
     params.processingCount > 0 ||
     params.storiesBlocked > 0 ||
@@ -230,6 +233,7 @@ export async function buildAccountOperationalSummary(params: {
     (post) => post.status === "failed" || post.status === "failed_persistent",
   ).length;
   const failedPersistentCount = scoped.filter((post) => post.status === "failed_persistent").length;
+  const needsMediaCount = scoped.filter((post) => post.status === "needs_media").length;
 
   const storiesPending = scoped.filter(
     (post) => post.content_type === "story" && (post.status === "pending" || post.status === "retrying"),
@@ -284,11 +288,7 @@ export async function buildAccountOperationalSummary(params: {
       .sort((a, b) => new Date(b.published_at!).getTime() - new Date(a.published_at!).getTime())[0]
       ?.published_at ?? null;
 
-  const rawLastError =
-    scoped
-      .filter((post) => post.error_message)
-      .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())[0]
-      ?.error_message ?? null;
+  const rawLastError = pickLatestOperationalError(scoped);
 
   const lastError = humanizeLastError(rawLastError);
 
@@ -308,6 +308,7 @@ export async function buildAccountOperationalSummary(params: {
     tokenStatus,
     failedCount,
     failedPersistentCount,
+    needsMediaCount,
     retryingCount,
     processingCount,
     storiesBlocked,

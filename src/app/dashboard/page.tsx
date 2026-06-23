@@ -9,6 +9,7 @@ import { PublisherHealthBanner } from "@/components/PublisherHealthBanner";
 import { ownerHasConfiguredPlaybook } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { getOwnerScheduledPosts } from "@/lib/posts";
+import { isActiveQueueStatus, isHudVisibleStatus } from "@/lib/operations/post-status";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
@@ -50,39 +51,44 @@ export default async function DashboardPage({
     order: "asc" as const,
   };
 
-  const recentPostsResult = await withTimeoutOrNull(
-    getOwnerScheduledPosts(supabase, ownerId, { ...postFilters, limit: 12 }),
-    DB_ROUTE_TIMEOUT_MS,
-    "dashboard-posts-recent",
-  );
   const allPostsResult = await withTimeoutOrNull(
     getOwnerScheduledPosts(supabase, ownerId, postFilters),
     DB_ROUTE_TIMEOUT_MS,
     "dashboard-posts-all",
   );
 
-  if (recentPostsResult === null || allPostsResult === null) {
+  if (allPostsResult === null) {
     loadError = "Não foi possível carregar contas agora. Tente novamente em instantes.";
   }
 
-  const posts: ScheduledPost[] = recentPostsResult ?? [];
   const allPosts: ScheduledPost[] = allPostsResult ?? [];
+  const hudPosts = allPosts.filter((post) => isHudVisibleStatus(post.status));
+  const queuePosts = hudPosts.filter((post) => isActiveQueueStatus(post.status));
+  const posts = queuePosts.slice(0, 12);
 
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
   const stats = {
-    pending: allPosts.filter((p) => p.status === "pending").length,
-    published: allPosts.filter((p) => p.status === "published").length,
-    publishedLast7Days: allPosts.filter(
+    pending: hudPosts.filter((p) => p.status === "pending" || p.status === "retrying").length,
+    published: hudPosts.filter((p) => p.status === "published").length,
+    publishedLast7Days: hudPosts.filter(
       (p) =>
         p.status === "published" &&
         p.published_at &&
         new Date(p.published_at) >= sevenDaysAgo,
     ).length,
-    failed: allPosts.filter((p) => p.status === "failed").length,
+    failed: hudPosts.filter((p) => p.status === "failed" || p.status === "failed_persistent").length,
   };
-  const hasScheduledPosts = stats.pending + stats.published + stats.failed > 0;
+  const hasScheduledPosts = hudPosts.some(
+    (p) =>
+      p.status === "pending" ||
+      p.status === "published" ||
+      p.status === "failed" ||
+      p.status === "failed_persistent" ||
+      p.status === "retrying" ||
+      p.status === "needs_media",
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-4">
@@ -101,7 +107,7 @@ export default async function DashboardPage({
       <DashboardStatsRow stats={stats} />
 
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
-        <DashboardNextPostsPanel posts={posts} allPosts={allPosts} />
+        <DashboardNextPostsPanel posts={posts} allPosts={hudPosts} />
         <DashboardUploadCard />
       </div>
     </div>

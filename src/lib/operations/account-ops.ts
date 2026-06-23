@@ -4,6 +4,10 @@ import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
 import { computeAccountWindowMetrics, computeOutcomeRates } from "@/lib/operations/metrics";
 import { deriveAccountTokenStatus } from "@/lib/operations/token-status";
 import type { OwnerAccountRef } from "@/lib/posts";
+import {
+  isFailedStatus,
+  pickLatestOperationalError,
+} from "@/lib/operations/post-status";
 import type { ContentType, InstagramAccount, ScheduledPost, SocialPlatform, TikTokAccount } from "@/lib/types";
 
 export type AccountHealthLevel = "healthy" | "attention" | "error";
@@ -50,11 +54,19 @@ function deriveHealth(params: {
   tokenStatus: TokenStatus;
   failedCount: number;
   failedPersistentCount: number;
+  needsMediaCount: number;
   storiesBlocked: number;
   publishingPaused: boolean;
 }): AccountHealthLevel {
   if (params.tokenStatus === "expired" || params.failedPersistentCount >= 3) return "error";
-  if (params.failedCount > 0 || params.storiesBlocked > 0 || params.publishingPaused) return "attention";
+  if (
+    params.failedCount > 0 ||
+    params.needsMediaCount > 0 ||
+    params.storiesBlocked > 0 ||
+    params.publishingPaused
+  ) {
+    return "attention";
+  }
   return "healthy";
 }
 
@@ -98,10 +110,9 @@ export async function buildAccountOperationsSummary(params: {
       ? scoped.filter((post) => post.status === "failed" || post.status === "failed_persistent").length
       : 0;
 
-  const failedCount = scoped.filter(
-    (post) => post.status === "failed" || post.status === "failed_persistent",
-  ).length;
+  const failedCount = scoped.filter((post) => isFailedStatus(post.status)).length;
   const failedPersistentCount = scoped.filter((post) => post.status === "failed_persistent").length;
+  const needsMediaCount = scoped.filter((post) => post.status === "needs_media").length;
   const retryingCount = scoped.filter((post) => post.status === "retrying").length;
 
   const windowMetrics = computeAccountWindowMetrics(posts, ref.id, ref.platform);
@@ -118,11 +129,7 @@ export async function buildAccountOperationsSummary(params: {
       .sort((a, b) => new Date(b.published_at!).getTime() - new Date(a.published_at!).getTime())[0]
       ?.published_at ?? null;
 
-  const lastError =
-    scoped
-      .filter((post) => post.error_message)
-      .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())[0]
-      ?.error_message ?? null;
+  const lastError = pickLatestOperationalError(scoped);
 
   const tokenStatus =
     params.tokenStatus ??
@@ -140,6 +147,7 @@ export async function buildAccountOperationsSummary(params: {
     tokenStatus,
     failedCount,
     failedPersistentCount,
+    needsMediaCount,
     storiesBlocked,
     publishingPaused,
   });

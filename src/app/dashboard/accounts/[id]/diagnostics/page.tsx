@@ -47,6 +47,7 @@ export default async function AccountDiagnosticsPage({
     "@/lib/ai/playbook"
   );
   const { buildOperationsAlerts } = await import("@/lib/operations/alerts-engine");
+  const { computeCoverageDays } = await import("@/lib/operations/compute");
   const { checkInstagramAccountHealth } = await import("@/lib/meta/instagram");
   const { getAccountAccessToken } = await import("@/lib/accounts");
 
@@ -122,13 +123,15 @@ export default async function AccountDiagnosticsPage({
     alerts: buildOperationsAlerts({
       accounts: [account],
       posts,
-      coverageDays: 0,
+      coverageDays: computeCoverageDays(posts),
       cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-      lastPublishAt: null,
+      lastPublishAt: account.lastPublication,
       activeUploadBatchId: null,
     }),
     posts: {
-      pending: posts.filter((p) => p.status === "pending" || p.status === "retrying"),
+      pending: posts.filter(
+        (p) => p.status === "pending" || p.status === "retrying" || p.status === "needs_media",
+      ),
       failed: posts.filter((p) => p.status === "failed" || p.status === "failed_persistent"),
       processing: posts.filter((p) => p.status === "processing"),
       published: posts.filter((p) => p.status === "published").slice(0, 20),

@@ -73,6 +73,7 @@ function errorPosts(posts: ScheduledPost[]) {
     (p) =>
       isFailed(p.status) ||
       p.status === "retrying" ||
+      p.status === "needs_media" ||
       (p.status === "processing" && p.error_message),
   );
 }

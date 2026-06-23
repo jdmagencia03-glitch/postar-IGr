@@ -4,6 +4,7 @@ import { getPlaybookForAccount, playbookHasContent, resolveNicheFromPlaybook } f
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { checkInstagramAccountHealth } from "@/lib/meta/instagram";
 import { buildAccountOperationsSummary } from "@/lib/operations/account-ops";
+import { computeCoverageDays } from "@/lib/operations/compute";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
 import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
@@ -136,9 +137,9 @@ export async function GET(
   const alerts = buildOperationsAlerts({
     accounts: [summary],
     posts,
-    coverageDays: 0,
+    coverageDays: computeCoverageDays(posts),
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-    lastPublishAt: null,
+    lastPublishAt: summary.lastPublication,
     activeUploadBatchId: null,
   });
 
@@ -155,7 +156,9 @@ export async function GET(
     },
     alerts,
     posts: {
-      pending: posts.filter((p) => p.status === "pending" || p.status === "retrying"),
+      pending: posts.filter(
+        (p) => p.status === "pending" || p.status === "retrying" || p.status === "needs_media",
+      ),
       failed: posts.filter((p) => p.status === "failed" || p.status === "failed_persistent"),
       processing: posts.filter((p) => p.status === "processing"),
       published: posts.filter((p) => p.status === "published").slice(0, 20),
