@@ -215,7 +215,7 @@ export async function resolveSessionFromToken(
 
   const userId = parseSignedSession(token);
   if (userId) {
-    return { ok: true, userId, source: "db" };
+    return { ok: true, userId, source: "cache" };
   }
 
   return { ok: false, reason: "invalid_session", message: "Sessão inválida" };

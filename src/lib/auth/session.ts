@@ -68,6 +68,9 @@ export async function getSessionUserId(): Promise<string | null> {
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
+  const signedUserId = parseSignedSession(token);
+  if (signedUserId) return signedUserId;
+
   const session = await requireApiSessionSafe("getSessionUserId");
   return session.ok ? session.userId : null;
 }

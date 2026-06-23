@@ -76,6 +76,18 @@
     "src/app/api/schedule-jobs/[id]/status/route.ts": {
       "maxDuration": 15
     },
+    "src/app/api/auth/meta/callback/route.ts": {
+      "maxDuration": 10
+    },
+    "src/app/api/auth/meta/exchange/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/auth/facebook/callback/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/auth/tiktok/callback/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/schedule-jobs/[id]/reconcile-calendar/route.ts": {
       "maxDuration": 60
     },

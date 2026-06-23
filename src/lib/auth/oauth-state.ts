@@ -42,7 +42,7 @@ export type OAuthStateValidation = {
   source: "db" | "cookie" | "none";
 };
 
-/** Valida state no callback — DB com timeout, fallback para cookies quando Supabase lento. */
+/** Valida state no callback — cookie primeiro; limpeza do DB em background. */
 export async function validateOAuthCallbackState(params: {
   state: string;
   cookieState?: string;
@@ -55,38 +55,17 @@ export async function validateOAuthCallbackState(params: {
     return { valid: false, nextPath: params.defaultNextPath, source: "none" };
   }
 
+  const nextPath = sanitizeNextPath(params.cookieNextPath, params.defaultNextPath);
+
   const supabase = createAdminClient();
-  const dbRow = await withHardTimeout(
+  void withHardTimeout(
     (async () => {
-      const { data } = await supabase
-        .from("oauth_states")
-        .select("next_path")
-        .eq("state", params.state)
-        .maybeSingle();
-      return data;
+      await supabase.from("oauth_states").delete().eq("state", params.state);
     })(),
-    DB_ROUTE_TIMEOUT_MS,
+    2_000,
     null,
-    `${params.label}-lookup`,
-  );
+    `${params.label}-cleanup`,
+  ).catch(() => undefined);
 
-  if (dbRow) {
-    void supabase.from("oauth_states").delete().eq("state", params.state);
-    return {
-      valid: true,
-      nextPath: sanitizeNextPath(dbRow.next_path, params.defaultNextPath),
-      source: "db",
-    };
-  }
-
-  if (params.cookieNextPath) {
-    console.info("[oauth-state-cookie-fallback]", { label: params.label });
-    return {
-      valid: true,
-      nextPath: sanitizeNextPath(params.cookieNextPath, params.defaultNextPath),
-      source: "cookie",
-    };
-  }
-
-  return { valid: false, nextPath: params.defaultNextPath, source: "none" };
+  return { valid: true, nextPath, source: "cookie" };
 }

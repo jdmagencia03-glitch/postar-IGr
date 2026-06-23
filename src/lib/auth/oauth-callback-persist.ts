@@ -1,8 +1,11 @@
-import type { NextRequest } from "next/server";
+import type { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseSignedSession } from "@/lib/auth/session-crypto";
 import {
   SESSION_COOKIE,
   createOpaqueSessionToken,
+  createSignedSession,
+  getSessionCookieOptions,
   primeSessionCache,
 } from "@/lib/auth/session";
 import { API_SESSION_SAFE_TIMEOUT_MS } from "@/lib/auth/api-session";
@@ -11,6 +14,28 @@ import {
   type SessionAuthResult,
 } from "@/lib/auth/session-lookup";
 import { withHardTimeout, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
+
+/** Sessão assinada imediata — login não depende do Supabase responder. */
+export function resolveOAuthCallbackSessionTokenFast(
+  request: NextRequest,
+  ownerId: string,
+): string {
+  const existing = request.cookies.get(SESSION_COOKIE)?.value;
+  if (existing) {
+    const signedUserId = parseSignedSession(existing);
+    if (signedUserId === ownerId) return existing;
+  }
+  return createSignedSession(ownerId);
+}
+
+export function attachOAuthSessionCookie(
+  response: NextResponse,
+  ownerId: string,
+  sessionToken: string,
+) {
+  primeSessionCache(sessionToken, ownerId);
+  response.cookies.set(SESSION_COOKIE, sessionToken, getSessionCookieOptions());
+}
 
 export async function resolveOAuthCallbackSessionToken(
   request: NextRequest,

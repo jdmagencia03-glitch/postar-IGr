@@ -1,14 +1,32 @@
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
-import { getAppUrl } from "@/lib/app-url";
+import { getMetaRedirectUri } from "@/lib/app-url";
+
+const META_FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), META_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function getRedirectUri() {
-  return `${getAppUrl()}/api/auth/meta/callback`;
+  return getMetaRedirectUri();
 }
 
 function getInstagramCredentials() {
-  const appId = process.env.INSTAGRAM_APP_ID;
-  const appSecret = process.env.INSTAGRAM_APP_SECRET;
+  const appId =
+    process.env.INSTAGRAM_APP_ID?.trim() ||
+    process.env.META_APP_ID?.trim() ||
+    process.env.FACEBOOK_CLIENT_ID?.trim();
+  const appSecret =
+    process.env.INSTAGRAM_APP_SECRET?.trim() ||
+    process.env.META_APP_SECRET?.trim() ||
+    process.env.FACEBOOK_CLIENT_SECRET?.trim();
 
   if (!appId || !appSecret) {
     throw new Error("INSTAGRAM_APP_ID e INSTAGRAM_APP_SECRET são obrigatórios");
@@ -60,7 +78,7 @@ export function getOAuthStateCookieOptions() {
 export async function exchangeCodeForToken(code: string) {
   const { appId, appSecret } = getInstagramCredentials();
 
-  const res = await fetch("https://api.instagram.com/oauth/access_token", {
+  const res = await fetchWithTimeout("https://api.instagram.com/oauth/access_token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -91,57 +109,59 @@ export async function exchangeCodeForToken(code: string) {
 }
 
 export async function getLongLivedToken(shortToken: string) {
-  const { appSecret } = getInstagramCredentials();
-  const params = new URLSearchParams({
-    grant_type: "ig_exchange_token",
-    client_secret: appSecret,
-    access_token: shortToken,
-  });
-
-  const endpoints = [
-    "https://graph.instagram.com/access_token",
-    "https://graph.instagram.com/v21.0/access_token",
-  ];
-
-  let lastError = "Falha ao obter token de longa duração";
-
-  for (const endpoint of endpoints) {
-    const getRes = await fetch(`${endpoint}?${params}`);
-    const getData = await getRes.json();
-
-    if (getRes.ok && getData.access_token) {
-      return getData.access_token as string;
-    }
-
-    lastError = getData.error?.message ?? lastError;
-
-    const postRes = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params,
+  try {
+    const { appSecret } = getInstagramCredentials();
+    const params = new URLSearchParams({
+      grant_type: "ig_exchange_token",
+      client_secret: appSecret,
+      access_token: shortToken,
     });
-    const postData = await postRes.json();
 
-    if (postRes.ok && postData.access_token) {
-      return postData.access_token as string;
+    const endpoints = [
+      "https://graph.instagram.com/access_token",
+      "https://graph.instagram.com/v21.0/access_token",
+    ];
+
+    let lastError = "Falha ao obter token de longa duração";
+
+    for (const endpoint of endpoints) {
+      const getRes = await fetchWithTimeout(`${endpoint}?${params}`);
+      const getData = await getRes.json();
+
+      if (getRes.ok && getData.access_token) {
+        return getData.access_token as string;
+      }
+
+      lastError = getData.error?.message ?? lastError;
+
+      const postRes = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params,
+      });
+      const postData = await postRes.json();
+
+      if (postRes.ok && postData.access_token) {
+        return postData.access_token as string;
+      }
+
+      lastError = postData.error?.message ?? lastError;
     }
 
-    lastError = postData.error?.message ?? lastError;
+    console.warn("[oauth-meta-long-token-fallback]", { reason: lastError });
+    return shortToken;
+  } catch (error) {
+    console.warn("[oauth-meta-long-token-fallback]", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return shortToken;
   }
-
-  if (lastError.toLowerCase().includes("unsupported request")) {
-    throw new Error(
-      "Permissões do app Instagram ainda não liberadas. No Meta Developer: Casos de uso → Instagram → solicite Acesso Avançado para instagram_business_basic e instagram_business_content_publish. Confira também se INSTAGRAM_APP_SECRET na Vercel está correto.",
-    );
-  }
-
-  throw new Error(lastError);
 }
 
 export async function getInstagramProfile(accessToken: string) {
   const fields = "id,username,profile_picture_url,account_type";
-  const res = await fetch(
-    `https://graph.instagram.com/v21.0/me?fields=${fields}&access_token=${accessToken}`,
+  const res = await fetchWithTimeout(
+    `https://graph.instagram.com/v21.0/me?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
   );
   const data = await res.json();
 

@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   const addAccount = request.nextUrl.searchParams.get("add_account") === "1";
   const supabase = createAdminClient();
 
-  await persistOAuthStateRow(supabase, state, nextPath, "oauth-meta-state-insert");
+  void persistOAuthStateRow(supabase, state, nextPath, "oauth-meta-state-insert");
 
   const response = NextResponse.redirect(
     getMetaAuthUrl(state, {
