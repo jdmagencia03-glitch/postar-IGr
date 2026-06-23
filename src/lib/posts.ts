@@ -622,7 +622,9 @@ export function canDeleteSchedule(status: PostStatus) {
     status === "failed" ||
     status === "retrying" ||
     status === "failed_persistent" ||
-    status === "processing"
+    status === "processing" ||
+    status === "needs_media" ||
+    status === "cancelled"
   );
 }
 

@@ -62,7 +62,6 @@ interface Props {
   filters: ReportFilters;
   posts: ScheduledPost[];
   allPosts: ScheduledPost[];
-  ownerAllPosts?: ScheduledPost[];
   snapshot: ReturnType<typeof computeOperationsSnapshot>;
   globalSnapshot?: ReturnType<typeof computeOperationsSnapshot>;
   publicationMetrics: PublicationMetrics;
@@ -121,7 +120,6 @@ export function OperationsCenter({
   filters,
   posts,
   allPosts,
-  ownerAllPosts,
   snapshot,
   globalSnapshot,
   publicationMetrics,
@@ -327,6 +325,12 @@ export function OperationsCenter({
           className="ml-auto self-center text-sm text-ig-primary hover:underline"
         >
           Logs operacionais →
+        </a>
+        <a
+          href="/dashboard/operations/schedule-jobs"
+          className="self-center text-sm text-ig-primary hover:underline"
+        >
+          Fila de agendamento →
         </a>
       </div>
 

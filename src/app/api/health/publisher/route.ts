@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { getLastPublishedAt } from "@/lib/operations/compute";
 import { getOwnerScheduledPosts } from "@/lib/posts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -14,7 +15,7 @@ export async function GET() {
   const now = new Date();
   const nowIso = now.toISOString();
   const posts = await getOwnerScheduledPosts(supabase, ownerId);
-  const postIds = new Set(posts.map((post) => post.id));
+  const lastPublishAt = getLastPublishedAt(posts);
 
   const overduePending = posts.filter(
     (post) => post.status === "pending" && post.scheduled_at <= nowIso,
@@ -26,17 +27,6 @@ export async function GET() {
     (post) => post.status === "pending" || post.status === "retrying",
   ).length;
 
-  const { data: recentLogs } = postIds.size
-    ? await supabase
-        .from("publish_logs")
-        .select("created_at")
-        .in("post_id", [...postIds])
-        .eq("level", "success")
-        .order("created_at", { ascending: false })
-        .limit(1)
-    : { data: [] };
-
-  const lastPublishAt = recentLogs?.[0]?.created_at ?? null;
   let cronStale = false;
   if (lastPublishAt) {
     cronStale = now.getTime() - new Date(lastPublishAt).getTime() > 30 * 60_000 && overduePending > 0;

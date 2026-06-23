@@ -3,8 +3,7 @@ import { getOwnerAccounts } from "@/lib/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
-import { computeOperationsSnapshot } from "@/lib/operations/compute";
-import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
+import { computeOperationsSnapshot, getLastPublishedAt } from "@/lib/operations/compute";import { getOwnerAccountRefs, getOwnerScheduledPosts } from "@/lib/posts";
 import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { getActiveBatchSummaryForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -35,24 +34,14 @@ export async function GET() {
   });
 
   const snapshot = computeOperationsSnapshot(posts);
-  const postIds = new Set(posts.map((post) => post.id));
-
-  const { data: recentLogs } = postIds.size
-    ? await supabase
-        .from("publish_logs")
-        .select("created_at")
-        .in("post_id", [...postIds])
-        .eq("level", "success")
-        .order("created_at", { ascending: false })
-        .limit(1)
-    : { data: [] };
+  const lastPublishAt = getLastPublishedAt(posts);
 
   const alerts = buildOperationsAlerts({
     accounts,
     posts,
     coverageDays: snapshot.coverageDays,
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-    lastPublishAt: recentLogs?.[0]?.created_at ?? null,
+    lastPublishAt,
     activeUploadBatchId: activeBatch?.id ?? null,
   });
 

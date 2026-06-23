@@ -4,6 +4,7 @@ import { resolveInstagramDuplicateGuard } from "@/lib/instagram/resolve-duplicat
 import { resolveInstagramFailedPost } from "@/lib/instagram/resolve-failed-post";
 import { isInstagramRateLimitError } from "@/lib/instagram/errors";
 import { buildAllAccountOperationsSummaries } from "@/lib/operations/account-ops";
+import { getLastPublishedAt } from "@/lib/operations/compute";
 import {
   buildClientReportedError,
   detectAllOperationalErrors,
@@ -128,23 +129,14 @@ async function detectWithoutPersist(
     ownerId,
   });
 
-  const postIds = new Set(posts.map((p) => p.id));
-  const { data: recentLogs } = postIds.size
-    ? await supabase
-        .from("publish_logs")
-        .select("created_at")
-        .in("post_id", [...postIds])
-        .eq("level", "success")
-        .order("created_at", { ascending: false })
-        .limit(1)
-    : { data: [] };
+  const lastPublishAt = getLastPublishedAt(posts);
 
   return detectAllOperationalErrors({
     batches,
     posts,
     accounts,
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-    lastPublishAt: recentLogs?.[0]?.created_at ?? null,
+    lastPublishAt,
   });
 }
 

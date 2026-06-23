@@ -269,6 +269,37 @@ function filterByQuick(posts: ScheduledPost[], quick: ReportQuickFilter | undefi
   }
 }
 
+export function filterOwnerPostsInMemory(
+  posts: ScheduledPost[],
+  options: {
+    platform?: SocialPlatform | "all";
+    accountId?: string;
+    contentType?: ContentType | "all";
+  },
+): ScheduledPost[] {
+  let result = posts;
+
+  if (options.platform === "instagram") {
+    result = result.filter((post) => (post.platform ?? "instagram") !== "tiktok");
+  } else if (options.platform === "tiktok") {
+    result = result.filter((post) => post.platform === "tiktok");
+  }
+
+  if (options.accountId) {
+    result = result.filter((post) =>
+      post.platform === "tiktok"
+        ? post.tiktok_account_id === options.accountId
+        : post.account_id === options.accountId,
+    );
+  }
+
+  if (options.contentType && options.contentType !== "all") {
+    result = result.filter((post) => (post.content_type ?? "reel") === options.contentType);
+  }
+
+  return result;
+}
+
 export function applyReportFilters(
   posts: ScheduledPost[],
   filters: ReportFilters,

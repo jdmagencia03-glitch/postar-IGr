@@ -23,6 +23,7 @@ import {
   Brain,
   CircleDot,
   History,
+  Workflow,
   AlertTriangle,
 } from "lucide-react";
 import { AccountStatusBadge } from "@/components/AccountStatusBadge";
@@ -42,6 +43,7 @@ const links = [
   { href: "/dashboard/ai", label: "Assistente de conteúdo", icon: Brain },
   { href: "/dashboard/accounts", label: "Contas", icon: Users },
   { href: "/dashboard/reports", label: "Operações", icon: BarChart3 },
+  { href: "/dashboard/operations/schedule-jobs", label: "Fila de agendamento", icon: Workflow },
   { href: "/dashboard/errors", label: "Central de Erros", icon: AlertTriangle },
   { href: "/dashboard/uploads", label: "Uploads", icon: History },
   { href: "/dashboard/calendar", label: "Calendário", icon: Calendar },
@@ -70,6 +72,7 @@ function SidebarNav({
           <Link
             key={link.href}
             href={link.href}
+            prefetch={false}
             onClick={onNavigate}
             className={`ig-nav-link ${active ? "ig-nav-link-active" : ""}`}
           >
@@ -117,7 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <Link href="/dashboard/bulk" className="ig-compose-btn mb-4" onClick={() => setMobileOpen(false)}>
+        <Link href="/dashboard/bulk" prefetch={false} className="ig-compose-btn mb-4" onClick={() => setMobileOpen(false)}>
           <PenSquare size={20} strokeWidth={1.75} />
           Agendar posts
         </Link>

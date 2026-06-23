@@ -55,6 +55,13 @@ function publishedPosts(posts: ScheduledPost[]) {
   return posts.filter((post) => post.status === "published" && post.published_at);
 }
 
+export function getLastPublishedAt(posts: ScheduledPost[]) {
+  const last = publishedPosts(posts).sort(
+    (a, b) => new Date(b.published_at!).getTime() - new Date(a.published_at!).getTime(),
+  )[0];
+  return last?.published_at ?? null;
+}
+
 export function computeCoverageDays(posts: ScheduledPost[], now = new Date()) {
   const pending = pendingPosts(posts);
   if (!pending.length) return 0;

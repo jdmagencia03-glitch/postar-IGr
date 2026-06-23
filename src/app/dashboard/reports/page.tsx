@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { OperationsCenter } from "@/components/operations/OperationsCenter";
-import { computeOperationsSnapshot } from "@/lib/operations/compute";
+import { computeOperationsSnapshot, getLastPublishedAt } from "@/lib/operations/compute";
 import { buildAllAccountOperationalSummaries } from "@/lib/operations/operational-summary";
 import { buildOperationsAlerts } from "@/lib/operations/alerts-engine";
 import { buildErrorReport } from "@/lib/operations/error-report";
 import {
   applyReportFilters,
+  filterOwnerPostsInMemory,
   parseReportFilters,
   sortReportPosts,
 } from "@/lib/operations/filters";
@@ -26,8 +27,11 @@ import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { getActiveBatchSummaryForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ScheduledPost } from "@/lib/types";
+import { withHardTimeout } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
+
+const REPORTS_LOAD_TIMEOUT_MS = 12_000;
 
 export default async function ReportsPage({
   searchParams,
@@ -52,20 +56,25 @@ export default async function ReportsPage({
 
   filters.accountId = selectedAccountId;
 
-  const ownerAllPosts = await getOwnerScheduledPosts(supabase, ownerId, {
-    hiddenFromReport: false,
-    order: "asc",
-    limit: 5000,
-  });
+  const ownerAllPosts = await withHardTimeout(
+    getOwnerScheduledPosts(supabase, ownerId, {
+      hiddenFromReport: false,
+      order: "asc",
+      limit: 5000,
+    }),
+    REPORTS_LOAD_TIMEOUT_MS,
+    [] as ScheduledPost[],
+    "reports-owner-posts",
+  );
 
-  const filteredPosts = await getOwnerScheduledPosts(supabase, ownerId, {
-    platform: filters.platform,
-    accountId: selectedAccountId,
-    contentType: filters.contentType,
-    hiddenFromReport: false,
-    order: "asc",
-    limit: 5000,
-  });
+  const filteredPosts =
+    selectedAccountId || filters.platform !== "all" || filters.contentType !== "all"
+      ? filterOwnerPostsInMemory(ownerAllPosts, {
+          platform: filters.platform,
+          accountId: selectedAccountId,
+          contentType: filters.contentType,
+        })
+      : ownerAllPosts;
 
   const [igAccounts, tiktokAccounts, activeBatch, products, campaigns] = await Promise.all([
     getOwnerAccounts(supabase, ownerId),
@@ -104,23 +113,14 @@ export default async function ReportsPage({
     auditDate: filters.auditDate,
   });
 
-  const postIds = new Set(ownerAllPosts.map((post) => post.id));
-  const { data: recentLogs } = postIds.size
-    ? await supabase
-        .from("publish_logs")
-        .select("created_at")
-        .in("post_id", [...postIds])
-        .eq("level", "success")
-        .order("created_at", { ascending: false })
-        .limit(1)
-    : { data: [] };
+  const lastPublishAt = getLastPublishedAt(ownerAllPosts);
 
   const operationsAlerts = buildOperationsAlerts({
     accounts: accountsOverview,
     posts: ownerAllPosts,
     coverageDays: globalSnapshot.coverageDays,
     cronConfigured: Boolean(process.env.CRON_SECRET?.trim()),
-    lastPublishAt: recentLogs?.[0]?.created_at ?? null,
+    lastPublishAt,
     activeUploadBatchId: activeBatch?.id ?? null,
   });
 
@@ -155,7 +155,6 @@ export default async function ReportsPage({
         filters={filters}
         posts={visiblePosts as ScheduledPost[]}
         allPosts={displayPosts as ScheduledPost[]}
-        ownerAllPosts={ownerAllPosts as ScheduledPost[]}
         snapshot={snapshot}
         globalSnapshot={globalSnapshot}
         publicationMetrics={publicationMetrics}

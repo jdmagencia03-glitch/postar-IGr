@@ -1,5 +1,9 @@
 import { differenceInHours, parseISO } from "date-fns";
 import type { AccountOperationsSummary } from "@/lib/operations/account-ops";
+import {
+  accountDiagnosticsPath,
+  accountErrorsPath,
+} from "@/lib/operations/routes";
 import type { ScheduledPost } from "@/lib/types";
 
 export type AlertSeverity = "info" | "warning" | "critical";
@@ -130,8 +134,8 @@ export function buildOperationsAlerts(params: {
         accountUsername: account.username,
         actionHref:
           account.platform === "tiktok"
-            ? `/api/tiktok/connect?next=/dashboard/accounts/${account.id}/diagnostics&add_account=1`
-            : `/api/auth/meta?next=/dashboard/accounts/${account.id}/diagnostics`,
+            ? `/api/tiktok/connect?next=/dashboard/accounts/${account.id}/diagnostics?platform=tiktok&add_account=1`
+            : `/api/auth/meta?next=/dashboard/accounts/${account.id}/diagnostics?platform=instagram`,
         actionLabel: "Reconectar",
       });
     }
@@ -161,7 +165,7 @@ export function buildOperationsAlerts(params: {
         accountId: account.id,
         accountPlatform: account.platform,
         accountUsername: account.username,
-        actionHref: `/dashboard/errors?account=${account.id}`,
+        actionHref: accountErrorsPath(account.id, account.platform),
         actionLabel: "Ver erros",
       });
     }
@@ -176,7 +180,7 @@ export function buildOperationsAlerts(params: {
         accountId: account.id,
         accountPlatform: account.platform,
         accountUsername: account.username,
-        actionHref: `/dashboard/accounts/${account.id}/diagnostics`,
+        actionHref: accountDiagnosticsPath(account.id, account.platform),
         actionLabel: "Ver diagnóstico",
       });
     }
@@ -191,7 +195,7 @@ export function buildOperationsAlerts(params: {
         accountId: account.id,
         accountPlatform: account.platform,
         accountUsername: account.username,
-        actionHref: `/dashboard/accounts/${account.id}/diagnostics`,
+        actionHref: accountDiagnosticsPath(account.id, account.platform),
         actionLabel: "Ver conta",
       });
     }
@@ -206,7 +210,7 @@ export function buildOperationsAlerts(params: {
         accountId: account.id,
         accountPlatform: account.platform,
         accountUsername: account.username,
-        actionHref: `/dashboard/accounts/${account.id}/diagnostics`,
+        actionHref: accountDiagnosticsPath(account.id, account.platform),
         actionLabel: "Diagnosticar",
       });
     }

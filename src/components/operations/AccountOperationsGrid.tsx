@@ -21,6 +21,7 @@ import {
 import { formatTokenStatusLabel } from "@/lib/operations/token-status";
 import type { AccountOperationalSummary } from "@/lib/operations/operational-summary";
 import { formatShortDateTime } from "@/lib/operations/compute";
+import { accountDiagnosticsPath, accountReportsPath } from "@/lib/operations/routes";
 
 interface Props {
   accounts: AccountOperationalSummary[];
@@ -157,13 +158,15 @@ export function AccountOperationsGrid({ accounts }: Props) {
                 compact
               />
               <Link
-                href={`/dashboard/reports?view=audit&account=${account.id}&platform=${account.platform}`}
+                prefetch={false}
+                href={accountReportsPath(account.id, account.platform, { view: "audit" })}
                 className="rounded-lg border border-ig-border px-3 py-1.5 text-xs font-medium hover:bg-ig-secondary"
               >
                 Conferir
               </Link>
               <Link
-                href={`/dashboard/accounts/${account.id}/diagnostics?platform=${account.platform}`}
+                prefetch={false}
+                href={accountDiagnosticsPath(account.id, account.platform)}
                 className="rounded-lg border border-ig-border px-3 py-1.5 text-xs font-medium hover:bg-ig-secondary"
               >
                 Ver detalhes
@@ -186,7 +189,8 @@ export function AccountOperationsGrid({ accounts }: Props) {
               )}
               {account.failedCount > 0 && (
                 <Link
-                  href={`/dashboard/reports?status=failed&account=${account.id}`}
+                  prefetch={false}
+                  href={accountReportsPath(account.id, account.platform, { status: "failed" })}
                   className="rounded-lg border border-ig-danger/30 px-3 py-1.5 text-xs font-medium text-ig-danger hover:bg-ig-danger/10"
                 >
                   Ver erros

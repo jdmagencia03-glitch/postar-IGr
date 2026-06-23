@@ -9,7 +9,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { CONTENT_TYPE_LABELS } from "@/lib/content-types";
 import { buildPostTimeline } from "@/lib/operations/post-timeline";
 import { destinationLabel } from "@/lib/operations/group-status";
-import { getPostAccountUsername } from "@/lib/posts";
+import { canDeleteSchedule, getPostAccountUsername } from "@/lib/posts";
 import { fromDateTimeLocalInAppTz, toDateTimeLocalInAppTz } from "@/lib/timezone";
 import type { ContentType, PublishLog, ScheduledPost } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
@@ -26,6 +26,7 @@ export function PostDetailView({ post, siblingPosts, logs }: Props) {
   const [message, setMessage] = useState<string | null>(null);
   const [captionDraft, setCaptionDraft] = useState(post.caption ?? "");
   const [scheduleDraft, setScheduleDraft] = useState(toDateTimeLocalInAppTz(post.scheduled_at));
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const timeline = buildPostTimeline(post, logs);
   const username = getPostAccountUsername(post);
@@ -141,6 +142,16 @@ export function PostDetailView({ post, siblingPosts, logs }: Props) {
             >
               Duplicar
             </button>
+            {canDeleteSchedule(post.status) && (
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => setConfirmDelete(true)}
+                className="rounded-lg border border-ig-danger/30 px-3 py-2 text-xs text-ig-danger hover:bg-ig-danger/10 disabled:opacity-50"
+              >
+                Excluir
+              </button>
+            )}
           </div>
 
           <div className="space-y-2 border-t border-ig-border pt-4">
@@ -182,6 +193,37 @@ export function PostDetailView({ post, siblingPosts, logs }: Props) {
           </div>
 
           {message && <p className="text-xs text-ig-danger">{message}</p>}
+
+          {confirmDelete && (
+            <div className="rounded-xl border border-ig-danger/30 bg-ig-danger/5 p-4">
+              <p className="text-sm font-medium text-ig-text">Excluir este post da fila?</p>
+              <p className="mt-1 text-xs text-ig-muted">
+                Ele será removido permanentemente e não será publicado.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={async () => {
+                    setConfirmDelete(false);
+                    await apiAction(`/api/posts/${post.id}`, { method: "DELETE" });
+                    router.push("/dashboard/reports?view=errors");
+                  }}
+                  className="rounded-lg bg-ig-danger px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  Excluir definitivamente
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg border border-ig-border px-3 py-2 text-xs hover:bg-ig-secondary"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

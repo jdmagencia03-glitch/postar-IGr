@@ -103,12 +103,20 @@ export default async function AccountDiagnosticsPage({
   });
 
   const playbook = await getPlaybookForAccount(ownerId, id);
-  const { data: recentLogs } = await supabase
-    .from("publish_logs")
-    .select("level, message, created_at")
-    .in("post_id", posts.map((post) => post.id))
-    .order("created_at", { ascending: false })
-    .limit(10);
+  const recentPostIds = posts
+    .slice()
+    .sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime())
+    .slice(0, 60)
+    .map((post) => post.id);
+
+  const { data: recentLogs } = recentPostIds.length
+    ? await supabase
+        .from("publish_logs")
+        .select("level, message, created_at")
+        .in("post_id", recentPostIds)
+        .order("created_at", { ascending: false })
+        .limit(10)
+    : { data: [] };
 
   const initial = {
     account,
