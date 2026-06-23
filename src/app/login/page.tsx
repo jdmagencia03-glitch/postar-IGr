@@ -1,24 +1,18 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { LoginSessionRedirect } from "@/components/LoginSessionRedirect";
 import { APP_TAGLINE } from "@/lib/brand";
-import { getSessionAuth } from "@/lib/auth/api-session";
-
-export const dynamic = "force-dynamic";
 
 export default async function LoginPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const session = await getSessionAuth();
   const params = await searchParams;
   const nextPath =
     params.next && params.next.startsWith("/") && !params.next.startsWith("//")
       ? params.next
       : "/dashboard";
-
-  if (session.ok) redirect(nextPath);
 
   const errorMessages: Record<string, string> = {
     oauth_invalid: "Falha na autenticação. Tente novamente.",
@@ -33,6 +27,8 @@ export default async function LoginPage({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
+      <LoginSessionRedirect nextPath={nextPath} />
+
       <div className="w-full rounded-2xl border border-ig-border bg-ig-elevated p-8 shadow-sm">
         <h1 className="mb-2 text-center">
           <BrandLogo />

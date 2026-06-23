@@ -1,39 +1,54 @@
 import { NextResponse } from "next/server";
-import { getSessionAuth } from "@/lib/auth/api-session";
+import { requireApiSessionSafe } from "@/lib/auth/api-session";
+
+const ROUTE = "/api/auth/session";
 
 export async function GET() {
-  const session = await getSessionAuth();
+  try {
+    const session = await requireApiSessionSafe(ROUTE);
 
-  if (session.ok) {
-    return NextResponse.json({
-      authenticated: true,
-      source: session.source,
-    });
-  }
+    if (session.ok) {
+      return NextResponse.json({
+        authenticated: true,
+        source: session.source,
+      });
+    }
 
-  if (session.reason === "db_timeout") {
-    return NextResponse.json(
-      {
-        ok: false,
-        authenticated: false,
-        error: "auth_timeout",
-        message: session.message,
-      },
-      { status: 503 },
-    );
-  }
+    if (session.reason === "auth_timeout") {
+      return NextResponse.json(
+        {
+          ok: false,
+          authenticated: false,
+          error: "auth_timeout",
+          message: session.message,
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  if (session.reason === "db_error") {
+    if (session.reason === "auth_db_error") {
+      return NextResponse.json(
+        {
+          ok: false,
+          authenticated: false,
+          error: "auth_db_error",
+          message: session.message,
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    return NextResponse.json({ authenticated: false });
+  } catch (error) {
+    console.error("[api-handler-failed]", { route: ROUTE, error });
     return NextResponse.json(
       {
         ok: false,
         authenticated: false,
         error: "auth_db_error",
-        message: session.message,
+        message: "Erro temporário ao validar sessão.",
       },
-      { status: 503 },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
     );
   }
-
-  return NextResponse.json({ authenticated: false });
 }
