@@ -1,59 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, USER_ID_HEADER } from "@/lib/auth/session-core";
-import {
-  resolveSessionFromToken,
-} from "@/lib/auth/session-lookup";
 import { applyCorsHeaders, applySecurityHeaders } from "@/lib/security/headers";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
-const PROTECTED_PAGES = ["/dashboard"];
-const PROTECTED_APIS = [
-  "/api/accounts",
-  "/api/posts",
-  "/api/upload",
-  "/api/logs",
-  "/api/captions",
-  "/api/instagram",
-  "/api/ai",
-  "/api/tiktok",
-  "/api/health",
-  "/api/comment-dm",
-  "/api/calendar",
-  "/api/schedule-jobs",
-];
-
-const NO_STORE = { "Cache-Control": "no-store" };
-
-function isProtectedPath(pathname: string) {
-  return (
-    PROTECTED_PAGES.some((path) => pathname === path || pathname.startsWith(`${path}/`)) ||
-    PROTECTED_APIS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-  );
-}
+/** Constante local — middleware Edge não importa helpers de sessão/Supabase. */
+const SESSION_COOKIE = "insta_scheduler_session";
 
 function withSecurityHeaders(response: NextResponse, request: NextRequest) {
   applySecurityHeaders(response);
   applyCorsHeaders(response, request.headers.get("origin"));
   return response;
-}
-
-function authUnavailableResponse(reason: "db_timeout" | "db_error") {
-  const body =
-    reason === "db_timeout"
-      ? {
-          ok: false,
-          error: "auth_timeout",
-          message: "Não foi possível validar sua sessão agora. Tente novamente em instantes.",
-          data: [],
-        }
-      : {
-          ok: false,
-          error: "auth_db_error",
-          message: "Erro temporário ao validar sessão.",
-          data: [],
-        };
-
-  return NextResponse.json(body, { status: 503, headers: NO_STORE });
 }
 
 function enforceApiRateLimit(request: NextRequest, pathname: string) {
@@ -94,53 +49,22 @@ export async function middleware(request: NextRequest) {
     return withSecurityHeaders(new NextResponse(null, { status: 204 }), request);
   }
 
-  if (!isProtectedPath(pathname)) {
-    return withSecurityHeaders(NextResponse.next(), request);
-  }
-
   if (pathname.startsWith("/api/")) {
     const rateLimited = enforceApiRateLimit(request, pathname);
     if (rateLimited) {
       return withSecurityHeaders(rateLimited, request);
     }
+    return withSecurityHeaders(NextResponse.next(), request);
   }
 
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  const session = await resolveSessionFromToken(token, { route: pathname });
-
-  if (session.ok) {
-    const requestHeaders = new Headers(request.headers);
-    requestHeaders.set(USER_ID_HEADER, session.userId);
-    return withSecurityHeaders(
-      NextResponse.next({
-        request: { headers: requestHeaders },
-      }),
-      request,
-    );
-  }
-
-  if (!session.ok) {
-    if (session.reason === "db_timeout" || session.reason === "db_error") {
-      if (pathname.startsWith("/api/")) {
-        return withSecurityHeaders(authUnavailableResponse(session.reason), request);
-      }
-      return withSecurityHeaders(NextResponse.next(), request);
+  if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) {
+    const token = request.cookies.get(SESSION_COOKIE)?.value;
+    if (!token) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.searchParams.set("next", pathname);
+      return withSecurityHeaders(NextResponse.redirect(loginUrl), request);
     }
-
-    if (pathname.startsWith("/api/")) {
-      return withSecurityHeaders(
-        NextResponse.json(
-          { ok: false, error: "unauthorized", message: "Não autenticado" },
-          { status: 401, headers: NO_STORE },
-        ),
-        request,
-      );
-    }
-
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("next", pathname);
-    return withSecurityHeaders(NextResponse.redirect(loginUrl), request);
   }
 
   return withSecurityHeaders(NextResponse.next(), request);
