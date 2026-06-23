@@ -123,13 +123,16 @@ export function UploadBatchManager({
     try {
       const fileArray = Array.from(selected);
       const validated = validateFiles(fileArray).valid;
-      const created = await createUploadBatch({
+      const { batch: created, resumed } = await createUploadBatch({
         accountId,
         scheduleMode,
         customSchedule,
         files: validated,
       });
       syncBatch(created);
+      if (resumed) {
+        setMessage("Retomamos o upload anterior e adicionamos os novos vídeos ao mesmo lote.");
+      }
       await runUploadQueue(validated.map((item) => item.file), created);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Erro ao iniciar upload");

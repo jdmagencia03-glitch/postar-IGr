@@ -213,12 +213,12 @@ export function SupremeUploadManager({
     !suppressCompletionActions &&
     Boolean(onStartNewBatch);
 
-  const handleStartNewBatch = () => {
+  const handleStartNewBatch = async () => {
     if (onStartNewBatch) {
       onStartNewBatch();
       return;
     }
-    uploadSessionStore.startNewBatch();
+    await uploadSessionStore.startNewBatch();
   };
 
   const maxUploadBytes = (session.uploadLimits?.max_upload_mb ?? 500) * 1024 * 1024;
@@ -350,7 +350,7 @@ export function SupremeUploadManager({
         </div>
       )}
 
-      {!session.batch && !session.validationPreview && (
+      {(!session.batch || view.isEmptyBatch) && !session.validationPreview && (
         <div className="space-y-3">
           <div
             className="rounded-2xl border-2 border-dashed border-ig-border bg-ig-secondary px-4 py-12 text-center"
@@ -384,7 +384,7 @@ export function SupremeUploadManager({
         </div>
       )}
 
-      {session.batch && session.batch.status !== "ready" && !session.validationPreview && (
+      {session.batch && session.batch.status !== "ready" && !session.validationPreview && !view.isEmptyBatch && (
         <SpeedModePicker
           speedMode={session.speedMode}
           speedPresets={speedPresets}
@@ -439,6 +439,31 @@ export function SupremeUploadManager({
 
       {session.batch && (
         <>
+          {view.isEmptyBatch ? (
+            <div className="rounded-2xl border border-ig-border bg-ig-elevated p-5">
+              <p className="text-lg font-semibold text-ig-text">Lote vazio</p>
+              <p className="mt-1 text-sm text-ig-muted">
+                Lote #{session.batch.batch_number} · @{username} — arraste ou selecione os vídeos abaixo para
+                iniciar o envio.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
+                  onClick={() => uploadSessionStore.openFilePicker()}
+                >
+                  <Upload size={14} /> Selecionar vídeos
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-ig-border px-3 py-2 text-sm text-ig-muted"
+                  onClick={() => void uploadSessionStore.cancelBatch()}
+                >
+                  Descartar lote
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="rounded-2xl border border-ig-info-border bg-ig-info-bg p-5">
             <p className="text-lg font-semibold text-ig-text">
               {showReceivedForSchedule
@@ -570,7 +595,7 @@ export function SupremeUploadManager({
                       <Play size={14} /> {resumeButtonLabel()}
                     </button>
                   )}
-                  {view.canSelectFiles && !session.running && (
+                  {view.canAddVideosToBatch && !view.isEmptyBatch && !session.running && (
                     <button
                       type="button"
                       className="ig-btn inline-flex items-center gap-2 px-4 py-2 text-sm"
@@ -618,7 +643,9 @@ export function SupremeUploadManager({
               )}
             </div>
           </div>
+          )}
 
+          {!view.isEmptyBatch && (
           <div className="rounded-xl border border-ig-border bg-ig-elevated p-4">
             <p className="mb-3 text-sm font-medium text-ig-text">Status por vídeo</p>
             <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
@@ -648,6 +675,7 @@ export function SupremeUploadManager({
               )}
             </div>
           </div>
+          )}
         </>
       )}
 

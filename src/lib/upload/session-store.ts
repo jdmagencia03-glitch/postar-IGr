@@ -7,6 +7,7 @@ import {
   clearAccountUploadedVideosClient,
   deleteAccountUploadBatchesClient,
   createUploadBatch,
+  appendFilesToUploadBatch,
   ensureBatchWithFiles,
   fetchActiveBatch,
   fetchUploadBatchStatus,
@@ -1928,7 +1929,7 @@ class UploadSessionStore {
       let currentBatch = this.batch;
 
       if (!currentBatch) {
-        currentBatch = await createUploadBatch({
+        const { batch: created, resumed } = await createUploadBatch({
           accountId: config.accountId,
           platform: config.platform,
           scheduleMode: config.scheduleMode,
@@ -1936,8 +1937,13 @@ class UploadSessionStore {
           uploadSpeedMode: this.speedMode,
           files: toUpload,
         });
+        currentBatch = created;
         cleanupStaleTusEntries({ keepBatchId: currentBatch.id, maxAgeHours: 24 });
         this.syncBatch(currentBatch);
+        if (resumed) {
+          this.message =
+            "Retomamos o upload anterior desta conta e adicionamos os novos vídeos ao mesmo lote.";
+        }
 
         await saveManifestEntries(
           toUpload
@@ -1960,7 +1966,12 @@ class UploadSessionStore {
             .filter((entry): entry is NonNullable<typeof entry> => entry != null),
         );
       } else if (currentBatch) {
-        currentBatch = await ensureBatchWithFiles(currentBatch);
+        const existingCount = (currentBatch.upload_files ?? []).filter((f) => !f.removed).length;
+        if (existingCount === 0 && toUpload.length > 0) {
+          currentBatch = await appendFilesToUploadBatch(currentBatch, toUpload);
+        } else {
+          currentBatch = await ensureBatchWithFiles(currentBatch);
+        }
         this.syncBatch(currentBatch);
       }
 
@@ -2403,12 +2414,24 @@ class UploadSessionStore {
   }
 
   /** Limpa a sessão local para um novo lote, mantendo conta/plataforma. */
-  startNewBatch() {
+  async startNewBatch() {
     const previousBatchId = this.batch?.id;
+    const config = this.config;
+
     if (previousBatchId) {
+      await cancelUploadBatch(previousBatchId).catch(() => undefined);
       this.cancelledBatchIds.add(previousBatchId);
       resetUploadBatchStatsMonotonic(previousBatchId);
       resetProgressGuardForBatch(previousBatchId);
+    } else if (config?.accountId) {
+      const orphan = await fetchActiveBatch({
+        summary: true,
+        platform: config.platform ?? "instagram",
+        accountId: config.accountId,
+      }).catch(() => null);
+      if (orphan?.status === "uploading") {
+        await cancelUploadBatch(orphan.id).catch(() => undefined);
+      }
     }
     this.engine?.abortAll();
     this.teardownUploadSessionTimers();

@@ -622,8 +622,8 @@ export function BulkUploadForm({
     };
   }, [activeBatch?.id]);
 
-  function handleStartNewBatch() {
-    uploadSessionStore.startNewBatch();
+  async function handleStartNewBatch() {
+    await uploadSessionStore.startNewBatch();
     setActiveBatch(null);
     setScheduleJobId(null);
     setScheduleJobInitialStatus(null);

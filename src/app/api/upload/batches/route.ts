@@ -119,7 +119,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const existing = await getUploadingBatchForOwner(supabase, ownerId);
+  const accountScope =
+    platform === "tiktok"
+      ? { platform: "tiktok" as const, accountId: parsed.data.tiktok_account_id! }
+      : { platform: "instagram" as const, accountId: parsed.data.account_id! };
+
+  const existing = await getUploadingBatchForOwner(supabase, ownerId, accountScope);
   if (existing) {
     return NextResponse.json(
       {

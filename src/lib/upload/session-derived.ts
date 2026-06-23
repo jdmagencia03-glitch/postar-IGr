@@ -187,7 +187,21 @@ export function deriveUploadSessionView(params: {
     batch!.status !== "ready" &&
     files.some((file) => file.status !== "completed");
 
-  const showGlobalBar = Boolean(batch && (running || retrying || resuming || hasIncomplete));
+  const isEmptyBatch = Boolean(
+    batch &&
+      batch.status === "uploading" &&
+      totalCount === 0 &&
+      files.length === 0,
+  );
+
+  /** Lote criado sem vídeos — usuário pode selecionar arquivos agora. */
+  const canAddVideosToBatch = Boolean(isEmptyBatch || canSelectFiles);
+
+  const showGlobalBar = Boolean(
+    batch &&
+      (running || retrying || resuming || hasIncomplete) &&
+      !isEmptyBatch,
+  );
 
   return {
     stats,
@@ -231,5 +245,7 @@ export function deriveUploadSessionView(params: {
     engineStarting,
     recoveringFromStall,
     batchStalled,
+    isEmptyBatch,
+    canAddVideosToBatch,
   };
 }

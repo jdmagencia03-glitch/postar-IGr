@@ -602,6 +602,55 @@ export async function ensureBatchWithFiles(batch: UploadBatch) {
   return refreshUploadBatch(batch.id);
 }
 
+function batchMatchesAccountScope(
+  batch: UploadBatch,
+  accountId: string,
+  platform: UploadBatch["platform"],
+) {
+  return platform === "tiktok"
+    ? batch.tiktok_account_id === accountId
+    : batch.account_id === accountId;
+}
+
+async function appendFileChunksToBatch(
+  batch: UploadBatch,
+  fileChunks: Array<Array<{ file: File; fingerprint: string }>>,
+) {
+  let current = batch;
+
+  for (const chunk of fileChunks) {
+    const appendRes = await apiFetch(`/api/upload/batches/${current.id}/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: serializeUploadFiles(chunk),
+      }),
+    });
+
+    const appendData = await appendRes.json();
+    if (!appendRes.ok) {
+      throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
+    }
+
+    current = appendFilesToBatch(
+      current,
+      appendData.added as UploadBatchFile[],
+      appendData.counters as BatchCounters | undefined,
+    );
+  }
+
+  return refreshUploadBatch(current.id);
+}
+
+export async function appendFilesToUploadBatch(
+  batch: UploadBatch,
+  files: Array<{ file: File; fingerprint: string }>,
+) {
+  if (!files.length) return batch;
+  const fileChunks = chunkItems(files, BATCH_CREATE_CHUNK_SIZE);
+  return appendFileChunksToBatch(batch, fileChunks);
+}
+
 export async function createUploadBatch(params: {
   accountId: string;
   platform?: UploadBatch["platform"];
@@ -609,7 +658,7 @@ export async function createUploadBatch(params: {
   customSchedule?: UploadBatch["custom_schedule"];
   uploadSpeedMode?: UploadSpeedMode;
   files: Array<{ file: File; fingerprint: string }>;
-}) {
+}): Promise<{ batch: UploadBatch; resumed: boolean }> {
   const platform = params.platform ?? "instagram";
   const fileChunks = chunkItems(params.files, BATCH_CREATE_CHUNK_SIZE);
   const totalFiles = params.files.length;
@@ -633,6 +682,18 @@ export async function createUploadBatch(params: {
   });
 
   const firstData = await firstRes.json();
+
+  if (firstRes.status === 409 && firstData.batch) {
+    const existing = firstData.batch as UploadBatch;
+    if (!batchMatchesAccountScope(existing, params.accountId, platform)) {
+      throw new Error(
+        "Já existe um upload em andamento nesta conta. Cancele-o em Uploads antes de criar outro.",
+      );
+    }
+    const refreshed = await refreshUploadBatch(existing.id);
+    return { batch: await appendFileChunksToBatch(refreshed, fileChunks), resumed: true };
+  }
+
   if (!firstRes.ok) {
     throw new Error(String(firstData.error ?? "Falha ao criar lote"));
   }
@@ -640,32 +701,15 @@ export async function createUploadBatch(params: {
   let batch = firstData.batch as UploadBatch;
 
   try {
-    for (const chunk of fileChunks.slice(1)) {
-      const appendRes = await apiFetch(`/api/upload/batches/${batch.id}/files`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          files: serializeUploadFiles(chunk),
-        }),
-      });
-
-      const appendData = await appendRes.json();
-      if (!appendRes.ok) {
-        throw new Error(String(appendData.error ?? "Falha ao adicionar arquivos ao lote"));
-      }
-
-      batch = appendFilesToBatch(
-        batch,
-        appendData.added as UploadBatchFile[],
-        appendData.counters as BatchCounters | undefined,
-      );
+    if (fileChunks.length > 1) {
+      batch = await appendFileChunksToBatch(batch, fileChunks.slice(1));
     }
   } catch (error) {
     await apiFetch(`/api/upload/batches/${batch.id}`, { method: "DELETE" }).catch(() => undefined);
     throw error;
   }
 
-  return batch;
+  return { batch, resumed: false };
 }
 
 export async function setBatchPaused(batchId: string, paused: boolean) {
