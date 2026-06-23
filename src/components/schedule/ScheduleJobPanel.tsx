@@ -82,7 +82,10 @@ function statusBanner(
       return `${first.message} Este job usa horários antigos — cancele com segurança e crie um novo lote.`;
     }
     if (status.recommendedAction === "finalize_posts") {
-      return `${first.message} Use Finalizar posts agora ou cancele o job sem duplicar posts.`;
+      return `${first.message} Clique em "Finalizar posts agora" para salvar os ${status.total - (status.postsInCalendar ?? status.postsSaved)} restantes.`;
+    }
+    if (status.recommendedAction === "manual_review") {
+      return `${first.message} Abra o diagnóstico para ver quais vídeos faltam.`;
     }
     return `${first.message} Revise o diagnóstico antes de continuar.`;
   }
@@ -393,10 +396,12 @@ export function ScheduleJobPanel({
               {status.recommendedAction === "cancel_old_job"
                 ? "cancelar job antigo e criar novo lote"
                 : status.recommendedAction === "finalize_posts"
-                  ? "finalizar posts"
-                  : status.recommendedAction === "create_new_job"
-                    ? "criar novo lote"
-                    : status.recommendedAction}
+                  ? "finalizar posts agora"
+                  : status.recommendedAction === "manual_review"
+                    ? "revisar diagnóstico (posts podem ter falhado)"
+                    : status.recommendedAction === "create_new_job"
+                      ? "criar novo lote"
+                      : status.recommendedAction}
             </p>
           )}
         </div>

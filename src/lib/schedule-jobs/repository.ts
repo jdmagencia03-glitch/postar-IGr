@@ -14,6 +14,7 @@ import {
 import {
   applyConsistencyToView,
   loadJobConsistencySnapshot,
+  repairPartialSaveConsistency,
   repairSavePostsTaskConsistency,
   type JobConsistencySnapshot,
 } from "@/lib/schedule-jobs/consistency";
@@ -487,6 +488,8 @@ export async function buildJobStatusReadOnly(
   job: ScheduleJobRow,
   items?: ScheduleJobItemRow[],
 ) {
+  await repairPartialSaveConsistency(supabase, job);
+
   const [consistency, pipelineCounts, pipelineReady, queueReady] = await Promise.all([
     loadJobConsistencySnapshot(supabase, job),
     loadItemPipelineCounts(supabase, job.id),

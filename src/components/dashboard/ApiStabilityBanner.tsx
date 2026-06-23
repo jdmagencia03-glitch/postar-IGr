@@ -3,19 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
-import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 
 const CHECK_TIMEOUT_MS = 15_000;
-const RETRY_ACTIVE_MS = 20_000;
-const RETRY_IDLE_MS = 90_000;
-const RETRY_HIDDEN_MS = 180_000;
+const RETRY_IDLE_MS = 300_000;
 const DEGRADED_STREAK_THRESHOLD = 3;
 
-/** Banner local quando auth está lento — sem redirecionar para login. */
+/** Banner local quando auth está lento — polling mínimo para não sobrecarregar o banco. */
 export function ApiStabilityBanner() {
   const [message, setMessage] = useState<string | null>(null);
   const degradedStreakRef = useRef(0);
-  const uploadSession = useOptionalUploadSession();
 
   const check = useCallback(async () => {
     try {
@@ -59,17 +55,10 @@ export function ApiStabilityBanner() {
   }, []);
 
   useEffect(() => {
-    const uploadActive = Boolean(uploadSession?.running || uploadSession?.retrying || uploadSession?.resuming);
-    const intervalMs =
-      typeof document !== "undefined" && document.hidden
-        ? RETRY_HIDDEN_MS
-        : uploadActive
-          ? RETRY_ACTIVE_MS
-          : RETRY_IDLE_MS;
     check();
-    const interval = setInterval(check, intervalMs);
+    const interval = setInterval(check, RETRY_IDLE_MS);
     return () => clearInterval(interval);
-  }, [check, uploadSession?.running, uploadSession?.retrying, uploadSession?.resuming]);
+  }, [check]);
 
   if (!message) return null;
 

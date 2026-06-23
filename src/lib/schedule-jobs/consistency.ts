@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadItemIdsForPhase } from "@/lib/schedule-jobs/queue/tasks";
 import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
+import { resetGhostCompletedJobItems } from "@/lib/schedule-jobs/reset-ghost-items";
 import type { ScheduleJobRow, ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
 import { buildWarmupJobDiagnostics } from "@/lib/warmup-diagnostics";
 import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
@@ -127,6 +128,95 @@ export async function areSavePostsItemsComplete(
     const item = byId.get(id);
     return item?.status === "completed" && Boolean(item.created_post_id);
   });
+}
+
+async function countItemsMissingCalendarPost(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("schedule_job_items")
+    .select("id", { count: "exact", head: true })
+    .eq("schedule_job_id", jobId)
+    .is("created_post_id", null)
+    .not("destinations", "is", null)
+    .neq("status", "failed");
+
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+/** Corrige save_posts completed com calendário incompleto (ex.: 39/42). */
+export async function repairPartialSaveConsistency(
+  supabase: SupabaseClient,
+  job: Pick<ScheduleJobRow, "id" | "total_items" | "upload_batch_id">,
+): Promise<{ ghostReset: number; tasksReopened: number }> {
+  if (!job.upload_batch_id || job.total_items <= 0) {
+    return { ghostReset: 0, tasksReopened: 0 };
+  }
+
+  const { count } = await supabase
+    .from("scheduled_posts")
+    .select("id", { count: "exact", head: true })
+    .eq("upload_batch_id", job.upload_batch_id);
+
+  const postsInCalendar = count ?? 0;
+  if (postsInCalendar >= job.total_items) {
+    return {
+      ghostReset: 0,
+      tasksReopened: await repairSavePostsTaskConsistency(supabase, job.id),
+    };
+  }
+
+  const ghostReset = await resetGhostCompletedJobItems(supabase, job.id);
+  let tasksReopened = await repairSavePostsTaskConsistency(supabase, job.id);
+
+  if (!(await isScheduleJobQueueReady(supabase))) {
+    return { ghostReset, tasksReopened };
+  }
+
+  const itemsMissingPost = await countItemsMissingCalendarPost(supabase, job.id);
+  if (itemsMissingPost === 0) {
+    return { ghostReset, tasksReopened };
+  }
+
+  const now = new Date().toISOString();
+  const { data: tasks, error } = await supabase
+    .from("schedule_job_tasks")
+    .select("id")
+    .eq("schedule_job_id", job.id)
+    .eq("phase", "save_posts")
+    .eq("status", "completed");
+
+  if (error) throw new Error(error.message);
+
+  for (const task of tasks ?? []) {
+    const { error: updateError } = await supabase
+      .from("schedule_job_tasks")
+      .update({
+        status: "pending",
+        locked_by: null,
+        lock_until: null,
+        completed_at: null,
+        updated_at: now,
+      })
+      .eq("id", task.id);
+
+    if (!updateError) tasksReopened += 1;
+  }
+
+  if (tasksReopened > 0 || ghostReset > 0) {
+    console.info("[schedule-job-partial-save-repair]", {
+      jobId: job.id,
+      postsInCalendar,
+      totalItems: job.total_items,
+      ghostReset,
+      tasksReopened,
+      itemsMissingPost,
+    });
+  }
+
+  return { ghostReset, tasksReopened };
 }
 
 /** Reabre tasks save_posts marcadas completed sem posts salvos. */
@@ -363,6 +453,15 @@ export async function loadJobConsistencySnapshot(
 
   const isInconsistent = errors.length > 0;
 
+  let itemsMissingPost = 0;
+  if (isInconsistent && postsInCalendar < job.total_items) {
+    try {
+      itemsMissingPost = await countItemsMissingCalendarPost(supabase, job.id);
+    } catch {
+      itemsMissingPost = Math.max(0, job.total_items - postsInCalendar);
+    }
+  }
+
   let recommendedAction: ScheduleJobRecommendedAction | null = null;
   if (job.status === "completed" && !isInconsistent) {
     recommendedAction = "completed";
@@ -375,6 +474,14 @@ export async function loadJobConsistencySnapshot(
         : "finalize_posts";
     } else if (postsInCalendar === 0 && pendingSaveItems > 0) {
       recommendedAction = "finalize_posts";
+    } else if (
+      postsInCalendar > 0 &&
+      postsInCalendar < job.total_items &&
+      (itemsMissingPost > 0 || pendingSaveItems > 0)
+    ) {
+      recommendedAction = "finalize_posts";
+    } else if (postsInCalendar > 0 && postsInCalendar < job.total_items) {
+      recommendedAction = "manual_review";
     } else {
       recommendedAction = "manual_review";
     }

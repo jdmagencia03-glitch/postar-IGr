@@ -126,7 +126,7 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
 
   useEffect(() => {
     fetchHealth();
-    const interval = setInterval(fetchHealth, 60_000);
+    const interval = setInterval(fetchHealth, 300_000);
     return () => clearInterval(interval);
   }, [fetchHealth]);
 
