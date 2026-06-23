@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateBulkCaptions, generateFallbackCaptions } from "@/lib/ai/captions";
+import { CAPTION_BATCH_SIZE } from "@/lib/autopilot-constants";
 import { contentTypeForPlatform } from "@/lib/content-types";
 import { SCHEDULE_JOB_MAX_ATTEMPTS } from "@/lib/schedule-jobs/constants";
 import {
@@ -24,48 +25,66 @@ function splitCaptionAndHashtags(caption: string) {
   return { caption: caption.trim(), hashtags };
 }
 
-async function generateCaptionForItem(params: {
-  item: ScheduleJobItemRow;
+function chunkItems<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function itemFilename(item: ScheduleJobItemRow) {
+  return item.filename ?? `video-${item.sort_order + 1}.mp4`;
+}
+
+function fallbackNiche(ctx: Awaited<ReturnType<typeof resolveJobPlanningContext>>) {
+  return (
+    ctx.campaignContext?.product?.name ??
+    ctx.campaignContext?.contentObjective ??
+    "conteúdo"
+  );
+}
+
+async function generateCaptionsForItems(params: {
+  items: ScheduleJobItemRow[];
   ownerId: string;
   ctx: Awaited<ReturnType<typeof resolveJobPlanningContext>>;
-}) {
-  const { item, ownerId, ctx } = params;
+}): Promise<Array<{ item: ScheduleJobItemRow; caption: string; source: "ai" | "fallback" }>> {
+  const { items, ownerId, ctx } = params;
   const target = ctx.insertionTarget;
   const account = ctx.accounts.get(target.account_id)!;
-  const filename = item.filename ?? `video-${item.sort_order + 1}.mp4`;
+  const filenames = items.map(itemFilename);
+  const globalOffset = items[0]?.sort_order ?? 0;
 
-  try {
-    const { captions } = await generateBulkCaptions({
-      count: 1,
-      filenames: [filename],
-      username: accountUsername(target.platform, account),
-      ownerId,
-      accountId: target.account_id,
-      globalOffset: item.sort_order,
-      platform: target.platform,
-      contentType: contentTypeForPlatform(target.platform),
-      campaignContext: ctx.campaignContext,
-    });
-    const text = captions[0]?.trim();
-    if (!text) throw new Error("Legenda vazia");
-    return { caption: text, source: "ai" as const };
-  } catch (error) {
-    console.warn("[schedule-job-caption-item-fallback]", {
-      itemId: item.id,
-      jobId: item.schedule_job_id,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const { captions, source } = await generateBulkCaptions({
+    count: items.length,
+    filenames,
+    username: accountUsername(target.platform, account),
+    ownerId,
+    accountId: target.account_id,
+    globalOffset,
+    platform: target.platform,
+    contentType: contentTypeForPlatform(target.platform),
+    campaignContext: ctx.campaignContext,
+  });
+
+  const niche = fallbackNiche(ctx);
+
+  return items.map((item, index) => {
+    const text = captions[index]?.trim();
+    if (text) {
+      return { item, caption: text, source };
+    }
+
     const fallback = generateFallbackCaptions({
       count: 1,
-      filenames: [filename],
-      niche:
-        ctx.campaignContext?.product?.name ??
-        ctx.campaignContext?.contentObjective ??
-        "conteúdo",
+      filenames: [filenames[index]!],
+      niche,
       platform: target.platform,
     })[0]!;
-    return { caption: fallback.trim(), source: "fallback" as const };
-  }
+
+    return { item, caption: fallback.trim(), source: "fallback" as const };
+  });
 }
 
 async function markCaptionFailure(
@@ -137,51 +156,101 @@ export async function processCaptionTask(
   let failed = 0;
   let pipelineBlocked = false;
 
-  for (const item of pending) {
+  const batches = chunkItems(pending, CAPTION_BATCH_SIZE);
+
+  for (const batch of batches) {
     if (pipelineBlocked) break;
 
-    const processingOk = await applyItemUpdate(supabase, job, item.id, {
-      ...buildPipelinePatch(item, {
-        caption_status: "caption_processing",
-        caption_attempts: item.attempt_count,
-      }),
-      status: "processing",
-    });
-    if (!processingOk) {
-      pipelineBlocked = true;
-      break;
-    }
-
-    try {
-      const generated = await generateCaptionForItem({ item, ownerId, ctx });
-      const { caption, hashtags } = splitCaptionAndHashtags(generated.caption);
-      const pipeline: ItemPipelineState = {
-        caption_status: "caption_done",
-        caption_attempts: item.attempt_count,
-        caption_error: null,
-        caption_source: generated.source,
-        hashtags_status: hashtags ? "hashtags_done" : "hashtags_pending",
-        hashtags_error: null,
-      };
-
-      const savedOk = await applyItemUpdate(supabase, job, item.id, {
-        ...buildPipelinePatch(item, pipeline),
-        status: "queued",
-        caption,
-        hashtags,
-        error_message: null,
+    for (const item of batch) {
+      const processingOk = await applyItemUpdate(supabase, job, item.id, {
+        ...buildPipelinePatch(item, {
+          caption_status: "caption_processing",
+          caption_attempts: item.attempt_count,
+        }),
+        status: "processing",
       });
-      if (!savedOk) {
+      if (!processingOk) {
         pipelineBlocked = true;
         break;
       }
-      succeeded += 1;
+    }
+    if (pipelineBlocked) break;
+
+    try {
+      const generated = await generateCaptionsForItems({ items: batch, ownerId, ctx });
+
+      for (const result of generated) {
+        const { caption, hashtags } = splitCaptionAndHashtags(result.caption);
+        const pipeline: ItemPipelineState = {
+          caption_status: "caption_done",
+          caption_attempts: result.item.attempt_count,
+          caption_error: null,
+          caption_source: result.source,
+          hashtags_status: hashtags ? "hashtags_done" : "hashtags_pending",
+          hashtags_error: null,
+        };
+
+        const savedOk = await applyItemUpdate(supabase, job, result.item.id, {
+          ...buildPipelinePatch(result.item, pipeline),
+          status: "queued",
+          caption,
+          hashtags,
+          error_message: null,
+        });
+        if (!savedOk) {
+          pipelineBlocked = true;
+          break;
+        }
+        succeeded += 1;
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Falha ao gerar legenda";
-      await markCaptionFailure(supabase, item, message);
-      failed += 1;
+      const message = err instanceof Error ? err.message : "Falha ao gerar legendas";
+      console.warn("[schedule-job-caption-batch-fallback]", {
+        jobId: job.id,
+        itemIds: batch.map((item) => item.id),
+        error: message,
+      });
+
+      for (const item of batch) {
+        try {
+          const fallback = generateFallbackCaptions({
+            count: 1,
+            filenames: [itemFilename(item)],
+            niche: fallbackNiche(ctx),
+            platform: ctx.insertionTarget.platform,
+          })[0]!;
+          const { caption, hashtags } = splitCaptionAndHashtags(fallback.trim());
+          const pipeline: ItemPipelineState = {
+            caption_status: "caption_done",
+            caption_attempts: item.attempt_count,
+            caption_error: null,
+            caption_source: "fallback",
+            hashtags_status: hashtags ? "hashtags_done" : "hashtags_pending",
+            hashtags_error: null,
+          };
+
+          const savedOk = await applyItemUpdate(supabase, job, item.id, {
+            ...buildPipelinePatch(item, pipeline),
+            status: "queued",
+            caption,
+            hashtags,
+            error_message: null,
+          });
+          if (!savedOk) {
+            pipelineBlocked = true;
+            break;
+          }
+          succeeded += 1;
+        } catch (saveErr) {
+          const saveMessage =
+            saveErr instanceof Error ? saveErr.message : "Falha ao salvar legenda";
+          await markCaptionFailure(supabase, item, saveMessage);
+          failed += 1;
+        }
+      }
     }
   }
+
   if (pipelineBlocked) {
     await finalizeJobStatusFromDb(supabase, job);
     return;
@@ -194,6 +263,7 @@ export async function processCaptionTask(
     count: pending.length,
     succeeded,
     failed,
+    apiCalls: batches.length,
   });
 
   console.info("[schedule-job-chunk]", {
@@ -202,5 +272,6 @@ export async function processCaptionTask(
     items: pending.length,
     succeeded,
     failed,
+    apiCalls: batches.length,
   });
 }

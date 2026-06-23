@@ -1,5 +1,5 @@
-/** Chunks por fase — concorrência controlada, não limite de total do lote. */
-export const QUEUE_CAPTION_CHUNK = 5;
+/** Itens por tarefa de legenda — alinhado ao lote GPT (1 chamada OpenAI por tarefa). */
+export const QUEUE_CAPTION_CHUNK = 25;
 export const QUEUE_CALENDAR_CHUNK = 10;
 export const QUEUE_SAVE_CHUNK = 10;
 
