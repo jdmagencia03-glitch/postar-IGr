@@ -13,7 +13,7 @@ import {
 import { ptBR } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { warmupDateKey } from "@/lib/account-warmup";
-import { isCalendarPublishedStatus, normalizeCalendarView } from "@/lib/calendar/status";
+import { isCalendarPublishedStatus } from "@/lib/calendar/status";
 import { AccountFilterBar } from "@/components/AccountFilterBar";
 import { CalendarDayPosts } from "@/components/calendar/CalendarDayPosts";
 import { CalendarStatusFilter, type CalendarView } from "@/components/calendar/CalendarStatusFilter";
@@ -42,7 +42,7 @@ function parseMonthParam(value: string | undefined): Date {
 }
 
 function parseCalendarView(value: string | undefined): CalendarView {
-  if (value === "all" || value === "pending" || value === "published" || value === "cancelled") {
+  if (value === "all" || value === "pending" || value === "published") {
     return value;
   }
   return "active";
@@ -81,8 +81,17 @@ export default async function CalendarPage({
   if (!ownerId) redirect("/login?next=/dashboard/calendar");
 
   const params = await searchParams;
+
+  if (params.view === "cancelled") {
+    const query = new URLSearchParams();
+    if (params.month) query.set("month", params.month);
+    if (params.platform) query.set("platform", params.platform);
+    if (params.account) query.set("account", params.account);
+    const qs = query.toString();
+    redirect(qs ? `/dashboard/calendar?${qs}` : "/dashboard/calendar");
+  }
+
   const calendarView = parseCalendarView(params.view);
-  const normalizedView = normalizeCalendarView(calendarView);
   const platformFilter: SocialPlatform | "all" = isPlatformFilter(params.platform)
     ? params.platform ?? "all"
     : "all";
@@ -100,27 +109,14 @@ export default async function CalendarPage({
   const viewMonth = parseMonthParam(params.month);
   const monthKey = format(viewMonth, "yyyy-MM");
 
-  const [{ posts: monthPosts, truncated }, { posts: cancelledMonthPosts }] = await Promise.all([
-    getOwnerPostsForCalendarMonth(supabase, ownerId, {
-      month: monthKey,
-      platform: platformFilter,
-      accountId: selectedAccountId,
-      view: calendarView as CalendarMonthView,
-    }),
-    calendarView === "active" || normalizedView === "pending"
-      ? getOwnerPostsForCalendarMonth(supabase, ownerId, {
-          month: monthKey,
-          platform: platformFilter,
-          accountId: selectedAccountId,
-          view: "cancelled",
-        })
-      : Promise.resolve({ posts: [] as ScheduledPost[], truncated: false }),
-  ]);
+  const { posts: monthPosts, truncated } = await getOwnerPostsForCalendarMonth(supabase, ownerId, {
+    month: monthKey,
+    platform: platformFilter,
+    accountId: selectedAccountId,
+    view: calendarView as CalendarMonthView,
+  });
 
-  const visiblePosts = monthPosts;
-  const postsByDay = indexPostsByLocalDate(visiblePosts);
-  const cancelledPostsByDay =
-    normalizedView === "pending" ? indexPostsByLocalDate(cancelledMonthPosts) : postsByDay;
+  const postsByDay = indexPostsByLocalDate(monthPosts);
 
   const now = new Date();
   const prevMonth = subMonths(viewMonth, 1);
@@ -192,8 +188,6 @@ export default async function CalendarPage({
         {days.map((day) => {
           const dayKey = warmupDateKey(day);
           const dayPosts = postsByDay.get(dayKey) ?? [];
-          const cancelledDayPosts = cancelledPostsByDay.get(dayKey) ?? [];
-          const cancelledCount = normalizedView === "pending" ? cancelledDayPosts.length : 0;
           const isPastDay = isBefore(startOfDay(day), startOfDay(now));
           const hasPublished = dayPosts.some((post) => isCalendarPublishedStatus(post.status));
           const isPublishedDay = isPastDay && hasPublished;
@@ -216,7 +210,7 @@ export default async function CalendarPage({
               >
                 {format(day, "dd/MM")}
               </p>
-              {dayPosts.length === 0 && cancelledCount === 0 ? (
+              {dayPosts.length === 0 ? (
                 <p
                   className={cn(
                     "text-xs",
@@ -229,12 +223,6 @@ export default async function CalendarPage({
                 <CalendarDayPosts
                   posts={dayPosts}
                   isPublishedDay={isPublishedDay}
-                  initialVisible={calendarView === "cancelled" ? 3 : 6}
-                  cancelledCount={cancelledCount}
-                  cancelledHref={buildMonthHref("/dashboard/calendar", viewMonth, {
-                    ...filterParams,
-                    view: "cancelled",
-                  })}
                 />
               )}
             </div>
