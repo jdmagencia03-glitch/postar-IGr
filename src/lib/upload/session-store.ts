@@ -106,7 +106,7 @@ class UploadSessionStore {
   pausedByUser = false;
   retrying = false;
   resuming = false;
-  speedMode: UploadSpeedMode = "adaptive";
+  speedMode: UploadSpeedMode = "normal";
   progress: UploadEngineProgress | null = null;
   progressMap: Record<string, number> = {};
   fileRuntime: Record<string, UploadFileRuntimeState> = {};
@@ -124,6 +124,8 @@ class UploadSessionStore {
 
   private progressFrame: number | null = null;
   private pendingProgress: UploadEngineProgress | null = null;
+  private progressThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastUiProgressEmitAt = 0;
   private initialized = false;
   private autoRetryPass = 0;
   private engineStarting = false;
@@ -215,6 +217,10 @@ class UploadSessionStore {
     this.stopNearCompleteWatchdog();
     this.stopRetryCountdown();
     this.stopPolling();
+    if (this.progressThrottleTimer) {
+      clearTimeout(this.progressThrottleTimer);
+      this.progressThrottleTimer = null;
+    }
     if (this.autoRecoveryTimer) {
       clearTimeout(this.autoRecoveryTimer);
       this.autoRecoveryTimer = null;
@@ -242,9 +248,9 @@ class UploadSessionStore {
   private static readonly STALL_RECOVERY_COOLDOWN_MS = 120_000;
   /** Bytes recentes = upload ativo; não recuperar só porque nenhum arquivo terminou ainda. */
   private static readonly RECENT_BYTE_PROGRESS_MS = 180_000;
-  private static readonly POLL_INTERVAL_NORMAL_MS = 10_000;
-  private static readonly POLL_INTERVAL_FAST_MS = 5_000;
-  private static readonly POLL_INTERVAL_HIDDEN_MS = 30_000;
+  private static readonly POLL_INTERVAL_NORMAL_MS = 60_000;
+  private static readonly POLL_INTERVAL_FAST_MS = 15_000;
+  private static readonly POLL_INTERVAL_HIDDEN_MS = 120_000;
 
   private logUpload(event: string, detail?: Record<string, unknown>) {
     if (!isUploadDebugEnabled()) {
@@ -563,8 +569,7 @@ class UploadSessionStore {
       stallRecoveryCount: this.stallRecoveryCount,
     });
     this.setSpeedMode(next);
-    this.message =
-      "Detectamos instabilidade no envio. Reduzimos temporariamente a velocidade para manter o lote estável.";
+    this.message = "Reduzimos a velocidade para proteger o envio do lote.";
     void reportClientOperationalError({
       errorType: "upload_concurrency_reduced",
       title: "Velocidade de upload reduzida automaticamente",
@@ -722,12 +727,15 @@ class UploadSessionStore {
     this.touchProgress();
     const endsAt = Date.now() + detail.delayMs;
     this.setFileRuntime(fileId, {
-      status: "retrying",
+      status: "retry_wait",
       attempt: detail.attempt,
       maxAttempts: detail.maxAttempts,
       nextRetryAt: endsAt,
       retryInMs: detail.delayMs,
       message: detail.errorMessage,
+      errorType: detail.errorKind,
+      lastErrorMessage: detail.errorMessage,
+      lastAttemptAt: Date.now(),
     });
     this.message = retryMessage({
       attempt: detail.attempt,
@@ -779,7 +787,9 @@ class UploadSessionStore {
   }
 
   private hasActiveFileRetry() {
-    return Object.values(this.fileRuntime).some((runtime) => runtime.status === "retrying");
+    return Object.values(this.fileRuntime).some(
+      (runtime) => runtime.status === "retrying" || runtime.status === "retry_wait",
+    );
   }
 
   private startStallWatchdog() {
@@ -1276,7 +1286,9 @@ class UploadSessionStore {
       const batch = needsFull ? await refreshUploadBatch(active.id) : active;
       this.syncBatch(batch);
 
-      if (batch.upload_speed_mode) this.speedMode = batch.upload_speed_mode;
+      if (batch.upload_speed_mode) {
+        this.speedMode = batch.upload_speed_mode === "turbo" ? "normal" : batch.upload_speed_mode;
+      }
       this.initAdaptiveForBatch(batch.total_files);
       this.pausedByUser = Boolean(batch.paused);
 
@@ -1348,16 +1360,29 @@ class UploadSessionStore {
     if (next.bytesUploaded > this.lastProgressBytes) {
       this.touchProgress(next.bytesUploaded);
     }
-    if (this.progressFrame !== null) return;
-    this.progressFrame = requestAnimationFrame(() => {
+    const flush = () => {
       this.progressFrame = null;
+      this.progressThrottleTimer = null;
+      this.lastUiProgressEmitAt = Date.now();
       if (!this.pendingProgress) return;
       this.progress = this.pendingProgress;
       if (this.running) {
         this.evaluateAndApplyAdaptive("progress");
       }
       this.emit();
-    });
+    };
+    const elapsed = Date.now() - this.lastUiProgressEmitAt;
+    const waitMs = Math.max(0, 1000 - elapsed);
+    if (waitMs === 0) {
+      if (this.progressFrame !== null) return;
+      this.progressFrame = requestAnimationFrame(flush);
+      return;
+    }
+    if (this.progressThrottleTimer) return;
+    this.progressThrottleTimer = setTimeout(() => {
+      if (this.progressFrame !== null) return;
+      this.progressFrame = requestAnimationFrame(flush);
+    }, waitMs);
   };
 
   private setUserMessage(error: unknown, fallback: string) {
@@ -1395,7 +1420,10 @@ class UploadSessionStore {
           this.batch = null;
         }
 
-        if (this.batch?.upload_speed_mode) this.speedMode = this.batch.upload_speed_mode;
+        if (this.batch?.upload_speed_mode) {
+          this.speedMode =
+            this.batch.upload_speed_mode === "turbo" ? "normal" : this.batch.upload_speed_mode;
+        }
         if (this.batch?.paused) this.pausedByUser = true;
         if (this.batch?.upload_files?.length) {
           const initialProgress: Record<string, number> = {};
@@ -1425,10 +1453,11 @@ class UploadSessionStore {
   }
 
   setSpeedMode(mode: UploadSpeedMode) {
-    this.speedMode = mode;
-    if (mode === "adaptive") {
+    const nextMode = mode === "turbo" ? "normal" : mode;
+    this.speedMode = nextMode;
+    if (nextMode === "adaptive") {
       this.initAdaptiveForBatch(this.batch?.total_files ?? 0);
-    } else if (mode !== "economy") {
+    } else if (nextMode !== "economy") {
       this.safeMode = false;
       this.uploadPausedByFailures = false;
     }
@@ -1436,7 +1465,7 @@ class UploadSessionStore {
       this.engine.setConcurrency(this.getEffectiveFileConcurrency());
     }
     if (this.batch) {
-      void setBatchSpeedMode(this.batch.id, mode)
+      void setBatchSpeedMode(this.batch.id, nextMode)
         .then((updated) => {
           this.syncBatch(updated);
         })
@@ -1608,8 +1637,9 @@ class UploadSessionStore {
 
   private handleLocalCompletedPending(fileId: string) {
     this.setFileRuntime(fileId, {
-      status: "completed_local_pending_server_confirm",
+      status: "confirming",
       message: "Aguardando confirmação…",
+      lastAttemptAt: Date.now(),
     });
     this.emit();
     void this.reconcileAndMaybeContinue(fileId, "tus_completed_pending");
@@ -1697,6 +1727,15 @@ class UploadSessionStore {
           if (!validateBatchProgressEvent(next.id)) return;
           if (this.cancelledBatchIds.has(next.id)) return;
           this.batch = next;
+          for (const file of next.upload_files ?? []) {
+            if (!file.removed && file.status === "completed" && this.fileRuntime[file.id]) {
+              this.setFileRuntime(file.id, {
+                status: "uploaded",
+                uploadedBytes: Number(file.file_size),
+                lastAttemptAt: Date.now(),
+              });
+            }
+          }
           for (const listener of this.batchListeners) listener(next);
           this.emit();
           this.ensurePolling();
@@ -1711,6 +1750,11 @@ class UploadSessionStore {
           });
           if (next !== prev) {
             this.progressMap = { ...this.progressMap, [fileId]: next };
+            this.setFileRuntime(fileId, {
+              status: "uploading",
+              uploadedBytes: loaded,
+              lastAttemptAt: Date.now(),
+            });
             this.emit();
           }
         },
@@ -1744,7 +1788,16 @@ class UploadSessionStore {
             return;
           }
           this.logUpload("file_error", { message: errorMessage, fileId });
-          if (fileId) this.clearFileRuntime(fileId);
+          if (fileId) {
+            const isFinal = /após várias tentativas|não foi possível continuar/i.test(
+              errorMessage.toLowerCase(),
+            );
+            this.setFileRuntime(fileId, {
+              status: isFinal ? "failed_final" : "failed_retryable",
+              lastErrorMessage: errorMessage,
+              lastAttemptAt: Date.now(),
+            });
+          }
           const isStallLike = /upload_stall|sem progresso|stall_timeout|upload travado/i.test(
             errorMessage.toLowerCase(),
           );

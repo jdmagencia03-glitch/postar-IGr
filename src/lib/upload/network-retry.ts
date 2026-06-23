@@ -6,7 +6,7 @@ import {
 import { extractUploadErrorMessage } from "@/lib/upload/errors";
 
 /** Backoff entre tentativas de upload por arquivo (ms). */
-export const UPLOAD_FILE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000] as const;
+export const UPLOAD_FILE_RETRY_DELAYS_MS = [2_000, 6_000, 15_000] as const;
 
 export const UPLOAD_FILE_MAX_ATTEMPTS = UPLOAD_FILE_RETRY_DELAYS_MS.length + 1;
 
@@ -22,6 +22,8 @@ export type UploadErrorKind =
   | "rate_limit"
   | "auth"
   | "file"
+  | "conflict"
+  | "url_expired"
   | "stall"
   | "unknown";
 
@@ -63,6 +65,30 @@ export function classifyUploadError(error: unknown): UploadErrorClassification {
     return {
       kind: "file",
       recoverable: false,
+      message,
+      statusCode,
+    };
+  }
+
+  if (
+    statusCode === 404 ||
+    /404|not found|signed url|url inválida|url expirada/i.test(lower)
+  ) {
+    return {
+      kind: "url_expired",
+      recoverable: true,
+      message,
+      statusCode,
+    };
+  }
+
+  if (
+    statusCode === 409 ||
+    /409|conflict|already exists|already uploaded|duplicate/i.test(lower)
+  ) {
+    return {
+      kind: "conflict",
+      recoverable: true,
       message,
       statusCode,
     };
@@ -148,6 +174,10 @@ export function userMessageForUploadError(classification: UploadErrorClassificat
       return userMessageForState("auth_error");
     case "file":
       return "Este arquivo não pôde ser enviado. Verifique formato e tamanho.";
+    case "url_expired":
+      return "A URL de envio expirou. Vamos gerar uma nova e tentar novamente.";
+    case "conflict":
+      return "Conflito de sessão detectado. Vamos reconciliar e tentar novamente.";
     default:
       return classification.message || "Erro ao enviar vídeo.";
   }

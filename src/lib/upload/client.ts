@@ -166,6 +166,14 @@ export function fileFingerprint(file: File) {
   return `${file.name}|${file.size}|${file.lastModified}`;
 }
 
+function shortFileName(name: string) {
+  if (name.length <= 48) return name;
+  const extIdx = name.lastIndexOf(".");
+  const ext = extIdx > 0 ? name.slice(extIdx) : "";
+  const base = extIdx > 0 ? name.slice(0, extIdx) : name;
+  return `${base.slice(0, 36)}...${ext}`;
+}
+
 export function matchFileToRecord(file: File, records: UploadBatchFile[]) {
   const fingerprint = fileFingerprint(file);
   const byHash = records.find((record) => record.file_hash === fingerprint);
@@ -218,6 +226,8 @@ export async function uploadBatchFile(params: {
     params;
   let record = params.record;
   let claimConflictAttempts = 0;
+  let refreshedAfterConflict = false;
+  let resetAfterExpiredUrl = false;
 
   for (let attempt = 0; attempt < UPLOAD_FILE_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) {
@@ -263,7 +273,7 @@ export async function uploadBatchFile(params: {
       logUploadEvent("[upload-retry]", "scheduled", {
         batchId: batch.id,
         fileId: record.id,
-        fileName: file.name,
+        shortFileName: shortFileName(file.name),
         attempt,
         maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
         nextRetryIn: delayMs,
@@ -298,7 +308,7 @@ export async function uploadBatchFile(params: {
       logUploadEvent("[upload-engine-event]", "upload_start", {
         batchId: batch.id,
         fileId: record.id,
-        fileName: file.name,
+        shortFileName: shortFileName(file.name),
         attempt: attempt + 1,
         maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
         previousStatus: record.status,
@@ -441,13 +451,48 @@ export async function uploadBatchFile(params: {
       logUploadEvent("[upload-network]", "upload_error", {
         batchId: batch.id,
         fileId: record.id,
-        fileName: file.name,
+        shortFileName: shortFileName(file.name),
         attempt: attempt + 1,
         maxAttempts: UPLOAD_FILE_MAX_ATTEMPTS,
         errorCode: classification.statusCode,
         errorMessage: rawError,
         recoverable: classification.recoverable,
       });
+
+      if (classification.kind === "conflict" && !refreshedAfterConflict) {
+        refreshedAfterConflict = true;
+        const refreshed = await refreshUploadBatch(batch.id).catch(() => null);
+        const serverFile = refreshed?.upload_files?.find((item) => item.id === record.id);
+        if (serverFile?.status === "completed" && serverFile.public_url) {
+          return { file: serverFile, counters: null };
+        }
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "pending",
+            bytes_uploaded: 0,
+            error_message: "Conflito de sessão reconciliado. Retomando envio.",
+          }),
+        }).catch(() => undefined);
+        record = { ...record, status: "pending", bytes_uploaded: 0, error_message: null };
+        continue;
+      }
+
+      if (classification.kind === "url_expired" && !resetAfterExpiredUrl) {
+        resetAfterExpiredUrl = true;
+        await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "pending",
+            bytes_uploaded: 0,
+            error_message: "Sessão de upload expirada. Gerando uma nova URL.",
+          }),
+        }).catch(() => undefined);
+        record = { ...record, status: "pending", bytes_uploaded: 0, error_message: null };
+        continue;
+      }
 
       if (!classification.recoverable || attempt === UPLOAD_FILE_MAX_ATTEMPTS - 1) {
         const failRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
@@ -464,7 +509,7 @@ export async function uploadBatchFile(params: {
         logUploadEvent("[upload-failed]", "file_failed", {
           batchId: batch.id,
           fileId: record.id,
-          fileName: file.name,
+          shortFileName: shortFileName(file.name),
           attempt: attempt + 1,
           errorMessage: rawError,
         });
@@ -668,7 +713,7 @@ export async function createUploadBatch(params: {
     tiktok_account_id: platform === "tiktok" ? params.accountId : undefined,
     schedule_mode: params.scheduleMode,
     custom_schedule: params.customSchedule ?? undefined,
-    upload_speed_mode: params.uploadSpeedMode ?? "adaptive",
+    upload_speed_mode: params.uploadSpeedMode ?? "normal",
   };
 
   const firstRes = await apiFetch("/api/upload/batches", {
@@ -822,9 +867,13 @@ export function fileStatusLabel(
   if (runtime === "reconciling" || runtime === "reconcile_network_error") {
     return "Aguardando confirmação…";
   }
-  if (runtime === "completed_local_pending_server_confirm") {
+  if (runtime === "completed_local_pending_server_confirm" || runtime === "confirming") {
     return "Processando…";
   }
+  if (runtime === "retry_wait") return "Aguardando próxima tentativa…";
+  if (runtime === "failed_final") return "Falha final";
+  if (runtime === "failed_retryable") return "Falha temporária";
+  if (runtime === "uploaded") return "Enviado";
   if (options?.stalled && status !== "completed") return "Sem progresso";
   if (options?.retrying || status === "retrying") return "Tentando novamente…";
   switch (status) {

@@ -1098,6 +1098,10 @@ export function BulkUploadForm({
     void handleScheduleRef.current(true);
   }, []);
 
+  const handleScheduleAll = useCallback(() => {
+    void handleScheduleRef.current(false);
+  }, []);
+
   const publicationModes: Array<{
     id: ScheduleMode;
     badge?: string;
@@ -1243,6 +1247,9 @@ export function BulkUploadForm({
               onBatchUpdate={handleBatchUpdate}
               onUploadingChange={handleUploadingChange}
               onSchedulePartial={handleSchedulePartial}
+              onScheduleAll={handleScheduleAll}
+              canScheduleAll={canScheduleAll && !batchFullyDone && destinationReady}
+              scheduleAllBusy={scheduling}
               onStartNewBatch={handleStartNewBatch}
               suppressCompletionActions={false}
               scheduleJobActive={Boolean(scheduleJobId && !scheduleJobComplete)}
@@ -1485,6 +1492,7 @@ export function BulkUploadForm({
 
       {!batchFullyDone && (
       <button
+        id="schedule-all-cta"
         type="submit"
         disabled={scheduling || isUploading || !canScheduleAll || !destinationReady}
         className="ig-btn w-full py-4 text-base font-bold disabled:opacity-50"

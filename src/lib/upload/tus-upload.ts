@@ -107,7 +107,7 @@ export function uploadFileWithTus(params: {
         resetStallTimer(reject);
         const status = (error as { originalResponse?: { getStatus?: () => number } }).originalResponse
           ?.getStatus?.();
-        if (status === 403 || status === 404) return false;
+        if (status === 403 || status === 404 || status === 409) return false;
         logTus("retry", { status, resumePrevious: params.resumePrevious });
         return true;
       },

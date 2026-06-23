@@ -69,12 +69,17 @@ export const STORAGE_CACHE_CONTROL = "31536000";
 
 /** Navegadores limitam ~6 conexões HTTP simultâneas por domínio. */
 export const BROWSER_UPLOAD_CONCURRENCY_CAP = 6;
+export const MAX_SAFE_UPLOAD_CONCURRENCY = readPositiveInt(
+  process.env.MAX_SAFE_UPLOAD_CONCURRENCY,
+  2,
+);
 
 export const UPLOAD_FILE_CONCURRENCY = {
-  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 2),
-  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 4),
-  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 6),
+  economy: readPositiveInt(process.env.UPLOAD_CONCURRENCY_ECONOMY, 1),
+  normal: readPositiveInt(process.env.UPLOAD_CONCURRENCY_NORMAL, 2),
+  turbo: readPositiveInt(process.env.UPLOAD_CONCURRENCY_TURBO, 3),
 } as const;
+export const UPLOAD_CONCURRENCY_DEFAULT = UPLOAD_FILE_CONCURRENCY.normal;
 
 /** Concorrência base do modo adaptativo (ponto de partida antes de ajustes). */
 export const ADAPTIVE_BASE_CONCURRENCY = UPLOAD_FILE_CONCURRENCY;
@@ -95,7 +100,11 @@ export type UploadSpeedPresets = Record<Exclude<UploadSpeedMode, "adaptive">, Up
 };
 
 export function clampUploadConcurrency(requested: number) {
-  return Math.min(Math.max(1, requested), BROWSER_UPLOAD_CONCURRENCY_CAP);
+  return Math.min(
+    Math.max(1, requested),
+    BROWSER_UPLOAD_CONCURRENCY_CAP,
+    MAX_SAFE_UPLOAD_CONCURRENCY,
+  );
 }
 
 /** Valores efetivos usados pelo motor de upload (respeitam o teto do navegador). */

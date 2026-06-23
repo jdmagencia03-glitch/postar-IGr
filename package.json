@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "npx tsx scripts/test-upload-resilience.ts",
     "migrate:tiktok": "node scripts/run-tiktok-migrations.mjs",
     "test:warmup": "npx tsx scripts/test-warmup-schedule.ts",
     "test:schedule-pipeline": "npx tsx scripts/test-schedule-job-pipeline.ts",

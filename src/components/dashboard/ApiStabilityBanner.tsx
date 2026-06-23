@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
+import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 
 const CHECK_TIMEOUT_MS = 10_000;
-const RETRY_MS = 60_000;
+const RETRY_ACTIVE_MS = 15_000;
+const RETRY_IDLE_MS = 60_000;
+const RETRY_HIDDEN_MS = 120_000;
 
 function isDegradedApiError(json: unknown): boolean {
   if (!json || typeof json !== "object") return false;
@@ -17,22 +20,33 @@ function isDegradedApiError(json: unknown): boolean {
 export function ApiStabilityBanner() {
   const [message, setMessage] = useState<string | null>(null);
   const degradedStreakRef = useRef(0);
+  const uploadSession = useOptionalUploadSession();
 
   const check = useCallback(async () => {
     try {
-      const [authRes, accountsRes] = await Promise.all([
+      const requests: Promise<Response>[] = [
         fetchWithTimeout("/api/debug/auth-state", { credentials: "include", cache: "no-store" }, CHECK_TIMEOUT_MS),
-        fetchWithTimeout("/api/accounts", { credentials: "include", cache: "no-store" }, CHECK_TIMEOUT_MS),
-      ]);
+      ];
+
+      // Durante upload ativo, reduzimos chamadas extras para não competir com o envio.
+      const uploadActive = Boolean(uploadSession?.running || uploadSession?.retrying || uploadSession?.resuming);
+      if (!uploadActive) {
+        requests.push(
+          fetchWithTimeout("/api/accounts", { credentials: "include", cache: "no-store" }, CHECK_TIMEOUT_MS),
+        );
+      }
+
+      const [authRes, accountsRes] = await Promise.all(requests);
 
       const authJson = authRes.ok ? await authRes.json().catch(() => null) : null;
-      const accountsJson = await accountsRes.json().catch(() => null);
+      const accountsJson = accountsRes ? await accountsRes.json().catch(() => null) : null;
 
       const authDegraded =
         authJson &&
         (authJson.sessionLookup === "auth_timeout" || authJson.sessionLookup === "auth_db_error");
 
-      const accountsDegraded = accountsRes.status === 503 && isDegradedApiError(accountsJson);
+      const accountsDegraded =
+        accountsRes != null && accountsRes.status === 503 && isDegradedApiError(accountsJson);
 
       if (authDegraded || accountsDegraded) {
         degradedStreakRef.current += 1;
@@ -68,10 +82,17 @@ export function ApiStabilityBanner() {
   }, []);
 
   useEffect(() => {
+    const uploadActive = Boolean(uploadSession?.running || uploadSession?.retrying || uploadSession?.resuming);
+    const intervalMs =
+      typeof document !== "undefined" && document.hidden
+        ? RETRY_HIDDEN_MS
+        : uploadActive
+          ? RETRY_ACTIVE_MS
+          : RETRY_IDLE_MS;
     check();
-    const interval = setInterval(check, RETRY_MS);
+    const interval = setInterval(check, intervalMs);
     return () => clearInterval(interval);
-  }, [check]);
+  }, [check, uploadSession?.running, uploadSession?.retrying, uploadSession?.resuming]);
 
   if (!message) return null;
 

@@ -37,6 +37,9 @@ interface Props {
   onBatchUpdate?: (batch: UploadBatch | null) => void;
   onUploadingChange?: (uploading: boolean) => void;
   onSchedulePartial?: () => void;
+  onScheduleAll?: () => void;
+  canScheduleAll?: boolean;
+  scheduleAllBusy?: boolean;
   onStartNewBatch?: () => void;
   suppressCompletionActions?: boolean;
   /** Job de agendamento em andamento no servidor (upload já recebido). */
@@ -61,6 +64,12 @@ const FileStatusRow = memo(function FileStatusRow({
   isRetrying?: boolean;
   runtimeStatus?: string;
 }) {
+  const extIdx = file.filename.lastIndexOf(".");
+  const ext = extIdx > 0 ? file.filename.slice(extIdx) : "";
+  const safeDisplayName =
+    file.filename.length <= 56
+      ? file.filename
+      : `${file.filename.slice(0, 44)}...${ext}`;
   const errorText = displayUploadErrorMessage(
     file.error_message,
     Number(file.file_size),
@@ -70,7 +79,9 @@ const FileStatusRow = memo(function FileStatusRow({
   return (
     <div className="rounded-lg border border-ig-border bg-ig-secondary px-3 py-2 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="truncate text-ig-text">{file.filename}</span>
+        <span className="truncate text-ig-text" title={file.filename}>
+          {safeDisplayName}
+        </span>
         <span className="text-xs text-ig-muted">
           {formatBytes(Number(file.file_size))} ·{" "}
           {fileStatusLabel(file.status, {
@@ -111,6 +122,9 @@ export function SupremeUploadManager({
   onBatchUpdate,
   onUploadingChange,
   onSchedulePartial,
+  onScheduleAll,
+  canScheduleAll = false,
+  scheduleAllBusy = false,
   onStartNewBatch,
   suppressCompletionActions = false,
   scheduleJobActive = false,
@@ -206,10 +220,15 @@ export function SupremeUploadManager({
   const scheduleProcessingLabel = scheduleJobComplete
     ? "Processamento finalizado"
     : "Processamento no servidor";
+  const uploadReadyForAiSchedule =
+    uploadFullyReceived &&
+    batchStatus === "ready" &&
+    !scheduleJobActive &&
+    !batchFullyScheduled;
   const showUploadCompletionActions =
     (batchFullyScheduled ||
-      batchTerminal ||
-      (uploadFullyReceived && scheduleJobActive)) &&
+      batchStatus === "cancelled" ||
+      (uploadFullyReceived && scheduleJobActive && scheduleJobComplete)) &&
     !suppressCompletionActions &&
     Boolean(onStartNewBatch);
 
@@ -574,6 +593,24 @@ export function SupremeUploadManager({
                   batchId={session.batch?.id}
                   onStartNewBatch={handleStartNewBatch}
                 />
+              ) : uploadReadyForAiSchedule && onScheduleAll ? (
+                <div className="w-full space-y-3">
+                  <p className="text-sm text-ig-muted">
+                    Upload concluído. A IA cria legendas e agenda suas publicações automaticamente.
+                  </p>
+                  <button
+                    type="button"
+                    className="ig-btn w-full px-4 py-3 text-sm font-bold disabled:opacity-50"
+                    disabled={!canScheduleAll || scheduleAllBusy}
+                    onClick={onScheduleAll}
+                  >
+                    {scheduleAllBusy
+                      ? "Processando..."
+                      : canScheduleAll
+                        ? "🚀 DEIXAR A IA PROGRAMAR TUDO"
+                        : "Aguardando upload..."}
+                  </button>
+                </div>
               ) : (
                 <>
                   {(session.running || session.engineStarting) && (
@@ -625,7 +662,10 @@ export function SupremeUploadManager({
                       Tentar novamente arquivos com erro
                     </button>
                   )}
-                  {view.completedCount > 0 && onSchedulePartial && !session.running && session.batch.status !== "ready" && (
+                  {view.completedCount > 0 &&
+                    onSchedulePartial &&
+                    !session.running &&
+                    view.completedCount < view.totalCount && (
                     <button type="button" className="ig-btn-secondary px-3 py-2 text-sm" onClick={onSchedulePartial}>
                       Agendar vídeos enviados
                     </button>
@@ -696,14 +736,15 @@ export function SupremeUploadManager({
 
       {session.concurrencyReduced && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Velocidade reduzida automaticamente por instabilidade na conexão.
+          Reduzimos a velocidade para proteger o envio do lote.
         </p>
       )}
 
       {session.message &&
         !hasFileRetry &&
         !session.retrying &&
-        !batchTerminal && (
+        batchStatus !== "scheduled" &&
+        batchStatus !== "cancelled" && (
         <p
           className={`text-sm ${session.message.includes("Erro") || session.message.includes("Falha") || session.message.includes("falhou") ? "text-ig-danger" : "text-ig-text"}`}
         >
@@ -727,7 +768,7 @@ function SpeedModePicker({
   batchFileCount: number;
   onChange: (mode: UploadSpeedMode) => void;
 }) {
-  const modes: UploadSpeedMode[] = ["adaptive", "normal", "economy", "turbo"];
+  const modes: UploadSpeedMode[] = ["adaptive", "normal", "economy"];
 
   const handleChange = (mode: UploadSpeedMode) => {
     if (mode === "turbo" && batchFileCount > 300) {

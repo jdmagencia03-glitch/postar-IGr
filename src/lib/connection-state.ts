@@ -203,7 +203,7 @@ export function userMessageForState(
       if (failures >= 2) return "Sua conexão caiu. Tentando reconectar…";
       return "Verificando conexão…";
     case "timeout":
-      return "Servidor demorou para responder. Tentando novamente…";
+      return "Sua conexão oscilou durante o envio. Vamos tentar novamente automaticamente.";
     case "server_error":
       return "O servidor encontrou um erro. Registramos o problema.";
     case "auth_error":
@@ -219,7 +219,7 @@ export function userMessageForState(
     case "job_processing":
       return "Aguardando próximo ciclo de processamento…";
     case "upload_stalled":
-      return "Upload sem progresso detectado. Tentando recuperar este arquivo…";
+      return "Sua conexão oscilou durante o envio. Vamos tentar novamente automaticamente.";
     case "online":
       return "Conectado";
     default:

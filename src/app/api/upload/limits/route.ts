@@ -4,6 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   BROWSER_UPLOAD_CONCURRENCY_CAP,
   MAX_UPLOAD_MB,
+  MAX_SAFE_UPLOAD_CONCURRENCY,
+  UPLOAD_CONCURRENCY_DEFAULT,
   UPLOAD_FILE_CONCURRENCY,
   formatBucketLimitMb,
   getEffectiveUploadConcurrency,
@@ -39,6 +41,8 @@ export async function GET() {
     bucket_limit_label: formatBucketLimitMb(bucketLimitBytes),
     bucket_error: error?.message ?? null,
     browser_concurrency_cap: BROWSER_UPLOAD_CONCURRENCY_CAP,
+    max_safe_upload_concurrency: MAX_SAFE_UPLOAD_CONCURRENCY,
+    default_concurrency: UPLOAD_CONCURRENCY_DEFAULT,
     concurrency: getEffectiveUploadConcurrency(),
     concurrency_configured: UPLOAD_FILE_CONCURRENCY,
     speed_presets: speedPresets,

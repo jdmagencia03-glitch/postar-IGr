@@ -40,8 +40,15 @@ export type UploadSessionPhase =
 /** Estado efêmero por arquivo (retry, countdown) — não persiste no backend. */
 export type UploadFileRuntimeState = {
   status?:
+    | "queued"
+    | "starting"
     | "retrying"
+    | "retry_wait"
     | "uploading"
+    | "confirming"
+    | "uploaded"
+    | "failed_retryable"
+    | "failed_final"
     | "recovered"
     | "stalled"
     | "waiting_claim"
@@ -55,6 +62,11 @@ export type UploadFileRuntimeState = {
   retryInMs?: number;
   message?: string;
   claimAttempts?: number;
+  uploadedBytes?: number;
+  errorType?: string;
+  lastErrorMessage?: string;
+  lastAttemptAt?: number;
+  safeDisplayName?: string;
 };
 
 export type UploadSessionSnapshot = {
