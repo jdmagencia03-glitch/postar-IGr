@@ -23,7 +23,9 @@ export async function GET() {
   let supabaseOk = false;
   try {
     const supabase = createAdminClient();
-    const { error } = await supabase.from("schedule_jobs").select("id", { count: "exact", head: true });
+    const { error } = await supabase
+      .from("app_sessions")
+      .select("user_id", { count: "exact", head: true });
     supabaseOk = !error;
     if (error) checks.supabaseError = error.message;
   } catch (err) {

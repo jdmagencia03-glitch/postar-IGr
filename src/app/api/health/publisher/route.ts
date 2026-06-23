@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { getLastPublishedAt } from "@/lib/operations/compute";
-import { getOwnerScheduledPosts } from "@/lib/posts";
+import { getOwnerPublisherHealthMetrics } from "@/lib/posts/dashboard-data";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { withHardTimeout, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export async function GET() {
   const ownerId = await getSessionUserId();
@@ -13,19 +13,41 @@ export async function GET() {
   const cronConfigured = Boolean(process.env.CRON_SECRET?.trim());
   const supabase = createAdminClient();
   const now = new Date();
-  const nowIso = now.toISOString();
-  const posts = await getOwnerScheduledPosts(supabase, ownerId);
-  const lastPublishAt = getLastPublishedAt(posts);
 
-  const overduePending = posts.filter(
-    (post) => post.status === "pending" && post.scheduled_at <= nowIso,
-  ).length;
-  const stuckProcessing = posts.filter((post) => post.status === "processing").length;
-  const retrying = posts.filter((post) => post.status === "retrying").length;
-  const failedPersistent = posts.filter((post) => post.status === "failed_persistent").length;
-  const pending = posts.filter(
-    (post) => post.status === "pending" || post.status === "retrying",
-  ).length;
+  const metrics = await withHardTimeout(
+    getOwnerPublisherHealthMetrics(supabase, ownerId),
+    DB_ROUTE_TIMEOUT_MS,
+    null,
+    "api-health-publisher",
+  );
+
+  if (!metrics) {
+    return NextResponse.json(
+      {
+        cron_configured: cronConfigured,
+        overdue_pending: 0,
+        stuck_processing: 0,
+        retrying: 0,
+        failed_persistent: 0,
+        pending: 0,
+        last_publish_at: null,
+        cron_stale: false,
+        status: "attention",
+        healthy: false,
+        degraded: true,
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  const {
+    overdue_pending: overduePending,
+    stuck_processing: stuckProcessing,
+    retrying,
+    failed_persistent: failedPersistent,
+    pending,
+    last_publish_at: lastPublishAt,
+  } = metrics;
 
   let cronStale = false;
   if (lastPublishAt) {

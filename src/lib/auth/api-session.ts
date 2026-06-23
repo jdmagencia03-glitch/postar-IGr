@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies, headers } from "next/headers";
+import { parseSignedSession } from "@/lib/auth/session-crypto";
 import { SESSION_COOKIE, USER_ID_HEADER } from "@/lib/auth/session-core";
 import {
   isSessionUnauthorized,
@@ -198,6 +199,19 @@ export async function requireApiSessionSafe(
   const startedAt = Date.now();
 
   try {
+    const headersList = await headers();
+    const fromMiddleware = headersList.get(USER_ID_HEADER);
+    if (fromMiddleware) {
+      return { ok: true, userId: fromMiddleware, source: "cache" };
+    }
+
+    const cookieStore = await cookies();
+    const token = cookieStore.get(SESSION_COOKIE)?.value;
+    const signedUserId = token ? parseSignedSession(token) : null;
+    if (signedUserId) {
+      return { ok: true, userId: signedUserId, source: "cache" };
+    }
+
     const result = await Promise.race<ApiSessionResult>([
       (async (): Promise<ApiSessionResult> => {
         const session = await resolveRequestSession(route);

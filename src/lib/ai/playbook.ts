@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AiPlaybook, AccountPlaybookPayload } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CAPTION_LAYOUT_EXAMPLE } from "@/lib/ai/caption-format";
@@ -61,11 +62,12 @@ function playbookFromPayload(ownerId: string, payload: AccountPlaybookPayload): 
   };
 }
 
-async function getPlaybookRow(ownerId: string) {
-  const supabase = createAdminClient();
+async function getPlaybookRow(ownerId: string, supabase = createAdminClient()) {
   const { data } = await supabase
     .from("ai_playbooks")
-    .select("*")
+    .select(
+      "brand_name, niche, target_audience, tone_voice, viral_hooks, hashtag_strategy, cta_style, example_captions, avoid_rules, extra_knowledge, playbooks_by_account",
+    )
     .eq("owner_id", ownerId)
     .maybeSingle();
 
@@ -103,8 +105,11 @@ export async function getPlaybookForAccount(
   return null;
 }
 
-export async function ownerHasConfiguredPlaybook(ownerId: string) {
-  const row = await getPlaybookRow(ownerId);
+export async function ownerHasConfiguredPlaybook(
+  ownerId: string,
+  supabase = createAdminClient(),
+) {
+  const row = await getPlaybookRow(ownerId, supabase);
   if (!row) return false;
 
   const map = row.playbooks_by_account ?? {};

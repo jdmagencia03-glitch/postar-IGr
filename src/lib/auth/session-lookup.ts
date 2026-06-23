@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { parseSignedSession } from "@/lib/auth/session-crypto";
 
-export const SESSION_LOOKUP_TIMEOUT_MS = 4_000;
+export const SESSION_LOOKUP_TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const STALE_TTL_MS = 10 * 60 * 1000;
 

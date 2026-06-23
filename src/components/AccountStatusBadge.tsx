@@ -12,7 +12,7 @@ interface HealthResponse {
   username?: string | null;
 }
 
-const FETCH_TIMEOUT_MS = 3_000;
+const FETCH_TIMEOUT_MS = 8_000;
 
 export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolean }) {
   const [status, setStatus] = useState<AccountStatus>("loading");
@@ -21,8 +21,7 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
 
   const fetchHealth = useCallback(async () => {
     try {
-      const [healthRes, igAccountsRes, tiktokAccountsRes] = await Promise.all([
-        fetchWithTimeout("/api/instagram/health", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
+      const [igAccountsRes, tiktokAccountsRes] = await Promise.all([
         fetchWithTimeout("/api/accounts", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
         fetchWithTimeout("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
       ]);
@@ -71,30 +70,45 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
         return;
       }
 
-      const health = healthRes.ok
-        ? ((await healthRes.json()) as HealthResponse)
-        : null;
-      const igActive = health?.account_status === "active";
-      const tiktokActive = tiktokCount > 0;
-
-      if (igCount > 0 && tiktokCount > 0) {
-        setStatus(igActive || tiktokActive ? "active" : "error");
-        if (igActive && tiktokActive) {
-          setMessage(`${igCount} IG · ${tiktokCount} TikTok conectadas`);
-        } else if (igActive) {
-          setMessage(health?.status_message ?? "Instagram ativo · TikTok indisponível");
-        } else if (tiktokActive) {
-          setMessage("TikTok ativo · Instagram indisponível");
-        } else {
-          setMessage(health?.status_message ?? "Contas indisponíveis");
-        }
+      if (igCount === 0 && tiktokCount === 0) {
+        setStatus("error");
+        setMessage("Nenhuma conta conectada");
         return;
       }
 
       if (igCount > 0) {
+        const healthRes = await fetchWithTimeout(
+          "/api/instagram/health",
+          { credentials: "include", cache: "no-store" },
+          FETCH_TIMEOUT_MS,
+        );
+        const health = healthRes.ok
+          ? ((await healthRes.json()) as HealthResponse)
+          : null;
+        const igActive = health?.account_status === "active";
+        const tiktokActive = tiktokCount > 0;
+
+        if (igCount > 0 && tiktokCount > 0) {
+          setStatus(igActive || tiktokActive ? "active" : "error");
+          if (igActive && tiktokActive) {
+            setMessage(`${igCount} IG · ${tiktokCount} TikTok conectadas`);
+          } else if (igActive) {
+            setMessage(health?.status_message ?? "Instagram ativo · TikTok indisponível");
+          } else if (tiktokActive) {
+            setMessage("TikTok ativo · Instagram indisponível");
+          } else {
+            setMessage(health?.status_message ?? "Contas indisponíveis");
+          }
+          return;
+        }
+
         if (!healthRes.ok || !health) {
-          setStatus("error");
-          setMessage("Falha ao verificar conta Instagram");
+          setStatus(totalCount > 0 ? "active" : "error");
+          setMessage(
+            totalCount > 0
+              ? `${igCount} conta(s) Instagram conectada(s)`
+              : "Falha ao verificar conta Instagram",
+          );
           return;
         }
         setStatus(health.account_status);
@@ -102,8 +116,8 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
         return;
       }
 
-      setStatus("error");
-      setMessage("Nenhuma conta conectada");
+      setStatus("active");
+      setMessage(`${tiktokCount} conta(s) TikTok conectada(s)`);
     } catch {
       setStatus("error");
       setMessage("Contas indisponíveis no momento");

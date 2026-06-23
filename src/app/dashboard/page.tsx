@@ -8,10 +8,12 @@ import { OnboardingSteps } from "@/components/OnboardingSteps";
 import { PublisherHealthBanner } from "@/components/PublisherHealthBanner";
 import { ownerHasConfiguredPlaybook } from "@/lib/ai/playbook";
 import { getSessionUserId } from "@/lib/meta/oauth";
-import { getOwnerScheduledPosts } from "@/lib/posts";
-import { isActiveQueueStatus, isHudVisibleStatus } from "@/lib/operations/post-status";
+import {
+  filterDashboardQueuePosts,
+  getOwnerDashboardData,
+} from "@/lib/posts/dashboard-data";
+import type { SocialPlatform } from "@/lib/types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ScheduledPost, SocialPlatform } from "@/lib/types";
 import { withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
@@ -36,61 +38,31 @@ export default async function DashboardPage({
   const supabase = createAdminClient();
   let loadError: string | null = null;
 
-  const playbookReadyResult = await withTimeoutOrNull(
-    ownerHasConfiguredPlaybook(ownerId),
-    DB_ROUTE_TIMEOUT_MS,
-    "dashboard-playbook",
-  );
+  const [playbookReadyResult, dashboardData] = await Promise.all([
+    withTimeoutOrNull(ownerHasConfiguredPlaybook(ownerId, supabase), DB_ROUTE_TIMEOUT_MS, "dashboard-playbook"),
+    getOwnerDashboardData(supabase, ownerId, platformFilter),
+  ]);
+
   if (playbookReadyResult === null) {
     loadError = "O banco está temporariamente lento. Alguns dados podem demorar para carregar.";
   }
   const playbookReady = playbookReadyResult ?? false;
 
-  const postFilters = {
-    platform: platformFilter,
-    order: "asc" as const,
-  };
-
-  const allPostsResult = await withTimeoutOrNull(
-    getOwnerScheduledPosts(supabase, ownerId, postFilters),
-    DB_ROUTE_TIMEOUT_MS,
-    "dashboard-posts-all",
-  );
-
-  if (allPostsResult === null) {
+  if (dashboardData === null) {
     loadError =
       loadError ??
       "Não foi possível carregar seus posts agora. Tente novamente em instantes.";
   }
 
-  const allPosts: ScheduledPost[] = allPostsResult ?? [];
-  const hudPosts = allPosts.filter((post) => isHudVisibleStatus(post.status));
-  const queuePosts = hudPosts.filter((post) => isActiveQueueStatus(post.status));
-  const posts = queuePosts.slice(0, 12);
-
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-  const stats = {
-    pending: hudPosts.filter((p) => p.status === "pending" || p.status === "retrying").length,
-    published: hudPosts.filter((p) => p.status === "published").length,
-    publishedLast7Days: hudPosts.filter(
-      (p) =>
-        p.status === "published" &&
-        p.published_at &&
-        new Date(p.published_at) >= sevenDaysAgo,
-    ).length,
-    failed: hudPosts.filter((p) => p.status === "failed" || p.status === "failed_persistent").length,
+  const stats = dashboardData?.stats ?? {
+    pending: 0,
+    published: 0,
+    publishedLast7Days: 0,
+    failed: 0,
   };
-  const hasScheduledPosts = hudPosts.some(
-    (p) =>
-      p.status === "pending" ||
-      p.status === "published" ||
-      p.status === "failed" ||
-      p.status === "failed_persistent" ||
-      p.status === "retrying" ||
-      p.status === "needs_media",
-  );
+  const hudPosts = dashboardData?.hudPosts ?? [];
+  const posts = filterDashboardQueuePosts(hudPosts);
+  const hasScheduledPosts = dashboardData?.hasScheduledPosts ?? false;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-4">
