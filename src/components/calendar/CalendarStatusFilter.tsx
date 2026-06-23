@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-export type CalendarView = "active" | "all" | "pending" | "published" | "cancelled";
+export type CalendarView = "active" | "all" | "pending" | "published";
 
 const VIEWS: Array<{ id: CalendarView; label: string }> = [
   { id: "active", label: "Pendentes" },
   { id: "published", label: "Publicados" },
-  { id: "cancelled", label: "Cancelados" },
   { id: "all", label: "Todos" },
 ];
 
