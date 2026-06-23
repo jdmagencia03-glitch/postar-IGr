@@ -17,6 +17,7 @@ export default async function LoginPage({
   const errorMessages: Record<string, string> = {
     oauth_invalid: "Falha na autenticação. Tente novamente.",
     oauth_unavailable: "Serviço temporariamente indisponível. Tente novamente em instantes.",
+    login_save_failed: "Não foi possível concluir o login agora. Tente novamente em instantes.",
     session_required: "Faça login para continuar.",
     no_instagram:
       "Nenhuma conta Instagram Business/Creator vinculada a uma Página do Facebook.",

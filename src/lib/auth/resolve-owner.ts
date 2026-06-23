@@ -2,7 +2,12 @@ import { randomUUID } from "crypto";
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SESSION_COOKIE } from "@/lib/auth/session";
-import { resolveSessionFromToken } from "@/lib/auth/session-lookup";
+import { API_SESSION_SAFE_TIMEOUT_MS } from "@/lib/auth/api-session";
+import {
+  resolveSessionFromToken,
+  type SessionAuthResult,
+} from "@/lib/auth/session-lookup";
+import { withHardTimeout, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
 export type OAuthOwnerResolveResult =
   | { ownerId: string }
@@ -18,24 +23,39 @@ export async function resolveOAuthOwnerId(
     findExistingOwnerId: () => Promise<string | null | undefined>;
   },
 ): Promise<OAuthOwnerResolveResult> {
-  const existingOwnerId = await options.findExistingOwnerId();
+  const existingOwnerId = await withHardTimeout(
+    options.findExistingOwnerId(),
+    DB_ROUTE_TIMEOUT_MS,
+    null,
+    "resolveOAuthOwnerId/findExisting",
+  );
+
   if (existingOwnerId) {
     return { ownerId: existingOwnerId };
   }
 
   const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
   if (sessionToken) {
-    const session = await resolveSessionFromToken(sessionToken, {
-      route: "resolveOAuthOwnerId",
-    });
+    const session = await withHardTimeout<SessionAuthResult>(
+      resolveSessionFromToken(sessionToken, {
+        route: "resolveOAuthOwnerId",
+      }),
+      Math.min(API_SESSION_SAFE_TIMEOUT_MS, 4_000),
+      { ok: false, reason: "db_timeout" },
+      "resolveOAuthOwnerId/session",
+    );
+
     if (session.ok) {
       return { ownerId: session.userId };
     }
-    if (session.reason === "db_timeout") {
-      return { error: "auth_timeout" };
-    }
-    if (session.reason === "db_error") {
-      return { error: "auth_db_error" };
+
+    if (session.reason === "db_timeout" || session.reason === "db_error") {
+      if (options.requireExistingSession) {
+        return {
+          error: session.reason === "db_timeout" ? "auth_timeout" : "auth_db_error",
+        };
+      }
+      console.warn("[oauth-owner-session-skip]", { reason: session.reason });
     }
   }
 
