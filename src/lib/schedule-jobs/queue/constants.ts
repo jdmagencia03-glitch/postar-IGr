@@ -1,7 +1,7 @@
-/** Chunks por fase (requisito: legendas menores, calendário/save maiores). */
-export const QUEUE_CAPTION_CHUNK = 10;
-export const QUEUE_CALENDAR_CHUNK = 50;
-export const QUEUE_SAVE_CHUNK = 50;
+/** Chunks por fase — concorrência controlada, não limite de total do lote. */
+export const QUEUE_CAPTION_CHUNK = 5;
+export const QUEUE_CALENDAR_CHUNK = 10;
+export const QUEUE_SAVE_CHUNK = 10;
 
 /** Concorrência global por execução de drain */
 export const QUEUE_MAX_TASKS_PER_DRAIN = 15;

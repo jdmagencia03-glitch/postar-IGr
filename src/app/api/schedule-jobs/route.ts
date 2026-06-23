@@ -10,6 +10,7 @@ import {
 import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
 import { createScheduleJob, findActiveJobForBatch, findCompletedJobForBatch, findLatestJobForBatch, buildJobStatusForJob, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import { SCHEDULE_JOB_LARGE_BATCH_THRESHOLD, SCHEDULE_JOB_SMALL_BATCH_MAX } from "@/lib/schedule-jobs/constants";
+import { LARGE_BATCH_QUEUE_MESSAGE } from "@/lib/autopilot-constants";
 import { QUEUE_CRON_MAX_MS } from "@/lib/schedule-jobs/queue/constants";
 import { getBatchForOwner } from "@/lib/upload/batches";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -158,7 +159,7 @@ export async function POST(request: NextRequest) {
         status: await buildJobStatusForJob(supabase, header ?? created.job),
         message:
           files.length >= SCHEDULE_JOB_LARGE_BATCH_THRESHOLD
-            ? "Agendamento criado e enviado para fila. Você pode fechar esta aba."
+            ? LARGE_BATCH_QUEUE_MESSAGE
             : "Agendamento iniciado — acompanhe o progresso abaixo.",
       },
       { status: 201 },

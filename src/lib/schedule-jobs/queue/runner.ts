@@ -52,8 +52,10 @@ export async function runScheduleTask(
   try {
     if (task.phase === "captions") {
       await processCaptionTask(supabase, task.owner_id, job, task.item_ids);
+      await finalizeJobStatusFromDb(supabase, job);
     } else if (task.phase === "calendar") {
       await processCalendarTask(supabase, task.owner_id, job, task.item_ids);
+      await finalizeJobStatusFromDb(supabase, job);
     } else {
       await processInsertChunkForItems(supabase, task.owner_id, job, task.item_ids);
       await finalizeJobStatusFromDb(supabase, job);
@@ -94,6 +96,17 @@ export async function runScheduleTask(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha no chunk";
+    if (task.phase === "captions" || task.phase === "calendar") {
+      console.warn("[schedule-job-task-partial]", {
+        taskId: task.id,
+        jobId: task.schedule_job_id,
+        phase: task.phase,
+        message,
+      });
+      await finalizeJobStatusFromDb(supabase, job).catch(() => undefined);
+      await completeTask(supabase, task.id, workerId);
+      return;
+    }
     await failTask(supabase, task, workerId, message);
     throw error;
   }

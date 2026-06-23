@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { resolveJobAccountKey } from "@/lib/schedule-jobs/queue/account-key";
 import {
   QUEUE_CALENDAR_CHUNK,
   QUEUE_CAPTION_CHUNK,
@@ -8,12 +9,12 @@ import {
   QUEUE_SAVE_CHUNK,
   QUEUE_TASK_LOCK_MS,
 } from "@/lib/schedule-jobs/queue/constants";
-import { resolveJobAccountKey } from "@/lib/schedule-jobs/queue/account-key";
+import { captionNeedsProcessing } from "@/lib/schedule-jobs/item-pipeline";
 import { ensureJobQueueForCurrentPhase } from "@/lib/schedule-jobs/queue/repair";
 import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
 import { isRetryDue, nextRetryAt } from "@/lib/schedule-jobs/queue/retry";
 import type { ScheduleJobTaskRow, ScheduleTaskPhase } from "@/lib/schedule-jobs/queue/types";
-import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
+import type { ScheduleJobRow, ScheduleJobItemRow } from "@/lib/schedule-jobs/types";
 
 export function createTaskWorkerId(prefix: string) {
   return `${prefix}-${randomUUID().slice(0, 8)}`;
@@ -62,10 +63,7 @@ export async function loadItemIdsForPhase(
       .order("sort_order", { ascending: true });
     if (error) throw new Error(error.message);
     return (data ?? [])
-      .filter((row) => {
-        const item = row as { caption?: string | null };
-        return !item.caption?.trim();
-      })
+      .filter((row) => captionNeedsProcessing(row as ScheduleJobItemRow))
       .map((row) => row.id as string);
   }
 

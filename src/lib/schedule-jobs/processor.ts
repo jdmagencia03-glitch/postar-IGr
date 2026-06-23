@@ -19,13 +19,23 @@ import { sanitizeScheduledAt } from "@/lib/smart-schedule";
 import { getOwnerTikTokAccountById } from "@/lib/tiktok/accounts";
 import {
   SCHEDULE_JOB_MAX_ATTEMPTS,
+  SCHEDULE_JOB_SMALL_BATCH_MAX,
 } from "@/lib/schedule-jobs/constants";
+import { drainScheduleJobQueue } from "@/lib/schedule-jobs/queue/drain";
+import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
+import {
+  isPipelineColumnReady,
+  pipelineMigrationMessage,
+  PIPELINE_MIGRATION_REQUIRED,
+} from "@/lib/schedule-jobs/pipeline-schema";
 import {
   buildJobStatusFromJob,
+  buildJobStatusReadOnly,
   finalizeJobStatusFromDb,
   getScheduleJobHeader,
   loadInsertPendingItems,
   loadPlanPendingItems,
+  markJobInfrastructureError,
   updateJobCounters,
   updateJobItem,
 } from "@/lib/schedule-jobs/repository";
@@ -374,47 +384,33 @@ export async function advanceScheduleJob(
     return buildJobStatusFromJob(job);
   }
 
-  const planPending = await loadPlanPendingItems(supabase, jobId);
-  const insertPending = planPending.length ? [] : await loadInsertPendingItems(supabase, jobId);
-
-  await updateJobCounters(supabase, job.id, {
-    status: "processing",
-    current_step: planPending.length ? "captions" : "inserting",
-  } as Partial<ScheduleJobRow>);
-
-  if (planPending.length) {
-    await processPlanChunk(supabase, ownerId, job, planPending);
-    job = await finalizeJobStatusFromDb(supabase, job);
-  } else if (insertPending.length) {
-    await processInsertChunk(supabase, ownerId, job, insertPending);
-    job = await finalizeJobStatusFromDb(supabase, job);
-  } else {
-    job = await finalizeJobStatusFromDb(supabase, job);
+  const queueReady = await isScheduleJobQueueReady(supabase);
+  if (!queueReady) {
+    await markJobInfrastructureError(
+      supabase,
+      job.id,
+      "queue_not_ready",
+      "fila schedule_job_tasks indisponível — job permanece em fila aguardando retry.",
+    );
+    return buildJobStatusReadOnly(supabase, job);
   }
 
-  logScheduleJobEvent("schedule-job-status", job);
-
-  if (job.status === "completed" || job.status === "partial_failed") {
-    try {
-      await reportClientOperationalError(supabase, ownerId, {
-        errorType: job.status === "partial_failed" ? "schedule_job_partial" : "schedule_job_completed",
-        title:
-          job.status === "partial_failed"
-            ? "Agendamento parcialmente concluído"
-            : "Agendamento concluído",
-        message: `${job.completed_items}/${job.total_items} vídeos agendados.`,
-        probableCause: "Processamento em chunks finalizado.",
-        recommendedAction:
-          job.failed_items > 0 ? "Retome para tentar apenas os itens com erro." : "Abra o calendário.",
-        uploadBatchId: job.upload_batch_id ?? undefined,
-        metadata: { jobId: job.id, failed: job.failed_items },
-      });
-    } catch {
-      // ignore
-    }
+  const pipelineReady = await isPipelineColumnReady(supabase);
+  if (!pipelineReady) {
+    await markJobInfrastructureError(
+      supabase,
+      job.id,
+      PIPELINE_MIGRATION_REQUIRED,
+      pipelineMigrationMessage(),
+    );
+    return buildJobStatusReadOnly(supabase, job);
   }
 
-  return buildJobStatusFromJob(job);
+  await drainScheduleJobQueue(supabase, {
+    workerPrefix: "advance-guard",
+    maxMs: 25_000,
+  });
+  return buildJobStatusReadOnly(supabase, job);
 }
 
 export async function resumeScheduleJob(

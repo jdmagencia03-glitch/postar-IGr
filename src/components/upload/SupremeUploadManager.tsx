@@ -262,6 +262,10 @@ export function SupremeUploadManager({
         Acompanhe o progresso na <strong className="text-ig-text">barra flutuante</strong> no rodapé.
       </p>
 
+      <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900">
+        Seu lote foi recebido. Vamos processar os vídeos em fila — você pode sair da página e
+        acompanhar o progresso depois. Lotes muito grandes podem levar mais tempo para concluir.
+      </p>
       {!session.initialLoading && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ig-border bg-ig-secondary px-4 py-3">
           <span className="text-xs text-ig-muted">

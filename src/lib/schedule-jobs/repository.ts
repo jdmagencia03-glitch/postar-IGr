@@ -1,3 +1,4 @@
+import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ScheduleJobConfig,
@@ -21,13 +22,28 @@ import {
   logScheduleJobEvent,
 } from "@/lib/schedule-jobs/state";
 import { buildScheduleJobTiming } from "@/lib/schedule-jobs/timing";
-import { normalizeWarmupScheduleSummary } from "@/lib/schedule-plan";
+import {
+  countItemPipeline,
+  type ItemPipelineCounts,
+} from "@/lib/schedule-jobs/item-pipeline";
+import {
+  isPipelineColumnError,
+  isPipelineColumnReady,
+  pipelineMigrationMessage,
+  PIPELINE_MIGRATION_REQUIRED,
+  resetPipelineColumnCache,
+} from "@/lib/schedule-jobs/pipeline-schema";
+import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
 
 function mapItem(row: Record<string, unknown>): ScheduleJobItemRow {
   return {
     ...(row as ScheduleJobItemRow),
     media_urls: Array.isArray(row.media_urls) ? (row.media_urls as string[]) : [],
     destinations: row.destinations as ScheduleJobItemRow["destinations"],
+    pipeline:
+      row.pipeline && typeof row.pipeline === "object"
+        ? (row.pipeline as ScheduleJobItemRow["pipeline"])
+        : undefined,
   };
 }
 
@@ -178,27 +194,44 @@ export async function loadInsertPendingItems(
     .slice(0, limit);
 }
 
+export async function loadJobItemsForPipeline(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<ScheduleJobItemRow[]> {
+  const { data, error } = await supabase
+    .from("schedule_job_items")
+    .select("*")
+    .eq("schedule_job_id", jobId)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => mapItem(row as Record<string, unknown>));
+}
+
+export async function loadItemPipelineCounts(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<ItemPipelineCounts> {
+  const items = await loadJobItemsForPipeline(supabase, jobId);
+  return countItemPipeline(items);
+}
+
 export async function syncJobCountersFromDb(supabase: SupabaseClient, jobId: string) {
-  const base = () =>
-    supabase.from("schedule_job_items").select("id", { count: "exact", head: true }).eq("schedule_job_id", jobId);
-
-  const [totalRes, completedRes, failedRes, processedRes] = await Promise.all([
-    base(),
-    base().eq("status", "completed").not("created_post_id", "is", null),
-    base().eq("status", "failed"),
-    base().not("destinations", "is", null),
-  ]);
-
-  if (totalRes.error) throw new Error(totalRes.error.message);
-  if (completedRes.error) throw new Error(completedRes.error.message);
-  if (failedRes.error) throw new Error(failedRes.error.message);
-  if (processedRes.error) throw new Error(processedRes.error.message);
+  const items = await loadJobItemsForPipeline(supabase, jobId);
+  const pipeline = countItemPipeline(items);
 
   return {
-    total: totalRes.count ?? 0,
-    completed: completedRes.count ?? 0,
-    failed: failedRes.count ?? 0,
-    processed: processedRes.count ?? 0,
+    total: pipeline.total,
+    completed: pipeline.postsSaved,
+    failed: pipeline.failed,
+    /** Itens com calendário planejado (destinations). */
+    processed: pipeline.calendarDone,
+    captionDone: pipeline.captionDone,
+    hashtagsDone: pipeline.hashtagsDone,
+    calendarDone: pipeline.calendarDone,
+    captionPending: pipeline.captionPending,
+    captionFailed: pipeline.captionFailed,
+    calendarPending: pipeline.calendarPending,
   };
 }
 
@@ -296,25 +329,75 @@ export async function updateJobCounters(
   if (error) throw new Error(error.message);
 }
 
+export type UpdateJobItemResult = {
+  ok: boolean;
+  code?: typeof PIPELINE_MIGRATION_REQUIRED;
+  pipelineSkipped?: boolean;
+};
+
+export async function markJobInfrastructureError(
+  supabase: SupabaseClient,
+  jobId: string,
+  code: typeof PIPELINE_MIGRATION_REQUIRED | "queue_not_ready",
+  message: string,
+) {
+  await updateJobCounters(supabase, jobId, {
+    status: "queued",
+    error_message: `${code}: ${message}`,
+  } as Partial<ScheduleJobRow>);
+}
+
 export async function updateJobItem(
   supabase: SupabaseClient,
   itemId: string,
   patch: Record<string, unknown>,
-) {
+): Promise<UpdateJobItemResult> {
+  const columnReady = await isPipelineColumnReady(supabase);
+  let effectivePatch = { ...patch };
+
+  if (!columnReady && "pipeline" in effectivePatch) {
+    const { pipeline: _pipeline, ...rest } = effectivePatch;
+    effectivePatch = rest;
+    if (Object.keys(effectivePatch).length === 0) {
+      return { ok: false, code: PIPELINE_MIGRATION_REQUIRED, pipelineSkipped: true };
+    }
+  }
+
   const { error } = await supabase
     .from("schedule_job_items")
-    .update({ ...patch, updated_at: new Date().toISOString() })
+    .update({ ...effectivePatch, updated_at: new Date().toISOString() })
     .eq("id", itemId);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isPipelineColumnError(error.message)) {
+      resetPipelineColumnCache();
+      const { pipeline: _pipeline, ...rest } = patch;
+      if (Object.keys(rest).length === 0) {
+        return { ok: false, code: PIPELINE_MIGRATION_REQUIRED, pipelineSkipped: true };
+      }
+      const retry = await supabase
+        .from("schedule_job_items")
+        .update({ ...rest, updated_at: new Date().toISOString() })
+        .eq("id", itemId);
+      if (retry.error) throw new Error(retry.error.message);
+      return { ok: true, pipelineSkipped: true };
+    }
+    throw new Error(error.message);
+  }
+
+  return {
+    ok: true,
+    pipelineSkipped: !columnReady && "pipeline" in patch,
+  };
 }
 
 export function buildJobStatusFromJob(
   job: ScheduleJobRow,
   items?: import("@/lib/schedule-jobs/types").ScheduleJobItemRow[],
   consistency?: JobConsistencySnapshot,
+  pipelineCounts?: ItemPipelineCounts,
 ): ScheduleJobStatusResponse {
-  const baseView = deriveScheduleJobView(job);
+  const baseView = deriveScheduleJobView(job, pipelineCounts);
   const view = consistency ? applyConsistencyToView(baseView, consistency, job) : baseView;
   const timing = buildScheduleJobTiming(job);
   const schedulePlan = job.config?.schedule_plan;
@@ -404,8 +487,30 @@ export async function buildJobStatusReadOnly(
   job: ScheduleJobRow,
   items?: ScheduleJobItemRow[],
 ) {
-  const consistency = await loadJobConsistencySnapshot(supabase, job);
-  const status = buildJobStatusFromJob(job, items, consistency);
+  const [consistency, pipelineCounts, pipelineReady, queueReady] = await Promise.all([
+    loadJobConsistencySnapshot(supabase, job),
+    loadItemPipelineCounts(supabase, job.id),
+    isPipelineColumnReady(supabase),
+    isScheduleJobQueueReady(supabase),
+  ]);
+  const status = buildJobStatusFromJob(job, items, consistency, pipelineCounts);
+  const infrastructureError = !pipelineReady
+    ? pipelineMigrationMessage()
+    : !queueReady
+      ? "queue_not_ready: tabela schedule_job_tasks indisponível."
+      : null;
+
+  const withInfra = {
+    ...status,
+    pipelineMigrationRequired: !pipelineReady,
+    queueNotReady: !queueReady,
+    infrastructureError,
+    recommendedAction: !pipelineReady
+      ? PIPELINE_MIGRATION_REQUIRED
+      : !queueReady
+        ? "queue_not_ready"
+        : status.recommendedAction,
+  };
 
   if (consistency.postsInCalendar >= job.total_items && job.total_items > 0) {
     const insertChunksTotal = Math.ceil(job.total_items / SCHEDULE_JOB_INSERT_CHUNK);
@@ -417,18 +522,18 @@ export async function buildJobStatusReadOnly(
       job.status === "completed" || job.status === "partial_failed";
 
     return {
-      ...status,
+      ...withInfra,
       postsInCalendar: consistency.postsInCalendar,
       canOpenCalendar: true,
       insertChunksDone,
       insertChunksTotal,
       recommendedAction: alreadyCompleted
-        ? (status.recommendedAction ?? "completed")
+        ? (withInfra.recommendedAction ?? "completed")
         : "reconcile_calendar",
     };
   }
 
-  return status;
+  return withInfra;
 }
 
 export async function buildJobStatusForJob(
@@ -472,7 +577,7 @@ export async function finalizeJobStatusFromDb(
 
   const allItemsAccountedFor =
     counts.completed + counts.failed === counts.total && counts.total > 0;
-  const planComplete = counts.processed >= counts.total;
+  const planComplete = counts.calendarDone >= counts.total;
   const postsSaved = counts.completed > 0;
 
   if (allItemsAccountedFor && postsSaved) {
@@ -484,7 +589,7 @@ export async function finalizeJobStatusFromDb(
     status = "failed";
     currentStep = "completed";
     completedAt = completedAt ?? new Date().toISOString();
-  } else if (counts.processed < counts.total) {
+  } else if (counts.captionDone < counts.total) {
     status = "processing";
     currentStep = "captions";
     completedAt = null;
@@ -494,7 +599,7 @@ export async function finalizeJobStatusFromDb(
     completedAt = null;
   } else if (status === "completed" && !postsSaved) {
     status = "processing";
-    currentStep = counts.processed < counts.total ? "captions" : "inserting";
+    currentStep = counts.captionDone < counts.total ? "captions" : "inserting";
     completedAt = null;
   }
 
@@ -514,7 +619,7 @@ export async function finalizeJobStatusFromDb(
   await updateJobCounters(supabase, job.id, {
     completed_items: counts.completed,
     failed_items: counts.failed,
-    processed_items: counts.processed,
+    processed_items: counts.calendarDone,
     status,
     current_step: currentStep,
     completed_at: completedAt,
@@ -525,7 +630,7 @@ export async function finalizeJobStatusFromDb(
     ...job,
     completed_items: counts.completed,
     failed_items: counts.failed,
-    processed_items: counts.processed,
+    processed_items: counts.calendarDone,
     status,
     current_step: currentStep,
     completed_at: completedAt,

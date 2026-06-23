@@ -114,6 +114,7 @@ export type ScheduleJobItemRow = {
   parent_publish_group_id: string | null;
   error_message: string | null;
   attempt_count: number;
+  pipeline?: import("@/lib/schedule-jobs/item-pipeline").ItemPipelineState;
   created_at: string;
   updated_at: string;
 };
@@ -192,5 +193,9 @@ export type ScheduleJobStatusResponse = {
   reconciled?: boolean;
   statusError?: boolean;
   statusErrorMessage?: string | null;
+  /** Infra ausente — migration ou fila ainda não aplicada no ambiente. */
+  pipelineMigrationRequired?: boolean;
+  queueNotReady?: boolean;
+  infrastructureError?: string | null;
   ok?: boolean;
 };

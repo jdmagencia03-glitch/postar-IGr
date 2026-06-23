@@ -7,6 +7,7 @@ import {
   SCHEDULE_JOB_STALE_MS,
   SCHEDULE_JOB_WORKER_ACTIVE_MS,
 } from "@/lib/schedule-jobs/constants";
+import type { ItemPipelineCounts } from "@/lib/schedule-jobs/item-pipeline";
 import type { ScheduleJobRow, ScheduleJobStatus } from "@/lib/schedule-jobs/types";
 
 export type ScheduleJobPhase =
@@ -136,8 +137,19 @@ export function logScheduleJobEvent(
   });
 }
 
-function derivePhase(job: ScheduleJobRow): ScheduleJobPhase {
-  const { status, processed_items, completed_items, total_items, failed_items } = job;
+function derivePhase(
+  job: ScheduleJobRow,
+  counts?: Pick<
+    ItemPipelineCounts,
+    "total" | "captionDone" | "calendarDone" | "postsSaved" | "failed"
+  >,
+): ScheduleJobPhase {
+  const total = counts?.total ?? job.total_items;
+  const captionsDone = counts?.captionDone ?? job.processed_items;
+  const calendarDone = counts?.calendarDone ?? job.processed_items;
+  const postsSaved = counts?.postsSaved ?? job.completed_items;
+  const failed = counts?.failed ?? job.failed_items;
+  const { status } = job;
 
   if (status === "cancelled") return "cancelled";
   if (status === "failed") return "failed";
@@ -149,13 +161,15 @@ function derivePhase(job: ScheduleJobRow): ScheduleJobPhase {
     return "paused_needs_action";
   }
 
-  if (processed_items < total_items) {
-    if (processed_items === 0) return "processing_captions";
-    if (job.schedule_summary) return "building_calendar";
-    return "processing_captions";
+  if (captionsDone < total) {
+    return captionsDone === 0 ? "processing_captions" : "processing_captions";
   }
 
-  if (completed_items + failed_items < total_items) {
+  if (calendarDone < total) {
+    return job.schedule_summary ? "building_calendar" : "building_calendar";
+  }
+
+  if (postsSaved + failed < total) {
     return "saving_posts";
   }
 
@@ -165,12 +179,16 @@ function derivePhase(job: ScheduleJobRow): ScheduleJobPhase {
 function deriveSteps(
   job: ScheduleJobRow,
   phase: ScheduleJobPhase,
+  counts?: Pick<
+    ItemPipelineCounts,
+    "total" | "captionDone" | "calendarDone" | "postsSaved" | "failed"
+  >,
 ): Record<ScheduleStepId, ScheduleStepState> {
-  const total = job.total_items;
-  const captionsDone = job.processed_items;
-  const calendarDone = job.processed_items;
-  const postsSaved = job.completed_items;
-  const hasFailed = job.failed_items > 0;
+  const total = counts?.total ?? job.total_items;
+  const captionsDone = counts?.captionDone ?? job.processed_items;
+  const calendarDone = counts?.calendarDone ?? job.processed_items;
+  const postsSaved = counts?.postsSaved ?? job.completed_items;
+  const hasFailed = (counts?.failed ?? job.failed_items) > 0;
 
   const captions: ScheduleStepState =
     phase === "processing_captions" || phase === "processing_hashtags"
@@ -255,14 +273,17 @@ function headlineForPhase(phase: ScheduleJobPhase): string {
   return headlines[phase];
 }
 
-export function deriveScheduleJobView(job: ScheduleJobRow): ScheduleJobViewState {
-  const total = job.total_items;
-  const captionsDone = job.processed_items;
-  const calendarDone = job.processed_items;
-  const postsSaved = job.completed_items;
-  const failed = job.failed_items;
-  const pendingItems = Math.max(0, total - postsSaved - failed);
-  const phase = derivePhase(job);
+export function deriveScheduleJobView(
+  job: ScheduleJobRow,
+  pipelineCounts?: ItemPipelineCounts,
+): ScheduleJobViewState {
+  const total = pipelineCounts?.total ?? job.total_items;
+  const captionsDone = pipelineCounts?.captionDone ?? job.processed_items;
+  const calendarDone = pipelineCounts?.calendarDone ?? job.processed_items;
+  const postsSaved = pipelineCounts?.postsSaved ?? job.completed_items;
+  const failed = pipelineCounts?.failed ?? job.failed_items;
+  const pendingItems = pipelineCounts?.pending ?? Math.max(0, total - postsSaved - failed);
+  const phase = derivePhase(job, pipelineCounts);
   const planReady = Boolean(job.schedule_summary);
 
   const planChunksTotal = Math.ceil(total / SCHEDULE_JOB_PLAN_CHUNK);
@@ -361,7 +382,7 @@ export function deriveScheduleJobView(job: ScheduleJobRow): ScheduleJobViewState
   return {
     phase,
     captionsDone,
-    hashtagsDone: captionsDone,
+    hashtagsDone: pipelineCounts?.hashtagsDone ?? captionsDone,
     calendarDone,
     postsSaved,
     pendingItems,
@@ -389,7 +410,7 @@ export function deriveScheduleJobView(job: ScheduleJobRow): ScheduleJobViewState
     canCancel,
     canOpenCalendar,
     hasActiveError,
-    steps: deriveSteps(job, phase),
+    steps: deriveSteps(job, phase, pipelineCounts),
   };
 }
 

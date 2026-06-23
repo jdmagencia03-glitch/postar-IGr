@@ -4,9 +4,14 @@ import {
   QUEUE_MAX_AI_TASKS_PER_DRAIN,
   QUEUE_MAX_TASKS_PER_DRAIN,
 } from "@/lib/schedule-jobs/queue/constants";
-import { enqueueActiveScheduleJobs } from "@/lib/schedule-jobs/cron";
 import { runScheduleTask } from "@/lib/schedule-jobs/queue/runner";
 import { isScheduleJobQueueReady } from "@/lib/schedule-jobs/queue/schema";
+import {
+  isPipelineColumnReady,
+  pipelineMigrationMessage,
+  PIPELINE_MIGRATION_REQUIRED,
+} from "@/lib/schedule-jobs/pipeline-schema";
+import { markJobInfrastructureError } from "@/lib/schedule-jobs/repository";
 import {
   claimRunnableTasks,
   createTaskWorkerId,
@@ -18,7 +23,7 @@ export type DrainQueueResult = {
   claimed: number;
   processed: number;
   errors: string[];
-  mode?: "queue" | "legacy";
+  mode?: "queue" | "queue_unavailable";
   rounds?: number;
   elapsedMs?: number;
 };
@@ -63,16 +68,26 @@ export async function drainScheduleJobQueue(
 
   const queueReady = await isScheduleJobQueueReady(supabase);
   if (!queueReady) {
-    const { results } = await enqueueActiveScheduleJobs(supabase, {
-      workerPrefix: options?.workerPrefix ?? "legacy",
-      chunksPerJob: 5,
-    });
     return {
-      claimed: results.length,
-      processed: results.filter((result) => result.accepted).length,
-      errors: results.map((result) => result.error).filter(Boolean) as string[],
-      mode: "legacy",
-      rounds: 1,
+      claimed: 0,
+      processed: 0,
+      errors: [
+        "queue_not_ready: fila schedule_job_tasks indisponível — job permanece em fila aguardando retry (sem fallback legado).",
+      ],
+      mode: "queue_unavailable",
+      rounds: 0,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  const pipelineReady = await isPipelineColumnReady(supabase);
+  if (!pipelineReady) {
+    return {
+      claimed: 0,
+      processed: 0,
+      errors: [pipelineMigrationMessage()],
+      mode: "queue_unavailable",
+      rounds: 0,
       elapsedMs: Date.now() - started,
     };
   }
