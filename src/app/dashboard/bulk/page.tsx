@@ -5,8 +5,10 @@ import { getOwnerTikTokAccounts } from "@/lib/tiktok/accounts";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { InstagramAccount, SocialPlatform } from "@/lib/types";
+import { withTimeoutOrNull } from "@/lib/with-timeout";
 
 export const dynamic = "force-dynamic";
+const BULK_LOAD_TIMEOUT_MS = 8_000;
 
 export default async function BulkPage({
   searchParams,
@@ -19,8 +21,37 @@ export default async function BulkPage({
   const params = await searchParams;
   const platform: SocialPlatform = params.platform === "tiktok" ? "tiktok" : "instagram";
   const supabase = createAdminClient();
-  const accounts = await getOwnerAccounts(supabase, ownerId);
-  const tiktokAccounts = await getOwnerTikTokAccounts(supabase, ownerId);
+  const [accounts, tiktokAccounts] = await Promise.all([
+    withTimeoutOrNull(
+      getOwnerAccounts(supabase, ownerId),
+      BULK_LOAD_TIMEOUT_MS,
+      "dashboard-bulk-accounts",
+    ),
+    withTimeoutOrNull(
+      getOwnerTikTokAccounts(supabase, ownerId),
+      BULK_LOAD_TIMEOUT_MS,
+      "dashboard-bulk-tiktok-accounts",
+    ),
+  ]);
+
+  if (!accounts || !tiktokAccounts) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <h2 className="text-lg font-semibold text-ig-text">Banco temporariamente lento</h2>
+        <p className="mt-2 text-sm text-ig-muted">
+          Não foi possível carregar as contas agora. Tente novamente em alguns segundos.
+        </p>
+        <div className="mt-4 flex justify-center gap-2">
+          <a href="/dashboard/bulk" className="ig-btn px-4 py-2 text-sm">
+            Tentar novamente
+          </a>
+          <a href="/dashboard" className="ig-btn-secondary px-4 py-2 text-sm">
+            Ir ao início
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   if (!accounts.length && !tiktokAccounts.length) {
     return (
