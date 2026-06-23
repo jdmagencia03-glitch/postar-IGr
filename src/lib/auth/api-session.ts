@@ -244,12 +244,51 @@ export async function requireApiSessionSafe(
 
 /** Retorna userId autenticado ou null apenas para sessão ausente/inválida real. */
 export async function getSessionUserIdSafe(route: string): Promise<string | null> {
-  const session = await resolveRequestSession(route);
+  const session = await requireApiSessionSafe(route);
   if (session.ok) return session.userId;
-  if (isSessionUnauthorized(session)) return null;
+  if (
+    session.reason === "missing_cookie" ||
+    session.reason === "invalid_session" ||
+    session.reason === "expired_session"
+  ) {
+    return null;
+  }
   return null;
 }
 
 export async function getSessionAuth(): Promise<SessionAuthResult> {
-  return resolveRequestSession("getSessionAuth");
+  const session = await requireApiSessionSafe("getSessionAuth");
+  if (session.ok) {
+    return { ok: true, userId: session.userId, source: session.source };
+  }
+
+  if (session.reason === "auth_timeout") {
+    return {
+      ok: false,
+      reason: "db_timeout",
+      message: session.message,
+    };
+  }
+
+  if (session.reason === "auth_db_error") {
+    return {
+      ok: false,
+      reason: "db_error",
+      message: session.message,
+    };
+  }
+
+  if (
+    session.reason === "missing_cookie" ||
+    session.reason === "invalid_session" ||
+    session.reason === "expired_session"
+  ) {
+    return {
+      ok: false,
+      reason: session.reason,
+      message: session.message,
+    };
+  }
+
+  return { ok: false, reason: "db_error", message: session.message };
 }

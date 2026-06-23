@@ -8,6 +8,7 @@ import {
   primeSessionCache,
   resolveSessionFromToken,
 } from "@/lib/auth/session-core";
+import { requireApiSessionSafe } from "@/lib/auth/api-session";
 import { getSessionSecret } from "@/lib/security/secrets";
 
 export { parseSignedSession } from "@/lib/auth/session-crypto";
@@ -65,8 +66,10 @@ export async function getSessionUserId(): Promise<string | null> {
 
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  const result = await resolveSessionFromToken(token, { route: "getSessionUserId" });
-  return result.ok ? result.userId : null;
+  if (!token) return null;
+
+  const session = await requireApiSessionSafe("getSessionUserId");
+  return session.ok ? session.userId : null;
 }
 
 export async function requireSessionUserId(): Promise<string> {
