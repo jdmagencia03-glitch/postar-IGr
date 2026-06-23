@@ -33,10 +33,12 @@ function run() {
   assert.equal(conflict.kind, "conflict");
   assert.equal(conflict.recoverable, true);
 
-  // concorrência padrão + teto seguro
-  assert.equal(UPLOAD_CONCURRENCY_DEFAULT, 2);
+  // concorrência padrão + teto seguro (padrão = limite do navegador)
+  assert.equal(UPLOAD_CONCURRENCY_DEFAULT, 4);
   const effective = getEffectiveUploadConcurrency();
-  assert.equal(effective.normal, 2);
+  assert.equal(effective.economy, 2);
+  assert.equal(effective.normal, 4);
+  assert.equal(effective.turbo, 6);
   assert.ok(effective.turbo <= MAX_SAFE_UPLOAD_CONCURRENCY);
 
   console.log("upload-resilience tests: OK");

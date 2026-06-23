@@ -768,7 +768,7 @@ function SpeedModePicker({
   batchFileCount: number;
   onChange: (mode: UploadSpeedMode) => void;
 }) {
-  const modes: UploadSpeedMode[] = ["adaptive", "normal", "economy"];
+  const modes: UploadSpeedMode[] = ["adaptive", "normal", "economy", "turbo"];
 
   const handleChange = (mode: UploadSpeedMode) => {
     if (mode === "turbo" && batchFileCount > 300) {

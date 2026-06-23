@@ -1287,7 +1287,7 @@ class UploadSessionStore {
       this.syncBatch(batch);
 
       if (batch.upload_speed_mode) {
-        this.speedMode = batch.upload_speed_mode === "turbo" ? "normal" : batch.upload_speed_mode;
+        this.speedMode = batch.upload_speed_mode;
       }
       this.initAdaptiveForBatch(batch.total_files);
       this.pausedByUser = Boolean(batch.paused);
@@ -1421,8 +1421,7 @@ class UploadSessionStore {
         }
 
         if (this.batch?.upload_speed_mode) {
-          this.speedMode =
-            this.batch.upload_speed_mode === "turbo" ? "normal" : this.batch.upload_speed_mode;
+          this.speedMode = this.batch.upload_speed_mode;
         }
         if (this.batch?.paused) this.pausedByUser = true;
         if (this.batch?.upload_files?.length) {
@@ -1453,11 +1452,10 @@ class UploadSessionStore {
   }
 
   setSpeedMode(mode: UploadSpeedMode) {
-    const nextMode = mode === "turbo" ? "normal" : mode;
-    this.speedMode = nextMode;
-    if (nextMode === "adaptive") {
+    this.speedMode = mode;
+    if (mode === "adaptive") {
       this.initAdaptiveForBatch(this.batch?.total_files ?? 0);
-    } else if (nextMode !== "economy") {
+    } else if (mode !== "economy") {
       this.safeMode = false;
       this.uploadPausedByFailures = false;
     }
@@ -1465,7 +1463,7 @@ class UploadSessionStore {
       this.engine.setConcurrency(this.getEffectiveFileConcurrency());
     }
     if (this.batch) {
-      void setBatchSpeedMode(this.batch.id, nextMode)
+      void setBatchSpeedMode(this.batch.id, mode)
         .then((updated) => {
           this.syncBatch(updated);
         })
