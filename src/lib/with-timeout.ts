@@ -78,5 +78,5 @@ export async function withTimeoutOrNull<T>(
   }
 }
 
-export const DB_ROUTE_TIMEOUT_MS = 8_000;
-export const DB_LAYOUT_TIMEOUT_MS = 5_000;
+export const DB_ROUTE_TIMEOUT_MS = 12_000;
+export const DB_LAYOUT_TIMEOUT_MS = 8_000;

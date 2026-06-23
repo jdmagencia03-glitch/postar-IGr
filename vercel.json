@@ -82,6 +82,9 @@
     "src/app/api/auth/meta/exchange/route.ts": {
       "maxDuration": 60
     },
+    "src/app/api/auth/meta/finish/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/auth/facebook/callback/route.ts": {
       "maxDuration": 60
     },

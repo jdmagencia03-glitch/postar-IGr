@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     console.warn("[oauth-callback-cookieless-fallback]");
   }
 
-  const finishUrl = new URL(`${appUrl}/login/oauth-callback`);
+  const finishUrl = new URL(`${appUrl}/api/auth/meta/finish`);
   finishUrl.searchParams.set("code", code);
   finishUrl.searchParams.set("state", state);
   finishUrl.searchParams.set("next", sanitizeNextPath(storedNext));

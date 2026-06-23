@@ -42,7 +42,7 @@ export default async function DashboardPage({
     "dashboard-playbook",
   );
   if (playbookReadyResult === null) {
-    loadError = "Não foi possível carregar contas agora. Tente novamente em instantes.";
+    loadError = "O banco está temporariamente lento. Alguns dados podem demorar para carregar.";
   }
   const playbookReady = playbookReadyResult ?? false;
 
@@ -58,7 +58,9 @@ export default async function DashboardPage({
   );
 
   if (allPostsResult === null) {
-    loadError = "Não foi possível carregar contas agora. Tente novamente em instantes.";
+    loadError =
+      loadError ??
+      "Não foi possível carregar seus posts agora. Tente novamente em instantes.";
   }
 
   const allPosts: ScheduledPost[] = allPostsResult ?? [];

@@ -5,10 +5,11 @@ import { AlertCircle } from "lucide-react";
 import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
 import { useOptionalUploadSession } from "@/contexts/UploadSessionProvider";
 
-const CHECK_TIMEOUT_MS = 10_000;
-const RETRY_ACTIVE_MS = 15_000;
-const RETRY_IDLE_MS = 60_000;
-const RETRY_HIDDEN_MS = 120_000;
+const CHECK_TIMEOUT_MS = 15_000;
+const RETRY_ACTIVE_MS = 20_000;
+const RETRY_IDLE_MS = 90_000;
+const RETRY_HIDDEN_MS = 180_000;
+const DEGRADED_STREAK_THRESHOLD = 3;
 
 function isDegradedApiError(json: unknown): boolean {
   if (!json || typeof json !== "object") return false;
@@ -55,7 +56,7 @@ export function ApiStabilityBanner() {
       }
 
       // Evita alarme falso em uma oscilação rápida.
-      if (degradedStreakRef.current < 2) {
+      if (degradedStreakRef.current < DEGRADED_STREAK_THRESHOLD) {
         setMessage(null);
         return;
       }
@@ -75,7 +76,7 @@ export function ApiStabilityBanner() {
       setMessage(null);
     } catch {
       degradedStreakRef.current += 1;
-      if (degradedStreakRef.current >= 2) {
+      if (degradedStreakRef.current >= DEGRADED_STREAK_THRESHOLD) {
         setMessage("Servidor demorou para responder. Tentando novamente em instantes.");
       }
     }

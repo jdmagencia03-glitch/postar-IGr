@@ -156,6 +156,13 @@ export async function completeMetaOAuthExchange(
   const sessionToken = resolveOAuthCallbackSessionTokenFast(request, ownerId);
   const shortToken = tokenData.access_token;
 
+  await withHardTimeout(
+    persistInstagramAccountTokens(supabase, ownerId, profile, shortToken),
+    8_000,
+    null,
+    "oauth-meta-sync-persist",
+  );
+
   waitUntil(
     (async () => {
       let longToken = shortToken;
