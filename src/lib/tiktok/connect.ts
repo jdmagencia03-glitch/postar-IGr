@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { insertOAuthStateRow, oauthUnavailableRedirect } from "@/lib/auth/oauth-state";
+import { persistOAuthStateRow } from "@/lib/auth/oauth-state";
 import {
   createOAuthState,
   getOAuthStateCookieOptions,
@@ -28,10 +28,7 @@ export async function startTikTokOAuth(request: NextRequest) {
   const addAccount = request.nextUrl.searchParams.get("add_account") === "1";
   const supabase = createAdminClient();
 
-  const stored = await insertOAuthStateRow(supabase, state, nextPath, "oauth-tiktok-state-insert");
-  if (!stored) {
-    return NextResponse.redirect(oauthUnavailableRedirect(request.url));
-  }
+  await persistOAuthStateRow(supabase, state, nextPath, "oauth-tiktok-state-insert");
 
   const response = NextResponse.redirect(getTikTokAuthUrl(state));
   response.cookies.set("tiktok_oauth_state", state, getOAuthStateCookieOptions());

@@ -6,6 +6,7 @@ import {
 } from "@/lib/meta/facebook-oauth";
 import { getOAuthStateCookieOptions } from "@/lib/meta/oauth";
 import { getAppUrl } from "@/lib/app-url";
+import { validateOAuthCallbackState } from "@/lib/auth/oauth-state";
 import {
   readOAuthAddAccountFlag,
   resolveOAuthOwnerId,
@@ -38,24 +39,19 @@ function redirectWithError(appUrl: string, nextPath: string, message: string) {
   return NextResponse.redirect(`${appUrl}${nextPath}?${params.toString()}`);
 }
 
-async function validateAndConsumeOAuthState(state: string, cookieState?: string) {
-  const supabase = createAdminClient();
-  const { data } = await supabase
-    .from("oauth_states")
-    .select("next_path")
-    .eq("state", state)
-    .maybeSingle();
-
-  const valid = Boolean(cookieState && cookieState === state && data);
-
-  if (data) {
-    await supabase.from("oauth_states").delete().eq("state", state);
-  }
-
-  return {
-    valid,
-    nextPath: sanitizeNextPath(data?.next_path),
-  };
+async function validateAndConsumeOAuthState(
+  state: string,
+  cookieState: string | undefined,
+  cookieNextPath: string | undefined,
+  defaultNextPath: string,
+) {
+  return validateOAuthCallbackState({
+    state,
+    cookieState,
+    cookieNextPath,
+    defaultNextPath,
+    label: "oauth-facebook-callback",
+  });
 }
 
 async function resolveSessionToken(request: NextRequest, ownerId: string) {
@@ -96,7 +92,12 @@ export async function GET(request: NextRequest) {
     return redirectWithError(appUrl, fallbackNext, "oauth_invalid");
   }
 
-  const oauthState = await validateAndConsumeOAuthState(state, storedState);
+  const oauthState = await validateAndConsumeOAuthState(
+    state,
+    storedState,
+    storedNext,
+    fallbackNext,
+  );
   if (!oauthState.valid) {
     return redirectWithError(appUrl, fallbackNext, "oauth_invalid");
   }
