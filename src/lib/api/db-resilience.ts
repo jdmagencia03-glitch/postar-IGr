@@ -8,6 +8,6 @@ export function dbTimeoutJsonResponse<T>(data: T = [] as T) {
       message: "Banco temporariamente lento",
       data,
     },
-    { status: 200, headers: { "Cache-Control": "no-store" } },
+    { status: 503, headers: { "Cache-Control": "no-store" } },
   );
 }

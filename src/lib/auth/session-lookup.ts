@@ -126,10 +126,19 @@ export async function lookupOpaqueSessionToken(
   options?: { route?: string },
 ): Promise<SessionLookupResult> {
   const route = options?.route;
+  const lookupStarted = Date.now();
+  console.info("[session-lookup-start]", { route, hasCookie: true });
+
   const cached = readFreshCache(token);
   const now = Date.now();
 
   if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    console.info("[session-lookup-success]", {
+      route,
+      source: "cache",
+      durationMs: Date.now() - lookupStarted,
+      hasCookie: true,
+    });
     return { ok: true, userId: cached.userId, source: "cache" };
   }
 
@@ -137,6 +146,12 @@ export async function lookupOpaqueSessionToken(
 
   if (db.userId) {
     primeSessionCache(token, db.userId);
+    console.info("[session-lookup-success]", {
+      route,
+      source: "db",
+      durationMs: Date.now() - lookupStarted,
+      hasCookie: true,
+    });
     return { ok: true, userId: db.userId, source: "db" };
   }
 
@@ -159,6 +174,12 @@ export async function lookupOpaqueSessionToken(
   }
 
   if (db.timedOut) {
+    console.error("[session-lookup-timeout]", {
+      route,
+      durationMs: db.durationMs,
+      reason: "db_timeout",
+      hasCookie: true,
+    });
     return {
       ok: false,
       reason: "db_timeout",
@@ -172,8 +193,6 @@ export async function lookupOpaqueSessionToken(
     message: "Erro temporário ao validar sessão.",
   };
 }
-
-/** Compat: retorna userId ou null (não diferencia timeout). Preferir resolveSessionFromToken. */
 export async function lookupSessionToken(
   token: string,
   options?: { route?: string },

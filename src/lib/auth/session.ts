@@ -28,12 +28,16 @@ export {
 } from "@/lib/auth/session-core";
 export {
   requireApiSession,
+  requireApiSessionSafe,
   resolveRequestSession,
   getSessionAuth,
   getSessionUserIdSafe,
+  apiSessionErrorResponse,
   unauthorizedJsonResponse,
   authTimeoutJsonResponse,
   authDbErrorJsonResponse,
+  API_SESSION_SAFE_TIMEOUT_MS,
+  type ApiSessionResult,
 } from "@/lib/auth/api-session";
 
 export function createOpaqueSessionToken() {

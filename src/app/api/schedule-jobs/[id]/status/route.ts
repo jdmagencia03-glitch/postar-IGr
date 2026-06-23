@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeCronRequest } from "@/lib/admin/cron-auth";
-import { requireApiSession } from "@/lib/auth/api-session";
+import {
+  apiSessionErrorResponse,
+  requireApiSessionSafe,
+} from "@/lib/auth/api-session";
 import { buildJobStatusReadOnly, getScheduleJobHeader } from "@/lib/schedule-jobs/repository";
 import type { ScheduleJobRow } from "@/lib/schedule-jobs/types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { withTimeout, withTimeoutOrNull, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
+import { withHardTimeout, DB_ROUTE_TIMEOUT_MS } from "@/lib/with-timeout";
 
+const ROUTE = "/api/schedule-jobs/[id]/status";
 const DB_TIMEOUT_SENTINEL = "__db_timeout__" as const;
 type JobLookupResult = ScheduleJobRow | null | typeof DB_TIMEOUT_SENTINEL;
 
@@ -29,7 +33,7 @@ function statusErrorResponse(jobId: string, error: unknown) {
       recommendedAction: "manual_review",
       data: null,
     },
-    { status: 200, headers: { "Cache-Control": "no-store" } },
+    { status: dbTimeout ? 503 : 200, headers: { "Cache-Control": "no-store" } },
   );
 }
 
@@ -45,22 +49,24 @@ export async function GET(
     let ownerId: string | null = null;
 
     if (!cronAuthorized) {
-      const session = await requireApiSession("api/schedule-jobs/status");
-      if (!session.ok) return session.response;
+      const session = await requireApiSessionSafe(ROUTE);
+      if (!session.ok) {
+        return apiSessionErrorResponse(session, null);
+      }
       ownerId = session.userId;
     }
 
     const supabase = createAdminClient();
     let job: JobLookupResult = null;
     if (ownerId) {
-      job = await withTimeout<JobLookupResult>(
+      job = await withHardTimeout<JobLookupResult>(
         getScheduleJobHeader(supabase, ownerId, id),
         DB_ROUTE_TIMEOUT_MS,
         DB_TIMEOUT_SENTINEL,
         "schedule-job-status-header",
       );
     } else if (cronAuthorized) {
-      job = await withTimeout<JobLookupResult>(
+      job = await withHardTimeout<JobLookupResult>(
         (async () => {
           const { data, error } = await supabase
             .from("schedule_jobs")
@@ -81,9 +87,10 @@ export async function GET(
     }
     if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
 
-    const status = await withTimeoutOrNull(
+    const status = await withHardTimeout(
       buildJobStatusReadOnly(supabase, job),
       DB_ROUTE_TIMEOUT_MS,
+      null,
       "schedule-job-status-readonly",
     );
 
@@ -95,6 +102,7 @@ export async function GET(
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    console.error("[api-handler-failed]", { route: ROUTE, jobId: id, error });
     return statusErrorResponse(id, error);
   }
 }

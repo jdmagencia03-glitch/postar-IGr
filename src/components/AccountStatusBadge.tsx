@@ -27,7 +27,7 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
         fetchWithTimeout("/api/tiktok/accounts", { credentials: "include", cache: "no-store" }, FETCH_TIMEOUT_MS),
       ]);
 
-      const igAccountsJson = igAccountsRes.ok ? await igAccountsRes.json() : [];
+      const igAccountsJson = await igAccountsRes.json().catch(() => []);
       const tiktokAccountsJson = tiktokAccountsRes.ok ? await tiktokAccountsRes.json() : [];
       const igAccounts = parseAccountsListPayload(igAccountsJson);
       const tiktokAccounts = parseAccountsListPayload(tiktokAccountsJson);
@@ -35,13 +35,27 @@ export function AccountStatusBadge({ showAvatar = false }: { showAvatar?: boolea
       const tiktokCount = tiktokAccounts.length;
       const totalCount = igCount + tiktokCount;
 
+      const apiDegraded =
+        igAccountsRes.status === 503 &&
+        igAccountsJson &&
+        typeof igAccountsJson === "object" &&
+        "error" in igAccountsJson &&
+        ["auth_timeout", "auth_db_error", "db_timeout"].includes(
+          (igAccountsJson as { error?: string }).error ?? "",
+        );
+
       const dbSlow =
-        (!igAccountsRes.ok && igAccountsRes.status >= 500) ||
-        (igAccountsJson && typeof igAccountsJson === "object" && "error" in igAccountsJson && (igAccountsJson as { error?: string }).error === "db_timeout");
+        apiDegraded ||
+        (igAccountsJson &&
+          typeof igAccountsJson === "object" &&
+          "error" in igAccountsJson &&
+          (igAccountsJson as { error?: string }).error === "db_timeout");
 
       if (dbSlow && totalCount === 0) {
         setStatus("error");
-        setMessage("Contas indisponíveis no momento");
+        setMessage(
+          apiDegraded ? "Sessão ou banco indisponível no momento" : "Contas indisponíveis no momento",
+        );
         return;
       }
 
