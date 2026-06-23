@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { fetchWithTimeout } from "@/lib/client-fetch-timeout";
 
-const CHECK_TIMEOUT_MS = 6_000;
+const CHECK_TIMEOUT_MS = 10_000;
 const RETRY_MS = 60_000;
 
 function isDegradedApiError(json: unknown): boolean {
@@ -16,6 +16,7 @@ function isDegradedApiError(json: unknown): boolean {
 /** Banner local quando auth ou banco estão lentos — sem redirecionar para login. */
 export function ApiStabilityBanner() {
   const [message, setMessage] = useState<string | null>(null);
+  const degradedStreakRef = useRef(0);
 
   const check = useCallback(async () => {
     try {
@@ -33,6 +34,18 @@ export function ApiStabilityBanner() {
 
       const accountsDegraded = accountsRes.status === 503 && isDegradedApiError(accountsJson);
 
+      if (authDegraded || accountsDegraded) {
+        degradedStreakRef.current += 1;
+      } else {
+        degradedStreakRef.current = 0;
+      }
+
+      // Evita alarme falso em uma oscilação rápida.
+      if (degradedStreakRef.current < 2) {
+        setMessage(null);
+        return;
+      }
+
       if (authDegraded) {
         setMessage(
           "Não foi possível validar sua sessão agora. Alguns dados podem estar indisponíveis — tente novamente em instantes.",
@@ -47,7 +60,10 @@ export function ApiStabilityBanner() {
 
       setMessage(null);
     } catch {
-      setMessage("Servidor demorou para responder. Tentando novamente em instantes.");
+      degradedStreakRef.current += 1;
+      if (degradedStreakRef.current >= 2) {
+        setMessage("Servidor demorou para responder. Tentando novamente em instantes.");
+      }
     }
   }, []);
 

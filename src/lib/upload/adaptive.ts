@@ -14,6 +14,9 @@ export const ADAPTIVE_RETRY_WINDOW_MS = 120_000;
 export const ADAPTIVE_STABLE_WINDOW_MS = 5 * 60_000;
 export const ADAPTIVE_NO_COMPLETION_MS = 180_000;
 export const LARGE_BATCH_TURBO_CONFIRM = 300;
+const ADAPTIVE_MIN_FAILED_TO_REDUCE = 12;
+const ADAPTIVE_MIN_RETRY_TO_REDUCE = 12;
+const ADAPTIVE_MIN_STALLED_TO_REDUCE = 4;
 
 const MODE_ORDER: AdaptiveEffectiveMode[] = ["turbo", "normal", "economy"];
 
@@ -181,12 +184,12 @@ export function evaluateAdaptiveUpload(
     safeMode || (total >= 150 ? errorRate >= 0.15 && failed >= 20 : failed >= 20);
   const shouldAlertLight = failed >= 5 && failed < 10 && errorRate < 0.05;
   const shouldReduce =
-    stalled >= 3 ||
-    recentRetryCount >= 8 ||
-    errorRate > 0.08 ||
-    (failed >= 15 && errorRate > 0.05) ||
+    stalled >= ADAPTIVE_MIN_STALLED_TO_REDUCE ||
+    recentRetryCount >= ADAPTIVE_MIN_RETRY_TO_REDUCE ||
+    (failed >= ADAPTIVE_MIN_FAILED_TO_REDUCE && errorRate > 0.1) ||
+    (failed >= 20 && errorRate > 0.06) ||
     noRealProgress ||
-    speedDropping ||
+    (speedDropping && failed >= 10) ||
     (uploading > 0 && !hasActiveProgress && progressIdleMs >= 120_000);
 
   let effectiveMode = currentEffectiveMode;
