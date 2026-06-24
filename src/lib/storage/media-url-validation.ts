@@ -2,6 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getBunnyMediaBackend } from "@/lib/storage/bunny";
 import { headBunnyMediaObject } from "@/lib/storage/bunny";
 import {
+  fetchBunnyStreamVideo,
+  isBunnyStreamVideoAcceptable,
+  parseBunnyStreamStorageKey,
+} from "@/lib/storage/bunny-stream";
+import {
   MEDIA_BUCKET,
   buildPublicMediaUrl,
   parseMediaPublicUrl,
@@ -166,12 +171,82 @@ export type VideoUrlValidationResult =
   | { ok: true; probe: HttpMediaProbe; storage: StorageObjectMeta | null }
   | { ok: false; code: VideoUrlValidationCode; message: string; probe: HttpMediaProbe; storage: StorageObjectMeta | null };
 
+function probeLooksLikePlayableVideo(probe: HttpMediaProbe) {
+  if (probe.looksLikeStorageErrorJson || probe.zeroBytes) return false;
+  if (probe.httpStatus === null || probe.httpStatus < 200 || probe.httpStatus >= 400) return false;
+  if (probe.isVideoContentType) return true;
+  const ct = probe.contentType?.toLowerCase() ?? "";
+  return ct.includes("octet-stream") || ct.includes("application/mp4");
+}
+
+async function validateBunnyStreamVideoMediaUrl(params: {
+  videoUrl: string;
+  storagePath: string;
+}): Promise<VideoUrlValidationResult> {
+  const videoId = parseBunnyStreamStorageKey(params.storagePath);
+  const probe = await probeHttpMediaUrl(params.videoUrl);
+
+  if (!videoId) {
+    return {
+      ok: false,
+      code: "video_url_unreachable",
+      message: "URL de vídeo Bunny Stream inválida.",
+      probe,
+      storage: null,
+    };
+  }
+
+  const details = await fetchBunnyStreamVideo(videoId);
+  const storage: StorageObjectMeta =
+    details && isBunnyStreamVideoAcceptable(details.status)
+      ? {
+          exists: true,
+          size: details.length,
+          mimeType: "video/mp4",
+          error: null,
+        }
+      : {
+          exists: false,
+          size: null,
+          mimeType: null,
+          error: details ? `status_${details.status}` : "not_found",
+        };
+
+  if (!details || !isBunnyStreamVideoAcceptable(details.status)) {
+    return {
+      ok: false,
+      code: "video_storage_object_missing",
+      message: "Vídeo ainda não disponível no Bunny Stream.",
+      probe,
+      storage,
+    };
+  }
+
+  if (probeLooksLikePlayableVideo(probe)) {
+    return { ok: true, probe, storage };
+  }
+
+  // TUS concluído: a API confirma o upload antes da CDN /original ficar pronta.
+  return { ok: true, probe, storage };
+}
+
 export async function validateVideoMediaUrl(params: {
   supabase?: SupabaseClient;
   videoUrl: string;
   checkStorage?: boolean;
 }): Promise<VideoUrlValidationResult> {
   const parsed = parseMediaPublicUrl(params.videoUrl);
+  const streamVideoId = parsed.storageObjectPathFromUrl
+    ? parseBunnyStreamStorageKey(parsed.storageObjectPathFromUrl)
+    : null;
+
+  if (streamVideoId && parsed.storageObjectPathFromUrl) {
+    return validateBunnyStreamVideoMediaUrl({
+      videoUrl: params.videoUrl,
+      storagePath: parsed.storageObjectPathFromUrl,
+    });
+  }
+
   const probe = await probeHttpMediaUrl(params.videoUrl);
 
   let storage: StorageObjectMeta | null = null;

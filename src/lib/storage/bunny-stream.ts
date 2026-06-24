@@ -6,6 +6,32 @@ export const BUNNY_STREAM_TUS_ENDPOINT = "https://video.bunnycdn.com/tusupload";
 const VIDEO_GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** Status codes from Bunny Stream API — https://docs.bunny.net/api-reference/stream */
+export const BUNNY_STREAM_STATUS = {
+  CREATED: 0,
+  UPLOADED: 1,
+  PROCESSING: 2,
+  TRANSCODING: 3,
+  FINISHED: 4,
+  ERROR: 5,
+  UPLOAD_FAILED: 6,
+} as const;
+
+export type BunnyStreamVideoDetails = {
+  videoId: string;
+  status: number;
+  length: number | null;
+  title: string | null;
+};
+
+export function isBunnyStreamVideoAcceptable(status: number) {
+  return (
+    status >= BUNNY_STREAM_STATUS.UPLOADED &&
+    status !== BUNNY_STREAM_STATUS.ERROR &&
+    status !== BUNNY_STREAM_STATUS.UPLOAD_FAILED
+  );
+}
+
 export type BunnyStreamConfig = {
   libraryId: string;
   apiKey: string;
@@ -122,6 +148,39 @@ export async function deleteBunnyStreamVideo(videoId: string, config = getBunnyS
   return { deleted: true, status: res.status };
 }
 
+export async function fetchBunnyStreamVideo(
+  videoId: string,
+  config = getBunnyStreamConfig(),
+): Promise<BunnyStreamVideoDetails | null> {
+  if (!config) return null;
+
+  const res = await fetch(
+    `${BUNNY_STREAM_API_BASE}/library/${config.libraryId}/videos/${videoId}`,
+    {
+      headers: { AccessKey: config.apiKey, accept: "application/json" },
+      cache: "no-store",
+    },
+  );
+
+  if (!res.ok) return null;
+
+  const body = (await res.json().catch(() => ({}))) as {
+    guid?: string;
+    status?: number;
+    length?: number;
+    title?: string;
+  };
+
+  if (!body.guid) return null;
+
+  return {
+    videoId: body.guid,
+    status: typeof body.status === "number" ? body.status : BUNNY_STREAM_STATUS.CREATED,
+    length: typeof body.length === "number" ? body.length : null,
+    title: typeof body.title === "string" ? body.title : null,
+  };
+}
+
 export async function headBunnyStreamVideo(videoId: string, config = getBunnyStreamConfig()) {
   const url = buildBunnyStreamPlayUrl(videoId, "original", config);
   if (!url) {
@@ -130,30 +189,46 @@ export async function headBunnyStreamVideo(videoId: string, config = getBunnyStr
 
   try {
     const res = await fetch(url, { method: "HEAD", cache: "no-store" });
-    if (res.status === 404) {
-      return { exists: false, size: null, mimeType: null, error: null };
+    if (res.ok) {
+      const length = res.headers.get("content-length");
+      const size = length ? Number(length) : null;
+
+      return {
+        exists: true,
+        size: Number.isFinite(size) ? size : null,
+        mimeType: res.headers.get("content-type"),
+        error: null,
+      };
     }
-    if (!res.ok) {
+
+    if (res.status !== 404) {
       return { exists: false, size: null, mimeType: null, error: `http_${res.status}` };
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "head_failed";
+    const apiDetails = await fetchBunnyStreamVideo(videoId, config);
+    if (apiDetails && isBunnyStreamVideoAcceptable(apiDetails.status)) {
+      return {
+        exists: true,
+        size: apiDetails.length,
+        mimeType: "video/mp4",
+        error: null,
+      };
+    }
+    return { exists: false, size: null, mimeType: null, error: message };
+  }
 
-    const length = res.headers.get("content-length");
-    const size = length ? Number(length) : null;
-
+  const apiDetails = await fetchBunnyStreamVideo(videoId, config);
+  if (apiDetails && isBunnyStreamVideoAcceptable(apiDetails.status)) {
     return {
       exists: true,
-      size: Number.isFinite(size) ? size : null,
-      mimeType: res.headers.get("content-type"),
+      size: apiDetails.length,
+      mimeType: "video/mp4",
       error: null,
     };
-  } catch (error) {
-    return {
-      exists: false,
-      size: null,
-      mimeType: null,
-      error: error instanceof Error ? error.message : "head_failed",
-    };
   }
+
+  return { exists: false, size: null, mimeType: null, error: null };
 }
 
 export function prepareBunnyStreamUpload(params: {

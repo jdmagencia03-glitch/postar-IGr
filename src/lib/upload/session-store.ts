@@ -900,7 +900,11 @@ class UploadSessionStore {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "pending" }),
+          body: JSON.stringify({
+            status: "pending",
+            bytes_uploaded: Number(file.bytes_uploaded ?? 0),
+            error_message: null,
+          }),
         }).catch(() => undefined),
       ),
     );

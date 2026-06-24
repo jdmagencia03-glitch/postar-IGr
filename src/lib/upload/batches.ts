@@ -815,15 +815,22 @@ export async function updateUploadFileStatus(
     refreshCounters?: boolean;
   },
 ) {
+  const patch: Record<string, unknown> = {
+    status: params.status,
+    public_url: params.publicUrl ?? null,
+    bytes_uploaded: params.bytesUploaded ?? 0,
+    error_message: params.errorMessage ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (params.status === "pending" || params.status === "retrying" || params.status === "stalled") {
+    patch.worker_id = null;
+    patch.lease_until = null;
+  }
+
   const { data: file, error } = await supabase
     .from("upload_files")
-    .update({
-      status: params.status,
-      public_url: params.publicUrl ?? null,
-      bytes_uploaded: params.bytesUploaded ?? 0,
-      error_message: params.errorMessage ?? null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq("id", params.fileId)
     .eq("batch_id", params.batchId)
     .select("*")
