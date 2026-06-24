@@ -2,13 +2,25 @@ import { formatZodError } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getTusSignedEndpoint, TUS_CHUNK_SIZE } from "@/lib/upload/storage-url";
+import { getTusSignedEndpoint } from "@/lib/upload/storage-url";
 import { logAccessDenied, logSecurityEvent } from "@/lib/security/audit";
 import {
   assertOwnerStoragePath,
   formatMaxUploadSize,
   validateUploadMetadata,
 } from "@/lib/security/ownership";
+import {
+  buildBunnyCdnUrl,
+  buildBunnyStorageApiUrl,
+  getBunnyMediaBackend,
+  getBunnyStorageConfig,
+  getMediaStorageProvider,
+} from "@/lib/storage/bunny";
+import {
+  createBunnyStreamVideo,
+  prepareBunnyStreamUpload,
+} from "@/lib/storage/bunny-stream";
+import { TUS_CHUNK_SIZE } from "@/lib/upload/storage-config";
 import { formatBytes } from "@/lib/upload/validate";
 import { z } from "zod";
 
@@ -44,12 +56,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
-  const supabase = createAdminClient();
+  const provider = getMediaStorageProvider();
+  const bunnyBackend = getBunnyMediaBackend();
+  const bunnyStorage = getBunnyStorageConfig();
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  if (!supabaseUrl) {
+  if (provider === "bunny" && bunnyBackend === "none") {
+    return NextResponse.json(
+      {
+        error:
+          "Bunny não configurado. Defina BUNNY_STREAM_LIBRARY_ID + BUNNY_STREAM_API_KEY + BUNNY_STREAM_CDN_HOSTNAME (recomendado) ou variáveis de Bunny Storage.",
+      },
+      { status: 500 },
+    );
+  }
+
+  if (provider === "supabase" && !supabaseUrl) {
     return NextResponse.json({ error: "Supabase não configurado" }, { status: 500 });
   }
+
+  const supabase = createAdminClient();
 
   const { data: batch } = await supabase
     .from("upload_batches")
@@ -110,15 +136,17 @@ export async function POST(request: NextRequest) {
 
   const path = pathCheck.path;
 
-  const { data: bucketInfo } = await supabase.storage.getBucket("media");
-  const bucketLimit = bucketInfo?.file_size_limit ?? 0;
-  if (bucketLimit > 0 && parsed.data.size > bucketLimit) {
-    return NextResponse.json(
-      {
-        error: `Arquivo (${formatBytes(parsed.data.size)}) excede o limite do bucket media (${formatBytes(bucketLimit)}). Ajuste em Storage → media → Settings ou rode supabase/storage-pro.sql.`,
-      },
-      { status: 400 },
-    );
+  if (provider === "supabase") {
+    const { data: bucketInfo } = await supabase.storage.getBucket("media");
+    const bucketLimit = bucketInfo?.file_size_limit ?? 0;
+    if (bucketLimit > 0 && parsed.data.size > bucketLimit) {
+      return NextResponse.json(
+        {
+          error: `Arquivo (${formatBytes(parsed.data.size)}) excede o limite do bucket media (${formatBytes(bucketLimit)}).`,
+        },
+        { status: 400 },
+      );
+    }
   }
 
   await supabase
@@ -130,6 +158,84 @@ export async function POST(request: NextRequest) {
     .eq("id", file.id)
     .eq("batch_id", batch.id);
 
+  const contentType = parsed.data.type || file.content_type || "video/mp4";
+
+  if (provider === "bunny" && bunnyBackend === "stream") {
+    try {
+      const videoTitle = `${path}::${file.id}`;
+      const videoId = await createBunnyStreamVideo(videoTitle);
+      const stream = prepareBunnyStreamUpload({
+        videoId,
+        title: parsed.data.name,
+      });
+
+      void logSecurityEvent({
+        ownerId,
+        eventType: "upload_prepared",
+        resourceType: "upload_file",
+        resourceId: file.id,
+        ipAddress: request.headers.get("x-forwarded-for"),
+        userAgent: request.headers.get("user-agent"),
+        metadata: { batchId: batch.id, path, provider: "bunny-stream", videoId },
+      });
+
+      return NextResponse.json({
+        provider: "bunny-stream",
+        tusEndpoint: stream.tusEndpoint,
+        libraryId: stream.libraryId,
+        videoId: stream.videoId,
+        authorizationSignature: stream.authorizationSignature,
+        authorizationExpire: stream.authorizationExpire,
+        path,
+        publicUrl: stream.publicUrl,
+        contentType,
+        chunkSize: TUS_CHUNK_SIZE,
+        fileId: file.id,
+        batchId: batch.id,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Falha ao preparar upload no Bunny Stream",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  if (provider === "bunny" && bunnyBackend === "storage" && bunnyStorage) {
+    const uploadUrl = buildBunnyStorageApiUrl(path, bunnyStorage);
+    const publicUrl = buildBunnyCdnUrl(path, bunnyStorage);
+
+    if (!uploadUrl || !publicUrl) {
+      return NextResponse.json({ error: "Falha ao montar URLs do Bunny Storage" }, { status: 500 });
+    }
+
+    void logSecurityEvent({
+      ownerId,
+      eventType: "upload_prepared",
+      resourceType: "upload_file",
+      resourceId: file.id,
+      ipAddress: request.headers.get("x-forwarded-for"),
+      userAgent: request.headers.get("user-agent"),
+      metadata: { batchId: batch.id, path, provider: "bunny-storage" },
+    });
+
+    return NextResponse.json({
+      provider: "bunny-storage",
+      uploadUrl,
+      accessKey: bunnyStorage.accessKey,
+      path,
+      publicUrl,
+      contentType,
+      fileId: file.id,
+      batchId: batch.id,
+    });
+  }
+
   const { data, error } = await supabase.storage.from("media").createSignedUploadUrl(path, {
     upsert: true,
   });
@@ -140,7 +246,7 @@ export async function POST(request: NextRequest) {
       /413|payload too large|entity too large|maximum allowed size|file_size_limit|object exceeded/i.test(
         raw,
       )
-        ? `Arquivo excede o limite do bucket Supabase (${formatMaxUploadSize()}). Execute supabase/storage-pro.sql no SQL Editor. Detalhe: ${raw}`
+        ? `Arquivo excede o limite do bucket Supabase (${formatMaxUploadSize()}). Detalhe: ${raw}`
         : raw;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
@@ -154,15 +260,16 @@ export async function POST(request: NextRequest) {
     resourceId: file.id,
     ipAddress: request.headers.get("x-forwarded-for"),
     userAgent: request.headers.get("user-agent"),
-    metadata: { batchId: batch.id, path },
+    metadata: { batchId: batch.id, path, provider: "supabase" },
   });
 
   return NextResponse.json({
-    tusEndpoint: getTusSignedEndpoint(supabaseUrl),
+    provider: "supabase",
+    tusEndpoint: getTusSignedEndpoint(supabaseUrl!),
     signature: data.token,
     path,
     publicUrl: publicData.publicUrl,
-    contentType: parsed.data.type || file.content_type || "video/mp4",
+    contentType,
     chunkSize: TUS_CHUNK_SIZE,
     fileId: file.id,
     batchId: batch.id,

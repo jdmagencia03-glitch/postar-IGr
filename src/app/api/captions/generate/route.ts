@@ -4,15 +4,22 @@ import {
   buildViralUserPrompt,
   getPlaybookForOwner,
 } from "@/lib/ai/playbook";
-import { getSessionUserId } from "@/lib/meta/oauth";
+import { captionGenerateSchema } from "@/lib/api/schemas/captions";
+import { parseJsonBody } from "@/lib/api/validate-request";
+import { requireAuthenticatedApi } from "@/lib/security/api";
+import { RATE_LIMIT_AI } from "@/lib/security/rate-limit-config";
+
+const AI_RATE_WINDOW_MS = 60_000;
 
 export async function POST(request: NextRequest) {
-  const ownerId = await getSessionUserId();
-  if (!ownerId) {
-    return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
-  }
+  const auth = await requireAuthenticatedApi(request, {
+    rateLimit: { scope: "ai-captions", limit: RATE_LIMIT_AI, windowMs: AI_RATE_WINDOW_MS },
+  });
+  if (auth.response) return auth.response;
 
-  const { topic, tone, username } = await request.json();
+  const parsed = await parseJsonBody(request, captionGenerateSchema);
+  if (!parsed.ok) return parsed.response;
+
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
@@ -22,8 +29,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const playbook = await getPlaybookForOwner(ownerId);
-  const niche = topic?.trim() || playbook?.niche?.trim() || "post do dia";
+  const playbook = await getPlaybookForOwner(auth.userId);
+  const niche = parsed.data.topic?.trim() || playbook?.niche?.trim() || "post do dia";
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -45,8 +52,8 @@ export async function POST(request: NextRequest) {
             count: 3,
             filenames: ["post-teste.mp4"],
             niche,
-            username,
-          })}\nTom extra: ${tone ?? "casual"}.`,
+            username: parsed.data.username,
+          })}\nTom extra: ${parsed.data.tone ?? "casual"}.`,
         },
       ],
     }),

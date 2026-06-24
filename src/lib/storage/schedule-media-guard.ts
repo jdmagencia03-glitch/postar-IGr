@@ -7,7 +7,12 @@ import {
 } from "@/lib/storage/media-url-validation";
 
 function isLikelyVideoUrl(url: string) {
-  return /\.(mp4|mov|webm)(\?|$)/i.test(url) || url.toLowerCase().includes("video/");
+  return (
+    /\.(mp4|mov|webm)(\?|$)/i.test(url) ||
+    /\/original$/i.test(url) ||
+    /\/play_\d+p\.mp4/i.test(url) ||
+    url.toLowerCase().includes("video/")
+  );
 }
 
 export type ScheduleMediaGuardFailure = {

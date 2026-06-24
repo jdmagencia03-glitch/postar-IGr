@@ -1,3 +1,5 @@
+import { getBunnyStreamConfig } from "@/lib/storage/bunny-stream";
+import { isBunnyStreamMediaUrl } from "@/lib/storage/bunny-stream";
 import { getSupabaseStorageHost } from "@/lib/upload/storage-url";
 
 export type TikTokUploadMethod = "FILE_UPLOAD" | "PULL_FROM_URL";
@@ -8,6 +10,27 @@ function parseEnvMethod(): TikTokUploadMethod | null {
   if (raw === "file_upload" || raw === "file" || raw === "upload") return "FILE_UPLOAD";
   if (raw === "pull_from_url" || raw === "pull" || raw === "url") return "PULL_FROM_URL";
   return null;
+}
+
+export function isBunnyCdnVideoUrl(videoUrl: string) {
+  return isBunnyStreamMediaUrl(videoUrl) || isBunnyStorageVideoUrl(videoUrl);
+}
+
+function isBunnyStorageVideoUrl(videoUrl: string) {
+  const bunny = getBunnyStreamConfig();
+  // Storage zone usa BUNNY_CDN_HOSTNAME sem stream library
+  const storage = process.env.BUNNY_STORAGE_ZONE?.trim();
+  const cdn = process.env.BUNNY_CDN_HOSTNAME?.trim();
+  if (!storage || !cdn) return false;
+  try {
+    const parsed = new URL(videoUrl);
+    if (bunny && parsed.host.toLowerCase() === bunny.cdnHostname.toLowerCase()) {
+      return !isBunnyStreamMediaUrl(videoUrl);
+    }
+    return parsed.host.toLowerCase() === cdn.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 export function isSupabaseStorageVideoUrl(videoUrl: string) {
@@ -28,11 +51,15 @@ export function isSupabaseStorageVideoUrl(videoUrl: string) {
   }
 }
 
+export function isAppHostedVideoUrl(videoUrl: string) {
+  return isBunnyCdnVideoUrl(videoUrl) || isSupabaseStorageVideoUrl(videoUrl);
+}
+
 export function resolveTikTokUploadMethod(videoUrl?: string | null): TikTokUploadMethod {
   const fromEnv = parseEnvMethod();
   if (fromEnv) return fromEnv;
 
-  if (videoUrl && isSupabaseStorageVideoUrl(videoUrl)) {
+  if (videoUrl && isAppHostedVideoUrl(videoUrl)) {
     return "FILE_UPLOAD";
   }
 
@@ -41,7 +68,7 @@ export function resolveTikTokUploadMethod(videoUrl?: string | null): TikTokUploa
 
 export function isUrlOwnershipRiskForPull(videoUrl: string | null | undefined) {
   if (!videoUrl) return false;
-  return isSupabaseStorageVideoUrl(videoUrl);
+  return isAppHostedVideoUrl(videoUrl);
 }
 
 export function videoUrlHost(videoUrl: string | null | undefined) {
@@ -70,7 +97,7 @@ export function tiktokPublishFailureAction(params: {
     return "FILE_UPLOAD falhou — confira formato MP4, tamanho e token video.upload";
   }
   if (/inacessível|inaccessible|404|403/i.test(params.message)) {
-    return "Confirme que o vídeo está acessível no Supabase Storage";
+    return "Confirme que o vídeo está acessível no CDN de mídia";
   }
   if (/unaudited_client_can_only_post_to_private_accounts/i.test(params.message)) {
     return "Use privacyLevel SELF_ONLY e deixe a conta TikTok privada até o app ser auditado";

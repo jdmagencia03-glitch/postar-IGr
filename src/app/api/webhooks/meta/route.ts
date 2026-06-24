@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { handleWebhookComment } from "@/lib/comment-dm/processor";
+import { metaWebhookBodySchema } from "@/lib/api/schemas/webhooks";
+import { parseJsonBody } from "@/lib/api/validate-request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const maxDuration = 60;
@@ -23,28 +25,11 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ error: "Verificação inválida" }, { status: 403 });
 }
 
-type WebhookCommentValue = {
-  id: string;
-  text?: string;
-  from?: { id?: string; username?: string };
-  media?: { id?: string };
-  timestamp?: string;
-};
-
-type WebhookEntry = {
-  id: string;
-  changes?: Array<{ field?: string; value?: WebhookCommentValue }>;
-};
-
 export async function POST(request: NextRequest) {
-  let body: { object?: string; entry?: WebhookEntry[] };
+  const parsed = await parseJsonBody(request, metaWebhookBodySchema);
+  if (!parsed.ok) return parsed.response;
 
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Payload inválido" }, { status: 400 });
-  }
-
+  const body = parsed.data;
   if (body.object !== "instagram" || !body.entry?.length) {
     return NextResponse.json({ received: true });
   }

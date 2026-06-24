@@ -1,17 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseSupabaseMediaStoragePath } from "@/lib/storage/cleanup";
+import { getBunnyMediaBackend } from "@/lib/storage/bunny";
+import { headBunnyMediaObject } from "@/lib/storage/bunny";
+import {
+  MEDIA_BUCKET,
+  buildPublicMediaUrl,
+  parseMediaPublicUrl,
+  parseMediaStoragePathFromUrl,
+} from "@/lib/storage/media-path";
 
-export const MEDIA_BUCKET = "media";
+export { MEDIA_BUCKET, buildPublicMediaUrl, parseMediaPublicUrl, parseMediaStoragePathFromUrl };
+export { parseSupabaseMediaStoragePath } from "@/lib/storage/media-path";
 
-export type ParsedMediaUrl = {
-  videoUrl: string;
-  storageBucket: string;
-  storageObjectPathFromUrl: string | null;
-  fileName: string | null;
-  ownerIdFromPath: string | null;
-  batchIdFromPath: string | null;
-  uploadFileIdFromPath: string | null;
-};
+export type ParsedMediaUrl = ReturnType<typeof parseMediaPublicUrl>;
 
 export type HttpMediaProbe = {
   httpStatus: number | null;
@@ -30,38 +30,6 @@ export type StorageObjectMeta = {
   mimeType: string | null;
   error: string | null;
 };
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function parseMediaPublicUrl(videoUrl: string): ParsedMediaUrl {
-  const storageObjectPathFromUrl = parseSupabaseMediaStoragePath(videoUrl);
-  const fileName = storageObjectPathFromUrl?.split("/").pop() ?? null;
-  const segments = storageObjectPathFromUrl?.split("/") ?? [];
-
-  const ownerIdFromPath = segments[0] ?? null;
-  const batchIdFromPath = segments[1] && UUID_RE.test(segments[1]) ? segments[1] : null;
-  const uploadFileIdFromPath =
-    fileName && UUID_RE.test(fileName.replace(/\.[^.]+$/, ""))
-      ? fileName.replace(/\.[^.]+$/, "")
-      : null;
-
-  return {
-    videoUrl,
-    storageBucket: MEDIA_BUCKET,
-    storageObjectPathFromUrl,
-    fileName,
-    ownerIdFromPath,
-    batchIdFromPath,
-    uploadFileIdFromPath,
-  };
-}
-
-export function buildPublicMediaUrl(storagePath: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!supabaseUrl) return null;
-  return `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${MEDIA_BUCKET}/${storagePath}`;
-}
 
 function parseContentLength(value: string | null) {
   if (!value) return null;
@@ -136,6 +104,16 @@ export async function getStorageObjectMeta(
   supabase: SupabaseClient,
   storagePath: string,
 ): Promise<StorageObjectMeta> {
+  if (getBunnyMediaBackend() !== "none") {
+    const bunny = await headBunnyMediaObject(storagePath);
+    return {
+      exists: bunny.exists,
+      size: bunny.size,
+      mimeType: bunny.mimeType,
+      error: bunny.error,
+    };
+  }
+
   const segments = storagePath.split("/");
   const fileName = segments.pop();
   const folder = segments.join("/");
@@ -208,7 +186,7 @@ export async function validateVideoMediaUrl(params: {
     return {
       ok: false,
       code: "video_storage_object_missing",
-      message: "Objeto de vídeo não encontrado no Supabase Storage.",
+      message: "Objeto de vídeo não encontrado no storage.",
       probe,
       storage,
     };

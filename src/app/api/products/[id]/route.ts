@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { productPatchSchema } from "@/lib/api/schemas/products";
+import { parseJsonBody, parseRouteId } from "@/lib/api/validate-request";
 import { getOwnerProduct, productInputFromBody } from "@/lib/products/products";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -10,9 +12,11 @@ export async function GET(
   const ownerId = await getSessionUserId();
   if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const { id } = await params;
+  const idParsed = await parseRouteId(params);
+  if (!idParsed.ok) return idParsed.response;
+
   const supabase = createAdminClient();
-  const product = await getOwnerProduct(supabase, ownerId, id);
+  const product = await getOwnerProduct(supabase, ownerId, idParsed.data);
 
   if (!product) return NextResponse.json({ error: "Produto não encontrado" }, { status: 404 });
   return NextResponse.json(product);
@@ -25,18 +29,22 @@ export async function PATCH(
   const ownerId = await getSessionUserId();
   if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const { id } = await params;
+  const idParsed = await parseRouteId(params);
+  if (!idParsed.ok) return idParsed.response;
+
   const supabase = createAdminClient();
-  const existing = await getOwnerProduct(supabase, ownerId, id);
+  const existing = await getOwnerProduct(supabase, ownerId, idParsed.data);
   if (!existing) return NextResponse.json({ error: "Produto não encontrado" }, { status: 404 });
 
-  const body = await request.json();
-  const input = productInputFromBody({ ...existing, ...body });
+  const parsed = await parseJsonBody(request, productPatchSchema);
+  if (!parsed.ok) return parsed.response;
+
+  const input = productInputFromBody({ ...existing, ...parsed.data });
 
   const { data, error } = await supabase
     .from("products")
     .update(input)
-    .eq("id", id)
+    .eq("id", idParsed.data)
     .select("*")
     .single();
 
@@ -51,12 +59,14 @@ export async function DELETE(
   const ownerId = await getSessionUserId();
   if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const { id } = await params;
+  const idParsed = await parseRouteId(params);
+  if (!idParsed.ok) return idParsed.response;
+
   const supabase = createAdminClient();
-  const existing = await getOwnerProduct(supabase, ownerId, id);
+  const existing = await getOwnerProduct(supabase, ownerId, idParsed.data);
   if (!existing) return NextResponse.json({ error: "Produto não encontrado" }, { status: 404 });
 
-  const { error } = await supabase.from("products").delete().eq("id", id);
+  const { error } = await supabase.from("products").delete().eq("id", idParsed.data);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

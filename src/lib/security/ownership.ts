@@ -1,5 +1,8 @@
 import { randomUUID } from "crypto";
 
+import { getBunnyStorageConfig } from "@/lib/storage/bunny";
+import { getBunnyStreamConfig, isBunnyStreamMediaUrl } from "@/lib/storage/bunny-stream";
+import { parseMediaStoragePathFromUrl } from "@/lib/storage/media-path";
 import {
   MAX_UPLOAD_BYTES,
   formatMaxUploadSize,
@@ -65,23 +68,51 @@ export function buildRandomStoragePath(ownerId: string, ext: string) {
   return `${ownerId}/${Date.now()}-${randomUUID()}.${safeExt}`;
 }
 
+function isAllowedSupabaseMediaUrlForOwner(url: string, ownerId: string) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) return false;
+
+  const parsed = new URL(url);
+  const allowedHosts = new Set<string>();
+  allowedHosts.add(new URL(supabaseUrl).host);
+
+  const projectRef = supabaseUrl.replace("https://", "").replace("http://", "").split(".")[0];
+  allowedHosts.add(`${projectRef}.supabase.co`);
+  allowedHosts.add(`${projectRef}.storage.supabase.co`);
+
+  if (!allowedHosts.has(parsed.host)) return false;
+
+  const marker = `/storage/v1/object/public/media/${ownerId}/`;
+  return parsed.pathname.includes(marker);
+}
+
+function isAllowedBunnyStreamMediaUrl(url: string, ownerId: string) {
+  if (!isBunnyStreamMediaUrl(url)) return false;
+  const storagePath = parseMediaStoragePathFromUrl(url);
+  if (!storagePath?.startsWith("bunny-stream/")) return false;
+  // Vídeos Stream são vinculados ao owner via upload_files.public_url no agendamento.
+  void ownerId;
+  return true;
+}
+
+function isAllowedBunnyStorageMediaUrlForOwner(url: string, ownerId: string) {
+  const bunny = getBunnyStorageConfig();
+  if (!bunny) return false;
+
+  const parsed = new URL(url);
+  if (parsed.host.toLowerCase() !== bunny.cdnHostname.toLowerCase()) return false;
+
+  const storagePath = parseMediaStoragePathFromUrl(url);
+  return Boolean(storagePath?.startsWith(`${ownerId}/`));
+}
+
 export function isAllowedMediaUrlForOwner(url: string, ownerId: string) {
   try {
-    const parsed = new URL(url);
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    if (!supabaseUrl) return false;
-
-    const allowedHosts = new Set<string>();
-    allowedHosts.add(new URL(supabaseUrl).host);
-
-    const projectRef = supabaseUrl.replace("https://", "").replace("http://", "").split(".")[0];
-    allowedHosts.add(`${projectRef}.supabase.co`);
-    allowedHosts.add(`${projectRef}.storage.supabase.co`);
-
-    if (!allowedHosts.has(parsed.host)) return false;
-
-    const marker = `/storage/v1/object/public/media/${ownerId}/`;
-    return parsed.pathname.includes(marker);
+    return (
+      isAllowedBunnyStreamMediaUrl(url, ownerId) ||
+      isAllowedBunnyStorageMediaUrlForOwner(url, ownerId) ||
+      isAllowedSupabaseMediaUrlForOwner(url, ownerId)
+    );
   } catch {
     return false;
   }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyCorsHeaders, applySecurityHeaders } from "@/lib/security/headers";
+import { resolveRateLimitPolicy } from "@/lib/security/rate-limit-config";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
 /** Constante local — middleware Edge não importa helpers de sessão/Supabase. */
@@ -12,21 +13,14 @@ function withSecurityHeaders(response: NextResponse, request: NextRequest) {
 }
 
 function enforceApiRateLimit(request: NextRequest, pathname: string) {
+  const policy = resolveRateLimitPolicy(pathname, request.method, request);
+  if (policy.skip) return null;
+
   const ip = getClientIp(request);
-
-  if (
-    request.method === "PATCH" &&
-    /\/api\/upload\/batches\/[^/]+\/files\/[^/]+$/.test(pathname)
-  ) {
-    return null;
-  }
-
-  const scope = pathname.startsWith("/api/upload") ? "upload" : "api";
-  const limit = pathname.startsWith("/api/upload") ? 600 : 180;
   const result = checkRateLimit({
-    key: `${scope}:${ip}`,
-    limit,
-    windowMs: 60_000,
+    key: `${policy.scope}:${ip}`,
+    limit: policy.limit,
+    windowMs: policy.windowMs,
   });
 
   if (!result.allowed) {
@@ -71,19 +65,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/dashboard/:path*",
-    "/api/accounts/:path*",
-    "/api/posts/:path*",
-    "/api/upload/:path*",
-    "/api/logs/:path*",
-    "/api/captions/:path*",
-    "/api/instagram/:path*",
-    "/api/ai/:path*",
-    "/api/tiktok/:path*",
-    "/api/health/:path*",
-    "/api/comment-dm/:path*",
-    "/api/calendar/:path*",
-    "/api/schedule-jobs/:path*",
-  ],
+  matcher: ["/dashboard/:path*", "/api/:path*"],
 };

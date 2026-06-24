@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { attachOAuthSessionCookie } from "@/lib/auth/oauth-callback-persist";
 import { completeMetaOAuthExchange } from "@/lib/auth/meta-oauth-exchange";
 import { getSessionCookieDeleteOptions } from "@/lib/auth/session";
+import { metaOAuthExchangeSchema } from "@/lib/api/schemas/auth";
+import { parseJsonBody } from "@/lib/api/validate-request";
 
 export const maxDuration = 60;
 
@@ -13,15 +15,8 @@ function clearOAuthCookies(response: NextResponse) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as {
-      code?: string;
-      state?: string;
-      next?: string;
-    };
-    const code = body.code?.trim();
-    const state = body.state?.trim();
-
-    if (!code || !state) {
+    const parsed = await parseJsonBody(request, metaOAuthExchangeSchema);
+    if (!parsed.ok) {
       return NextResponse.json(
         { ok: false, error: "Falha na autenticação. Tente novamente.", errorCode: "meta_oauth_invalid" },
         { status: 400, headers: { "Cache-Control": "no-store" } },
@@ -29,9 +24,9 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await completeMetaOAuthExchange(request, {
-      code,
-      state,
-      nextPath: body.next,
+      code: parsed.data.code,
+      state: parsed.data.state,
+      nextPath: parsed.data.next,
     });
 
     if (!result.ok) {

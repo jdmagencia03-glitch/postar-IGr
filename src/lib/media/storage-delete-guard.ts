@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildPublicMediaUrl } from "@/lib/storage/media-url-validation";
+import { deleteBunnyMediaObject, getBunnyMediaBackend } from "@/lib/storage/bunny";
+import { MEDIA_BUCKET, buildAllPublicMediaUrls } from "@/lib/storage/media-path";
 import { MEDIA_REFERENCED_POST_STATUSES, STORAGE_DELETE_BLOCKED_LOG } from "@/lib/media/constants";
 
 export type StorageDeleteBlock = {
@@ -14,17 +15,13 @@ export async function findPostsReferencingStoragePaths(
 ) {
   if (!storagePaths.length) return [] as StorageDeleteBlock[];
 
-  const publicUrls = storagePaths
-    .map((path) => buildPublicMediaUrl(path))
-    .filter(Boolean) as string[];
-
   const blocks: StorageDeleteBlock[] = [];
 
   for (const path of storagePaths) {
-    const publicUrl = buildPublicMediaUrl(path);
+    const publicUrls = buildAllPublicMediaUrls(path);
     const referencingPostIds = new Set<string>();
 
-    if (publicUrl) {
+    for (const publicUrl of publicUrls) {
       const { data: byUrl } = await supabase
         .from("scheduled_posts")
         .select("id, media_urls, status")
@@ -57,7 +54,7 @@ export async function findPostsReferencingStoragePaths(
     if (referencingPostIds.size) {
       blocks.push({
         path,
-        publicUrl,
+        publicUrl: publicUrls[0] ?? null,
         referencingPostIds: [...referencingPostIds],
       });
     }
@@ -90,6 +87,36 @@ export async function assertStoragePathsSafeToDelete(
   };
 }
 
+async function removeSupabaseStorageObjects(supabase: SupabaseClient, storagePaths: string[]) {
+  for (let offset = 0; offset < storagePaths.length; offset += 100) {
+    const chunk = storagePaths.slice(offset, offset + 100);
+    const { error } = await supabase.storage.from(MEDIA_BUCKET).remove(chunk);
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+}
+
+async function removeBunnyMediaObjects(storagePaths: string[]) {
+  for (const path of storagePaths) {
+    await deleteBunnyMediaObject(path);
+  }
+}
+
+async function removeStorageObjectsFromProviders(
+  supabase: SupabaseClient,
+  storagePaths: string[],
+) {
+  if (getBunnyMediaBackend() !== "none") {
+    await removeBunnyMediaObjects(storagePaths);
+  }
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    await removeSupabaseStorageObjects(supabase, storagePaths).catch((error) => {
+      console.warn("[storage-delete-guard] supabase_legacy_remove", error);
+    });
+  }
+}
+
 export async function safeRemoveStorageObjects(
   supabase: SupabaseClient,
   storagePaths: string[],
@@ -106,27 +133,21 @@ export async function safeRemoveStorageObjects(
 
     let removed = 0;
     if (allowed.length) {
-      for (let offset = 0; offset < allowed.length; offset += 100) {
-        const chunk = allowed.slice(offset, offset + 100);
-        const { error } = await supabase.storage.from("media").remove(chunk);
-        if (error) {
-          console.warn("[storage-delete-guard] partial_remove_error", error.message);
-        } else {
-          removed += chunk.length;
-        }
+      try {
+        await removeStorageObjectsFromProviders(supabase, allowed);
+        removed = allowed.length;
+      } catch (error) {
+        console.warn(
+          "[storage-delete-guard] partial_remove_error",
+          error instanceof Error ? error.message : error,
+        );
       }
     }
 
     return { removed, blocked: guard.blocks };
   }
 
-  for (let offset = 0; offset < unique.length; offset += 100) {
-    const chunk = unique.slice(offset, offset + 100);
-    const { error } = await supabase.storage.from("media").remove(chunk);
-    if (error) {
-      throw new Error(error.message);
-    }
-  }
+  await removeStorageObjectsFromProviders(supabase, unique);
 
   return { removed: unique.length, blocked: [] as StorageDeleteBlock[] };
 }

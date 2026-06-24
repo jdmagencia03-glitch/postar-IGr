@@ -5,6 +5,12 @@ import {
   buildRandomStoragePath,
   validateUploadMetadata,
 } from "@/lib/security/ownership";
+import {
+  buildBunnyCdnUrl,
+  buildBunnyStorageApiUrl,
+  getBunnyStorageConfig,
+  getMediaStorageProvider,
+} from "@/lib/storage/bunny";
 
 export async function POST(request: NextRequest) {
   const userId = await getSessionUserId();
@@ -19,6 +25,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Nenhum arquivo informado" }, { status: 400 });
   }
 
+  const provider = getMediaStorageProvider();
+  const bunny = getBunnyStorageConfig();
   const supabase = createAdminClient();
   const uploads = [];
 
@@ -34,6 +42,27 @@ export async function POST(request: NextRequest) {
     }
 
     const path = buildRandomStoragePath(userId, validation.ext);
+    const contentType = file.type || "video/mp4";
+
+    if (provider === "bunny" && bunny) {
+      const uploadUrl = buildBunnyStorageApiUrl(path, bunny);
+      const publicUrl = buildBunnyCdnUrl(path, bunny);
+      if (!uploadUrl || !publicUrl) {
+        return NextResponse.json({ error: "Bunny Storage não configurado" }, { status: 500 });
+      }
+
+      uploads.push({
+        signedUrl: uploadUrl,
+        accessKey: bunny.accessKey,
+        path,
+        publicUrl,
+        contentType,
+        name: file.name,
+        provider: "bunny",
+      });
+      continue;
+    }
+
     const { data, error } = await supabase.storage.from("media").createSignedUploadUrl(path);
 
     if (error || !data) {
@@ -46,8 +75,9 @@ export async function POST(request: NextRequest) {
       signedUrl: data.signedUrl,
       path: data.path,
       publicUrl: publicData.publicUrl,
-      contentType: file.type || "video/mp4",
+      contentType,
       name: file.name,
+      provider: "supabase",
     });
   }
 

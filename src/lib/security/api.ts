@@ -3,6 +3,11 @@ import { getSessionUserId } from "@/lib/meta/oauth";
 import { logAccessDenied, logSecurityEvent } from "@/lib/security/audit";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
+export type AuthenticatedApiResult =
+  | { userId: string; response: null }
+  | { userId: null; response: NextResponse }
+  | { userId: string; response: NextResponse };
+
 export async function requireAuthenticatedUser(request?: Request) {
   const userId = await getSessionUserId();
   if (!userId) {
@@ -17,6 +22,34 @@ export async function requireAuthenticatedUser(request?: Request) {
     return null;
   }
   return userId;
+}
+
+export async function requireAuthenticatedApi(
+  request: Request,
+  options?: {
+    rateLimit?: { scope: string; limit: number; windowMs: number };
+  },
+): Promise<AuthenticatedApiResult> {
+  const userId = await requireAuthenticatedUser(request);
+  if (!userId) {
+    return {
+      userId: null,
+      response: NextResponse.json({ error: "Não autenticado" }, { status: 401 }),
+    };
+  }
+
+  if (options?.rateLimit) {
+    const limited = await enforceRateLimit({
+      request,
+      userId,
+      ...options.rateLimit,
+    });
+    if (limited) {
+      return { userId, response: limited };
+    }
+  }
+
+  return { userId, response: null };
 }
 
 export async function enforceRateLimit(params: {

@@ -5,6 +5,13 @@ import {
   buildRandomStoragePath,
   validateUploadMetadata,
 } from "@/lib/security/ownership";
+import {
+  buildBunnyCdnUrl,
+  buildBunnyStorageApiUrl,
+  getBunnyStorageConfig,
+  getMediaStorageProvider,
+} from "@/lib/storage/bunny";
+import { STORAGE_CACHE_CONTROL } from "@/lib/upload/storage-config";
 
 export async function POST(request: NextRequest) {
   const userId = await getSessionUserId();
@@ -19,6 +26,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Nenhum arquivo enviado" }, { status: 400 });
   }
 
+  const provider = getMediaStorageProvider();
+  const bunny = getBunnyStorageConfig();
   const supabase = createAdminClient();
   const urls: string[] = [];
 
@@ -34,9 +43,39 @@ export async function POST(request: NextRequest) {
     }
 
     const path = buildRandomStoragePath(userId, validation.ext);
+    const contentType = file.type || "video/mp4";
+
+    if (provider === "bunny" && bunny) {
+      const uploadUrl = buildBunnyStorageApiUrl(path, bunny);
+      const publicUrl = buildBunnyCdnUrl(path, bunny);
+      if (!uploadUrl || !publicUrl) {
+        return NextResponse.json({ error: "Bunny Storage não configurado" }, { status: 500 });
+      }
+
+      const res = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          AccessKey: bunny.accessKey,
+          "Content-Type": contentType,
+          "Cache-Control": STORAGE_CACHE_CONTROL,
+        },
+        body: file,
+      });
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        return NextResponse.json(
+          { error: `Falha ao enviar para Bunny (${res.status}): ${detail || res.statusText}` },
+          { status: 500 },
+        );
+      }
+
+      urls.push(publicUrl);
+      continue;
+    }
 
     const { error } = await supabase.storage.from("media").upload(path, file, {
-      contentType: file.type || "video/mp4",
+      contentType,
       upsert: false,
     });
 

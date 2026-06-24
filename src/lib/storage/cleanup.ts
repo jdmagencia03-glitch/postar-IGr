@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logPublishEvent } from "@/lib/publish/cron";
 import { safeRemoveStorageObjects } from "@/lib/media/storage-delete-guard";
+import { parseMediaStoragePathFromUrl } from "@/lib/storage/media-path";
 
-/** Tempo após publicação antes de apagar o arquivo do Supabase Storage. */
+/** Tempo após publicação antes de apagar o arquivo do storage. */
 export const MEDIA_CLEANUP_DELAY_MS = readHours(
   process.env.MEDIA_CLEANUP_DELAY_HOURS,
   2,
@@ -16,17 +17,9 @@ function readHours(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-/** Extrai o path do bucket `media` a partir da URL pública do Supabase. */
+/** @deprecated Use parseMediaStoragePathFromUrl */
 export function parseSupabaseMediaStoragePath(url: string): string | null {
-  try {
-    const pathname = new URL(url).pathname;
-    const marker = "/storage/v1/object/public/media/";
-    const index = pathname.indexOf(marker);
-    if (index === -1) return null;
-    return decodeURIComponent(pathname.slice(index + marker.length));
-  } catch {
-    return null;
-  }
+  return parseMediaStoragePathFromUrl(url);
 }
 
 export async function cleanupPublishedMedia(
@@ -55,7 +48,7 @@ export async function cleanupPublishedMedia(
     const urls = post.media_urls ?? [];
     const paths = [
       ...new Set(
-        urls.map((url: string) => parseSupabaseMediaStoragePath(url)).filter(Boolean) as string[],
+        urls.map((url: string) => parseMediaStoragePathFromUrl(url)).filter(Boolean) as string[],
       ),
     ];
 

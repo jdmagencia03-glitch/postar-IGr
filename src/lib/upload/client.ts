@@ -13,7 +13,14 @@ import {
   UPLOAD_FILE_RETRY_DELAYS_MS,
   userMessageForUploadError,
 } from "@/lib/upload/network-retry";
-import { uploadFileWithTus, type TusPrepareResponse } from "@/lib/upload/tus-upload";
+import {
+  isBunnyStoragePrepare,
+  isBunnyStreamPrepare,
+  uploadFileToBunny,
+  type MediaPrepareResponse,
+} from "@/lib/upload/bunny-upload";
+import { uploadFileWithBunnyStream } from "@/lib/upload/bunny-stream-upload";
+import { uploadFileWithTus } from "@/lib/upload/tus-upload";
 import type { BatchCounters } from "@/lib/upload/batches";
 
 export class UploadLocalCompletedPendingError extends Error {
@@ -339,25 +346,42 @@ export async function uploadBatchFile(params: {
         }),
       });
 
-      const prepareData = (await prepareRes.json()) as TusPrepareResponse & {
+      const prepareData = (await prepareRes.json()) as MediaPrepareResponse & {
         error?: unknown;
       };
       if (!prepareRes.ok) {
         throw new Error(String(prepareData.error ?? "Falha ao preparar upload"));
       }
 
-      if (!prepareData.tusEndpoint || !prepareData.signature) {
+      const useBunnyStream = isBunnyStreamPrepare(prepareData);
+      const useBunnyStorage = isBunnyStoragePrepare(prepareData);
+      const useTus = !useBunnyStream && !useBunnyStorage;
+
+      if (useTus && (!prepareData.tusEndpoint || !prepareData.signature)) {
         throw new Error("Resposta de upload inválida (TUS não configurado)");
+      }
+      if (useBunnyStorage && (!prepareData.uploadUrl || !prepareData.accessKey)) {
+        throw new Error("Resposta de upload inválida (Bunny Storage não configurado)");
+      }
+      if (
+        useBunnyStream &&
+        (!prepareData.tusEndpoint ||
+          !prepareData.authorizationSignature ||
+          !prepareData.videoId ||
+          !prepareData.libraryId)
+      ) {
+        throw new Error("Resposta de upload inválida (Bunny Stream não configurado)");
       }
 
       const uploadedBytes = Number(record.bytes_uploaded ?? 0);
-      // Só reinicia do zero se travou no meio do 1º chunk (< 6MB), não após chunk completo.
       const partialLooksBroken =
+        useTus &&
         file.size > TUS_CHUNK_SIZE &&
         uploadedBytes > 0 &&
         uploadedBytes < TUS_CHUNK_SIZE;
 
       let shouldResume =
+        (useTus || useBunnyStream) &&
         record.status !== "failed" &&
         uploadedBytes > 0 &&
         !partialLooksBroken;
@@ -377,31 +401,52 @@ export async function uploadBatchFile(params: {
       }
 
       let lastDbSync = 0;
-      const { promise } = uploadFileWithTus({
-        file,
-        prepare: prepareData,
-        batchId: batch.id,
-        recordId: record.id,
-        signal,
-        resumePrevious: shouldResume && attempt === 0,
-        onProgress: (loaded, total) => {
-          onProgress?.(loaded, total);
-          if (loaded - lastDbSync >= UPLOAD_PROGRESS_DB_SYNC_BYTES || loaded === total) {
-            lastDbSync = loaded;
-            void apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                status: "uploading",
-                bytes_uploaded: loaded,
-                ...(workerId ? { worker_id: workerId } : {}),
-              }),
-            }).catch(() => undefined);
-          }
-        },
-      });
+      const onUploadProgress = (loaded: number, total: number) => {
+        onProgress?.(loaded, total);
+        if (loaded - lastDbSync >= UPLOAD_PROGRESS_DB_SYNC_BYTES || loaded === total) {
+          lastDbSync = loaded;
+          void apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: "uploading",
+              bytes_uploaded: loaded,
+              ...(workerId ? { worker_id: workerId } : {}),
+            }),
+          }).catch(() => undefined);
+        }
+      };
 
-      await promise;
+      const uploadRunner = useBunnyStream
+        ? uploadFileWithBunnyStream({
+            file,
+            prepare: prepareData,
+            batchId: batch.id,
+            recordId: record.id,
+            signal,
+            resumePrevious: shouldResume && attempt === 0,
+            onProgress: onUploadProgress,
+          })
+        : useBunnyStorage
+          ? uploadFileToBunny({
+              file,
+              prepare: prepareData,
+              batchId: batch.id,
+              recordId: record.id,
+              signal,
+              onProgress: onUploadProgress,
+            })
+          : uploadFileWithTus({
+              file,
+              prepare: prepareData,
+              batchId: batch.id,
+              recordId: record.id,
+              signal,
+              resumePrevious: shouldResume && attempt === 0,
+              onProgress: onUploadProgress,
+            });
+
+      await uploadRunner.promise;
       onTusCompleted?.();
 
       const patchRes = await apiFetch(`/api/upload/batches/${batch.id}/files/${record.id}`, {

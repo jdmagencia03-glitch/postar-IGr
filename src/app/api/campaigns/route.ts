@@ -1,25 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/meta/oauth";
+import { campaignListStatusSchema } from "@/lib/api/schemas/common";
+import { campaignBodySchema, campaignPatchSchema } from "@/lib/api/schemas/campaigns";
+import { parseJsonBody, parseSearchParams } from "@/lib/api/validate-request";
 import {
   campaignInputFromBody,
   listOwnerCampaigns,
   syncCampaignAccounts,
+  getOwnerCampaign,
 } from "@/lib/campaigns/campaigns";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { SocialPlatform } from "@/lib/types";
+import { z } from "zod";
+
+const listQuerySchema = z.object({
+  status: campaignListStatusSchema,
+});
 
 export async function GET(request: NextRequest) {
   const ownerId = await getSessionUserId();
   if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const status = request.nextUrl.searchParams.get("status") ?? "all";
+  const query = parseSearchParams(request.nextUrl.searchParams, listQuerySchema);
+  if (!query.ok) return query.response;
+
   const supabase = createAdminClient();
 
   try {
     const campaigns = await listOwnerCampaigns(
       supabase,
       ownerId,
-      status === "active" || status === "paused" || status === "finished" ? status : "all",
+      query.data.status === "all" ? "all" : query.data.status,
     );
     return NextResponse.json({ campaigns });
   } catch (error) {
@@ -34,17 +44,11 @@ export async function POST(request: NextRequest) {
   const ownerId = await getSessionUserId();
   if (!ownerId) return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
 
-  const body = await request.json();
-  const input = campaignInputFromBody(body);
-  if (!input.name) {
-    return NextResponse.json({ error: "Nome da campanha é obrigatório" }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(request, campaignBodySchema);
+  if (!parsed.ok) return parsed.response;
 
-  const accounts = (body.accounts ?? []) as Array<{
-    account_id: string;
-    platform: SocialPlatform;
-    content_types?: string[];
-  }>;
+  const { accounts, ...body } = parsed.data;
+  const input = campaignInputFromBody(body);
 
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -55,11 +59,10 @@ export async function POST(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (accounts.length) {
+  if (accounts?.length) {
     await syncCampaignAccounts(supabase, data.id, accounts);
   }
 
-  const campaign = await listOwnerCampaigns(supabase, ownerId);
-  const created = campaign.find((c) => c.id === data.id);
-  return NextResponse.json(created ?? data, { status: 201 });
+  const campaign = await getOwnerCampaign(supabase, ownerId, data.id);
+  return NextResponse.json(campaign ?? data, { status: 201 });
 }

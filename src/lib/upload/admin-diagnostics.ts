@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UploadBatchFile } from "@/lib/types";
+import { getBunnyMediaBackend } from "@/lib/storage/bunny";
+import { headBunnyMediaObject } from "@/lib/storage/bunny";
+import { parseBunnyStreamStorageKey, parseBunnyStreamVideoIdFromUrl } from "@/lib/storage/bunny-stream";
 import {
   expireStaleUploadLeases,
   getBatchUploadHealth,
@@ -105,6 +108,19 @@ async function storageObjectExists(
 ): Promise<boolean> {
   if (file.public_url) return true;
   if (!file.storage_path) return false;
+
+  if (getBunnyMediaBackend() !== "none") {
+    const videoId =
+      parseBunnyStreamStorageKey(file.storage_path) ??
+      (file.public_url ? parseBunnyStreamVideoIdFromUrl(file.public_url) : null);
+    if (videoId) {
+      const bunny = await headBunnyMediaObject(file.storage_path, file.public_url);
+      return bunny.exists;
+    }
+    const bunny = await headBunnyMediaObject(file.storage_path, file.public_url);
+    return bunny.exists;
+  }
+
   try {
     const { data, error } = await supabase.storage.from("media").list(
       file.storage_path.split("/").slice(0, -1).join("/") || "",
